@@ -63,3 +63,18 @@ test('auth callback keeps deployed app path and removes credentials even on erro
   assert.equal(parseAuthCallback('https://example.test/app/?type=food#menu').hasAuth, false);
   assert.equal(parseAuthCallback('https://example.test/app/?type=food#menu').cleanUrl, '/app/?type=food#menu');
 });
+
+test('two checkout clients cannot replace an uncertain persisted attempt', async () => {
+  const { withCheckoutGuard, prepareAttempt } = await import('./checkout-guard.ts');
+  let held = false; let stored: string | null = null; let created = 0; const sent: string[] = [];
+  const locks = { async request<T>(_name: string, _options: { ifAvailable: true }, callback: (lock: object | null) => Promise<T>): Promise<T> { if (held) return callback(null); held = true; try { return await callback({}); } finally { held = false; } } };
+  const storage = { async getItem() { return stored; }, async setItem(_key: string, value: string) { stored = value; } };
+  const create = () => freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: `key-${++created}`, lines: [], delivery: { name: 'A', phone: '1', addressLine: 'Address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } });
+  let release!: () => void; const network = new Promise<void>(resolve => { release = resolve; });
+  const first = withCheckoutGuard('ammu-sammu', true, async () => { const result = await prepareAttempt(storage, 'ammu-sammu', create); sent.push(result.attempt.idempotencyKey); await network; throw new Error('response lost'); }, locks);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  await assert.rejects(withCheckoutGuard('ammu-sammu', true, async () => { await prepareAttempt(storage, 'ammu-sammu', create); }, locks), /Another window/);
+  release(); await assert.rejects(first, /response lost/);
+  await withCheckoutGuard('ammu-sammu', true, async () => { const result = await prepareAttempt(storage, 'ammu-sammu', create); assert.equal(result.existing, true); sent.push(result.attempt.idempotencyKey); }, locks);
+  assert.deepEqual(sent, ['key-1', 'key-1']); assert.equal(created, 1); assert.equal(readAttempt(stored, 'ammu-sammu')?.idempotencyKey, 'key-1');
+});

@@ -36,6 +36,13 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
   useEffect(() => {
     let active = true;
     void load();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null) { setStorageError('Saved checkout state was cleared in another window. Check your orders before placing another order.'); return; }
+      if (event.key !== attemptKey(businessId)) return;
+      try { setAttempt(readAttempt(event.newValue, businessId)); } catch (e) { setStorageError(messageOf(e)); }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+    const stopStorage = () => { if (Platform.OS === 'web' && typeof window !== 'undefined') window.removeEventListener('storage', onStorage); };
     void AsyncStorage.getItem(attemptKey(businessId)).then(value => { if (active) setAttempt(readAttempt(value, businessId)); }).catch(e => { if (active) setStorageError(messageOf(e)); }).finally(() => { if (active) setAttemptReady(true); });
     if (services.mode === 'backend') {
       const started = identity.current; let authEventSeen = false;
@@ -61,9 +68,9 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
       if (Platform.OS === 'web' && typeof window !== 'undefined') void handleUrl(window.location.href);
       else void Linking.getInitialURL().then(url => { if (url) void handleUrl(url); });
       const link = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
-      return () => { active = false; link.remove(); unsubscribe(); services.dispose(); };
+      return () => { active = false; stopStorage(); link.remove(); unsubscribe(); services.dispose(); };
     }
-    return () => { active = false; services.dispose(); };
+    return () => { active = false; stopStorage(); services.dispose(); };
   }, [businessId, load, services]);
   useEffect(() => {
     if (!session) { setOrders([]); return; }

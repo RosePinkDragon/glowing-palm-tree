@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, setCartItemQuantity, validateDeliveryDetails, validateLocationFix, type BusinessSlug, type CartLine, type DeliveryDetails, type LocationFix, type Order } from '@market/core';
 import { MarketButton, MarketCard, MarketField, MarketNavigation, MarketStatus, MarketText } from './components';
 import { useMarketTheme } from './theme';
 import { AuthPanel } from './AuthPanel';
-import { attemptKey, freezeAttempt, isDefiniteOrderRejection, sameIdentity, type CheckoutAttempt } from './checkout-state';
+import { attemptKey, freezeAttempt, isDefiniteOrderRejection, readAttempt, sameIdentity, type CheckoutAttempt } from './checkout-state';
+import { prepareAttempt, withCheckoutGuard } from './checkout-guard';
 import { requestLocation } from './location';
 import { messageOf, useMarket } from './useMarket';
 
@@ -32,7 +33,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     catch (e) { if (sameIdentity(started, market.identity.current)) { setLocation(null); setLocalError(messageOf(e)); } } finally { setBusy(false); }
   };
   const send = async (saved: CheckoutAttempt) => {
-    if (sending.current || market.identity.current.userId !== saved.userId) return; const started = market.identity.current; sending.current = true; setBusy(true); setLocalError('');
+    if (market.identity.current.userId !== saved.userId) { setPage('Account'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;
     try {
       const order = await market.services.placeOrder(saved);
       if (!sameIdentity(started, market.identity.current)) return;
@@ -47,25 +48,35 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
         catch { setLocalError('The order was declined, but its saved attempt could not be cleared. Retry recovery before placing another order.'); }
       } else setLocalError(`${messageOf(e)} The result may be uncertain. Retry this same order to recover its status.`);
     }
-    finally { sending.current = false; setBusy(false); }
+  };
+  const guarded = async (work: () => Promise<void>) => {
+    if (sending.current) return; sending.current = true; setBusy(true); setLocalError('');
+    try { await withCheckoutGuard(businessId, Platform.OS === 'web', work); }
+    catch (e) { setLocalError(messageOf(e)); } finally { sending.current = false; setBusy(false); }
   };
   const checkout = async () => {
     if (sending.current || locked) return;
     if (!market.session) { setPage('Account'); setLocalError('Sign in before placing your order. Your cart will stay here.'); return; }
-    sending.current = true; setBusy(true); setLocalError('');
-    try {
+    await guarded(async () => {
       if (!market.business || demo || !market.business.orderingEnabled) throw new Error('Ordering is currently unavailable.');
       if (!cart.length) throw new Error('Add an item to your cart first.');
       if (cart.some(line => line.item.isDemo || !line.item.isAvailable)) throw new Error('Remove sample or unavailable items before ordering.');
       if (cartSubtotalPaise(cart) < market.business.minOrderPaise) throw new Error(`The minimum order is ${money(market.business.minOrderPaise)}.`);
       if (!location || !eligible) throw new Error('Check your delivery location first.');
-      const saved = freezeAttempt({ businessId, userId: market.session.user.id, idempotencyKey: Crypto.randomUUID(), lines: cart, delivery: validateDeliveryDetails(details), location: validateLocationFix(location) });
-      await AsyncStorage.setItem(attemptKey(businessId), JSON.stringify(saved));
-      market.setAttempt(saved); sending.current = false;
-      await send(saved);
-    } catch (e) { setLocalError(messageOf(e)); } finally { sending.current = false; setBusy(false); }
+      const userId = market.session?.user.id;
+      if (!userId || market.identity.current.userId !== userId) throw new Error('Sign in before placing your order.');
+      const result = await prepareAttempt(AsyncStorage, businessId, () => freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, delivery: validateDeliveryDetails(details), location: validateLocationFix(location) }));
+      market.setAttempt(result.attempt);
+      if (result.existing) { setLocalError('An earlier order needs confirmation. Retry its recovery before placing another order.'); return; }
+      await send(result.attempt);
+    });
   };
-  const retry = () => { if (!market.attempt) return; if (market.session?.user.id !== market.attempt.userId) { setLocalError('Sign in with the account used for this order to recover it.'); setPage('Account'); return; } void send(market.attempt); };
+  const retry = () => { void guarded(async () => {
+    const saved = readAttempt(await AsyncStorage.getItem(attemptKey(businessId)), businessId);
+    market.setAttempt(saved);
+    if (!saved) { setLocalError('This order was already recovered. Refresh your orders.'); return; }
+    await send(saved);
+  }); };
   return <View style={{ paddingVertical: 28, gap: 24 }}>
     <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View>
     <MarketNavigation items={(['Menu', 'Cart', 'Orders', 'Account'] as Page[]).map(label => ({ label: label === 'Cart' && cart.length ? `Cart (${cart.reduce((n, line) => n + line.quantity, 0)})` : label, selected: page === label, onPress: () => { setPage(label); setLocalError(''); } }))} />
