@@ -1,0 +1,22 @@
+{
+  "name": "@market/notifications",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./web": "./src/web.ts"
+  },
+  "dependencies": {
+    "firebase": "13.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "scripts": {
+    "build:worker": "esbuild src/worker.ts --bundle --platform=browser --format=iife",
+    "test": "node --test --test-isolation=none test/*.test.ts"
+  }
+}
