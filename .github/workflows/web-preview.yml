@@ -38,11 +38,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p pages-site/glowing-palm-tree
+          mkdir -p pages-site
           for app in ammu-sammu-customer ammu-sammu-admin konkan-fine-dine-customer konkan-fine-dine-admin; do
-            mkdir -p "pages-site/glowing-palm-tree/$app"
-            cp -R "apps/$app/dist/web/." "pages-site/glowing-palm-tree/$app/"
+            mkdir -p "pages-site/$app"
+            cp -R "apps/$app/dist/web/." "pages-site/$app/"
           done
+          cat > pages-site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Glowing Palm Tree app previews</title></head>
+            <body>
+              <h1>App previews</h1>
+              <ul>
+                <li><a href="/glowing-palm-tree/ammu-sammu-customer/">Ammu Sammu customer</a></li>
+                <li><a href="/glowing-palm-tree/ammu-sammu-admin/">Ammu Sammu admin</a></li>
+                <li><a href="/glowing-palm-tree/konkan-fine-dine-customer/">Konkan Fine Dine customer</a></li>
+                <li><a href="/glowing-palm-tree/konkan-fine-dine-admin/">Konkan Fine Dine admin</a></li>
+              </ul>
+            </body>
+          </html>
+          HTML
       - uses: actions/upload-pages-artifact@v3
         with:
           path: pages-site
