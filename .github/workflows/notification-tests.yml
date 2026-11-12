@@ -1,0 +1,18 @@
+name: Notification dispatcher
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  dispatcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Typecheck and test dispatcher
+        run: deno test supabase/functions/dispatch-notifications/dispatch_test.ts && deno check supabase/functions/dispatch-notifications/index.ts
