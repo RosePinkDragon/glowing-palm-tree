@@ -28,7 +28,7 @@ export function MarketCard({ children }: { children: ReactNode }) {
 
 export function MarketField({ label, error, ...props }: TextInputProps & { label: string; error?: string }) {
   const { colors } = useMarketTheme();
-  return <View style={{ gap: 8 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>{label}</Text><TextInput {...props} accessibilityLabel={props.accessibilityLabel ?? label} accessibilityState={{ ...props.accessibilityState, disabled: props.editable === false }} placeholderTextColor={colors.muted} style={[{ minHeight: 48, borderWidth: 1, borderColor: error ? colors.danger : colors.border, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 16 }, props.style]} />{error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{error}</Text> : null}</View>;
+  return <View style={{ gap: 8 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>{label}</Text><TextInput {...props} accessibilityLabel={props.accessibilityLabel ?? label} accessibilityState={{ ...props.accessibilityState, disabled: props.editable === false }} placeholderTextColor={colors.muted} style={[{ minHeight: 48, borderWidth: 1, borderColor: error ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 16 }, props.style]} />{error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{error}</Text> : null}</View>;
 }
 
 export function MarketStatus({ kind, title, message, action }: { kind: 'loading' | 'empty' | 'error'; title: string; message?: string; action?: ReactNode }) {
@@ -50,5 +50,5 @@ export function MarketHeader({ subtitle }: { subtitle?: string }) {
 
 export function MarketNavigation({ items }: { items: { label: string; onPress: () => void; selected?: boolean }[] }) {
   const { colors } = useMarketTheme();
-  return <View accessibilityRole="tablist" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{items.map(item => <Pressable key={item.label} accessibilityRole="tab" accessibilityState={{ selected: !!item.selected }} onPress={item.onPress} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: item.selected ? colors.tint : 'transparent' }}><Text style={{ color: item.selected ? colors.primary : colors.muted, fontWeight: '700' }}>{item.label}</Text></Pressable>)}</View>;
+  return <View accessibilityRole="navigation" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{items.map(item => <Pressable key={item.label} accessibilityRole="button" accessibilityState={{ selected: !!item.selected }} onPress={item.onPress} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: item.selected ? colors.tint : 'transparent' }}><Text style={{ color: item.selected ? colors.primary : colors.muted, fontWeight: '700' }}>{item.label}</Text></Pressable>)}</View>;
 }
