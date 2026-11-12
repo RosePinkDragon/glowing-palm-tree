@@ -1,0 +1,15 @@
+name: Database isolation
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  postgis-rls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test migrations and row isolation
+        run: tests/database/run.sh
