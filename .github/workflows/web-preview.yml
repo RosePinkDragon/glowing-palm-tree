@@ -1,0 +1,81 @@
+name: Manual Web Preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-preview
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Export all customer and admin apps under safe subpaths
+        shell: bash
+        run: |
+          set -euo pipefail
+          for app in ammu-sammu-customer ammu-sammu-admin konkan-fine-dine-customer konkan-fine-dine-admin; do
+            if [[ ! -f "apps/$app/package.json" ]]; then echo "Missing app workspace: $app" >&2; exit 1; fi
+            EXPO_PUBLIC_WEB_BASE_PATH="/glowing-palm-tree/$app/" npm run build:web --workspace "$app"
+            if [[ ! -f "apps/$app/dist/web/index.html" ]]; then echo "Web export is missing apps/$app/dist/web/index.html" >&2; exit 1; fi
+          done
+      - name: Combine app exports into the Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pages-site
+          for app in ammu-sammu-customer ammu-sammu-admin konkan-fine-dine-customer konkan-fine-dine-admin; do
+            mkdir -p "pages-site/$app"
+            cp -R "apps/$app/dist/web/." "pages-site/$app/"
+          done
+          cat > pages-site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Glowing Palm Tree app previews</title></head>
+            <body>
+              <h1>App previews</h1>
+              <ul>
+                <li><a href="/glowing-palm-tree/ammu-sammu-customer/">Ammu Sammu customer</a></li>
+                <li><a href="/glowing-palm-tree/ammu-sammu-admin/">Ammu Sammu admin</a></li>
+                <li><a href="/glowing-palm-tree/konkan-fine-dine-customer/">Konkan Fine Dine customer</a></li>
+                <li><a href="/glowing-palm-tree/konkan-fine-dine-admin/">Konkan Fine Dine admin</a></li>
+              </ul>
+            </body>
+          </html>
+          HTML
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - id: deployment
+        uses: actions/deploy-pages@v4

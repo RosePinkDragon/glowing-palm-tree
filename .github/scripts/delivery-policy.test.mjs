@@ -38,7 +38,7 @@ function fixture(options = {}) {
     }
     throw new Error('Unexpected test request: ' + path);
   };
-  const runner = createRunner({ repository: repo, event: options.event || event, token: 'test-token', fetchImpl, revision: () => 'base', evaluator: options.evaluator });
+  const runner = createRunner({ repository: repo, event: options.event || event, token: 'test-token', fetchImpl, evaluator: options.evaluator });
   return { runner, calls, checks };
 }
 
@@ -85,6 +85,23 @@ test('full runner posts pending then patches the same check with successful verd
   assert.equal(checks[0].method, 'POST'); assert.equal(checks[0].payload.status, 'in_progress');
   assert.equal(checks[1].path, '/repos/owner/repo/check-runs/1'); assert.equal(checks[1].method, 'PATCH'); assert.equal(checks[1].payload.conclusion, 'success');
   assert.ok(calls.every(c => c.auth === 'Bearer test-token'));
+});
+
+test('default-branch target accepts a retained older PR base snapshot', async () => {
+  const p = pr(); p.base.sha = 'older-pr-base-snapshot';
+  const { runner, calls } = fixture({ prs: [p] });
+  await runner.runBatch();
+  assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'success');
+});
+
+test('non-default target is rejected and changes to base metadata are detected', async () => {
+  const p = pr(); p.base.ref = 'other';
+  const wrongTarget = fixture({ prs: [p] });
+  await assert.rejects(wrongTarget.runner.runBatch());
+  assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /repository default branch/);
+  const changed = fixture({ changePr: value => { value.base.sha = 'new-base-during-evaluation'; } });
+  await changed.runner.runBatch();
+  assert.match(changed.calls.find(c => c.method === 'PATCH').payload.output.summary, /metadata changed/);
 });
 
 test('initial, evaluation and final metadata failures complete started check as failure', async () => {
