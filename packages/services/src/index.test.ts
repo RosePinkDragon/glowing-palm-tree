@@ -215,3 +215,24 @@ test('browser callback waits for explicit code exchange', async () => {
     }
   }
 });
+
+test('signout removes a stale stored session after writes fail', async () => {
+  const originalFetch = globalThis.fetch;
+  const memory = new Map<string, string>();
+  let failWrites = false;
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { if (failWrites) throw new Error('quota'); memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  globalThis.fetch = async (input) => String(input).includes('/logout') ? new Response(null, { status: 204 }) : Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
+  try {
+    const options = { businessSlug: slug, audience: 'customer' as const, config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage };
+    const service = createMarketServices(options);
+    await service.auth.signIn('user@example.test', 'password');
+    assert.ok(memory.has(sessionStorageKey(options.config.url, slug, 'customer')));
+    failWrites = true;
+    await service.auth.signIn('user@example.test', 'password');
+    assert.equal(service.persistenceAvailable(), false);
+    await service.auth.signOut(); service.dispose();
+    const restored = createMarketServices(options);
+    assert.equal(await restored.auth.session(), null); restored.dispose();
+  } finally { globalThis.fetch = originalFetch; }
+});

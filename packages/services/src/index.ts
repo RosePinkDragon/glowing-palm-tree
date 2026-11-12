@@ -60,7 +60,8 @@ function safeStorage(backing: SupportedStorage) {
     },
     async removeItem(key) {
       memory.delete(key);
-      if (available) try { await backing.removeItem(key); } catch { available = false; }
+      // Even after a read/write failure, try to remove an older persisted session.
+      try { await backing.removeItem(key); } catch { available = false; }
     },
   };
   return { adapter, isAvailable: () => available };
