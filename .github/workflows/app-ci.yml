@@ -31,3 +31,8 @@ jobs:
       - run: npm ci
       - run: npm run build:web
       - run: npm run export:native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-exports
+          path: apps/*/dist
+          if-no-files-found: error
