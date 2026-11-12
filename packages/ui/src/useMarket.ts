@@ -13,6 +13,7 @@ export function messageOf(error: unknown) { return error instanceof Error ? erro
 export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'customer') {
   const services = useMemo(() => createMarketServices({ businessSlug: businessId, audience }), [businessId, audience]);
   const identity = useRef<Identity>({ userId: null, generation: 0 });
+  const orderRequest = useRef(0);
   const [identityVersion, setIdentityVersion] = useState(0);
   const [business, setBusiness] = useState<Awaited<ReturnType<Services['getBusiness']>> | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -30,7 +31,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
     try { const [b, m] = await Promise.all([services.getBusiness(), services.getMenu()]); setBusiness(b); setMenu(m); }
     catch (e) { setError(messageOf(e)); } finally { setLoading(false); }
   }, [services]);
-  const refreshOrders = useCallback(async () => { const started = identity.current; try { const result = await services.getOrders(); if (sameIdentity(started, identity.current)) setOrders(result); } catch (e) { if (sameIdentity(started, identity.current)) setError(messageOf(e)); } }, [services]);
+  const refreshOrders = useCallback(async () => { const started = identity.current; const request = ++orderRequest.current; try { const result = await services.getOrders(); if (request === orderRequest.current && sameIdentity(started, identity.current)) setOrders(result); } catch (e) { if (request === orderRequest.current && sameIdentity(started, identity.current)) setError(messageOf(e)); } }, [services]);
   useEffect(() => {
     let active = true;
     void load();
