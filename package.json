@@ -1,17 +1,39 @@
 {
-  "name": "glowing-palm-tree-tooling",
-  "version": "0.0.0",
+  "name": "glowing-palm-tree",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=24 <25"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
+    "app": "node scripts/workspaces.mjs app",
+    "build:web": "node scripts/workspaces.mjs build:web",
+    "export:native": "node scripts/workspaces.mjs export:native",
+    "typecheck": "tsc --noEmit",
     "check:codex": "node .github/scripts/validate-codex.mjs",
-    "test:codex": "node --test --test-isolation=none .github/scripts/validate-codex.test.mjs"
+    "test:codex": "node --test --test-isolation=none .github/scripts/validate-codex.test.mjs",
+    "test:core": "node scripts/workspaces.mjs test:core",
+    "test": "npm run test:codex && npm run test:workspaces && npm run test:core",
+    "check": "npm run check:codex && npm run typecheck && npm test",
+    "test:workspaces": "node --test --test-isolation=none .github/scripts/workspaces.test.mjs"
+  },
+  "dependencies": {
+    "expo": "~58.0.25",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-web": "~0.21.4"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.3.0",
     "smol-toml": "1.9.1",
+    "typescript": "~6.0.3",
     "yaml": "2.9.1"
   }
 }
