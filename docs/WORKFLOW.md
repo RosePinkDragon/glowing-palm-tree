@@ -1,5 +1,11 @@
 # Delivery workflow
 
+The owner may explicitly delegate review-based issue approval and merging for a defined
+effort. Record that authorization on the issue; apply `approved` only after the relevant
+scope review, and merge only the independently reviewed head with passing checks. Without
+such delegation, the owner-review defaults below apply. Delegation does not permit
+self-approval of a GitHub review, protection bypasses, or unreviewed new scope.
+
 1. Open an issue before starting work. Features need acceptance criteria and the exact `approved` label from an authorized maintainer before work begins. A `feature/` branch or an issue labeled `feature` or `enhancement` requires approval, including when a feature issue uses a `bug` or `release` branch.
 2. A bug without `approved` needs an `Assessment` section containing exactly `small` or `understood`. For `small`, explain the scope in the `Small blast radius` section. For `understood`, describe both reproduction and impacts in their sections. Placeholder answers are rejected. Unknown classification or an unclear bug requires `approved`. The gate checks structure and common placeholders, not the quality or truth of the assessment; reviewers must assess it. Approval authority belongs to the repository's authorized maintainers.
 3. Create a branch named `(feature|bug|release)/<scope>-<issue-number>-<short-desc>`, using lowercase letters, digits and hyphen-separated description words. The positive issue number has no leading zero. Allowed scopes are `ammu-sammu-customer`, `ammu-sammu-admin`, `konkan-fine-dine-customer`, `konkan-fine-dine-admin`, and `monorepo`. A release branch does not bypass feature approval.

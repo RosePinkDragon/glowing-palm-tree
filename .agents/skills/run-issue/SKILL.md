@@ -50,7 +50,10 @@ description: Route and deliver issue-scoped implementation with appropriate appr
    SHA. Repair failures and obtain affected re-review; report pending or unavailable
    checks as pending, never as passed. Include issue, approval, routing, scope, checks, reviews,
    decisions, remaining gaps, and final count in a concise PR body or report. No role
-   posts autonomous issue comments. Never auto-merge; cloud builds and deployments
+   posts autonomous issue comments. Normally leave merging to the owner. With explicit
+   owner delegation for the current effort, the lead may merge the exact independently
+   reviewed head after its checks pass, recording authority and review evidence. Never
+   bypass protections or self-approve a GitHub review. Cloud builds and deployments
    require explicit request. Local tests, builds, exports, and compilation are allowed.
 
 `--dry-run` reads only: no agents, branch, issue, label, PR, or other mutations. Report
