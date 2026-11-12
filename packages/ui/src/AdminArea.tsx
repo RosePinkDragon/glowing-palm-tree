@@ -53,7 +53,7 @@ function OrderQueue({ services }: { services: MarketServices }) {
   }, [services, load, subscriptionAttempt]);
   const transition = async (order: Order, status: OrderStatus) => {
     setBusy(true); setNotice(''); setSuccess(''); setCancelOrder(null); request.current++;
-    try { const updated = await services.transitionOrder(order.id, status, order.version); setOrders(current => current.map(item => item.id === updated.id ? updated : item)); setSuccess(`Order updated to ${statusLabel(updated.status)}.`); setFilter(updated.status === 'delivered' || updated.status === 'cancelled' ? 'complete' : updated.status); }
+    try { const updated = await services.transitionOrder(order.id, status, order.version); request.current++; setOrders(current => current.map(item => item.id === updated.id ? updated : item)); setSuccess(`Order updated to ${statusLabel(updated.status)}.`); setFilter(updated.status === 'delivered' || updated.status === 'cancelled' ? 'complete' : updated.status); }
     catch (e) { setNotice(`Order was not confirmed as updated: ${message(e)}. Refreshing the latest order state.`); await load(); }
     finally { setBusy(false); }
   };
