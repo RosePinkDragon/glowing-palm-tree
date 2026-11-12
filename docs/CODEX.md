@@ -1,39 +1,31 @@
 # Codex team setup
 
-Codex reads the repository instructions in `AGENTS.md`. The current chat acts as the
-team lead, selecting appropriate roles, models, and thinking effort for the task. The
-repository enables multi-agent work with up to four concurrent agent threads and
-discovers four standalone roles in `.codex/agents/`: `ba`, `developer`,
-`ui_ux_reviewer`, and `senior_developer`. No model or reasoning effort is fixed in the
-role files. A lead can handle trivial work directly and should delegate only where useful.
+The primary chat follows the mandatory `.agents/skills/team-lead/SKILL.md` router for
+natural-language issue work, triage, and self-review with fixes. It selects roles, models,
+and thinking effort per phase; not every role is needed for every task. The repository
+configures up to four concurrent agent threads and provides standalone `ba`, `developer`,
+`ui_ux_reviewer`, and `senior_developer` role definitions in `.codex/agents/` without
+fixed model or reasoning effort. Follow `AGENTS.md` for the approval, branch, file-budget,
+and owner-review rules. Inspect the live issue, labels, and actual checkout for each task.
 
-Start with the issue and follow the approval, branch, handoff, review, and file-count
-rules in `AGENTS.md` and `.agents/skills/team-lead/SKILL.md`. Inspect the checkout,
-live issue, and current labels for each task; the task skills do not assume any app or
-infrastructure exists. Specialist roles inherit the session permissions; their review
-instructions are behavioral boundaries, not operating-system sandboxes. If a runtime
-cannot select a custom role, the lead may load its instructions into an explicit
-handoff and disclose the fallback; do not claim the configured role was used.
+Specialists inherit session permissions; review instructions are behavioral boundaries,
+not operating-system sandboxes. If the runtime cannot select a custom role, the lead may
+load its instructions into an explicit handoff and disclose the fallback; do not claim
+the configured role was used. The lead owns PR updates and collects independent reviews.
+Use `/skills` in a compatible Codex session from a trusted project directory to inspect
+skill discovery or invoke `$team-lead`; confirm the runtime role when delegating. These
+manual checks are separate from syntax validation and do not prove review quality.
 
-Use a compatible Codex version from the repository directory and trust the project
-when Codex prompts. Use `/skills` to inspect skill discovery, or invoke `$team-lead`
-explicitly. Confirm the role selected by the runtime when delegating. Agent review
-results are evidence for the lead; they are not GitHub owner approvals.
+The routing, role modes, short briefs, and risk-based reviews were adapted from
+[fuzzy-waddle's Claude setup](https://github.com/RosePinkDragon/fuzzy-waddle/tree/98b68f1c0467ab3e34e9a163a54157ea977fa5d7/.claude).
+This repository's owner instructions override that reference: in particular, the exact
+`approved` feature gate, bug rule, branch names, file-count exclusions, role selection,
+and PR ownership here govern. No reference-specific labels or standing authorizations
+are imported. Load only relevant sections of `.codex/reference/project-context.md`.
 
-Run `python3 scripts/validate_codex.py` with Python 3.11 or newer to check the
-configuration and required files. The `Codex checks` workflow runs this same check on
-pushes and pull requests. It uses read-only repository permissions and no secrets.
-The validator checks structure, not whether an issue is approved or a review is sound.
-
-Run `python3 -m unittest discover -s tests` for validator regression tests. The
-validator intentionally accepts only this repository's configuration subset: the
-`agents` table with its two configured keys and role files with `name`, `description`,
-and `developer_instructions`. It rejects other keys, including fixed models, so update
-the validator deliberately when extending the configuration. Skill front matter must
-be bounded by `---` lines with exactly one `name` and one `description`, each on one
-line as a nonempty plain string, JSON-style double-quoted string, or YAML-style
-single-quoted string (doubled apostrophes escape an apostrophe). Plain strings exclude
-YAML collection or directive indicators, inline comments, colon-space, and scalar
-forms for numbers, booleans, or null. A nonempty
-body must follow. This is not a general YAML parser. Validation checks file structure,
-not runtime role discovery, issue approval, or review quality.
+With Node 24, run `npm ci --ignore-scripts`, `npm run check:codex`, and
+`npm run test:codex`. The read-only CI workflow runs these commands on pushes and pull
+requests. The TOML and YAML parser-based validator checks syntax and the supported
+configuration structure, required roles, skill metadata and bodies, and context file.
+It rejects unknown configuration keys, fixed models, duplicate metadata keys, aliases,
+and non-string metadata. It does not establish runtime discovery or issue approval.
