@@ -12,23 +12,33 @@ def reviewable(path):
 
 
 def linked_issue(body, repository):
-    # Exactly one explicit field prevents ambiguous or incidental references.
-    fields = re.findall(r'^Issue:\s*(\S+)\s*$', body or '', re.MULTILINE)
+    fields = [line for line in (body or '').splitlines() if re.match(r'^[ \t]*Issue:', line)]
     if len(fields) != 1:
         return None
-    value = fields[0]
+    field = re.fullmatch(r'[ \t]*Issue:[ \t]*(\S+)[ \t]*', fields[0])
+    if not field:
+        return None
+    value = field.group(1)
     match = re.fullmatch(r'#([1-9][0-9]*)', value)
     if not match:
         match = re.fullmatch(r'https://github\.com/' + re.escape(repository) + r'/issues/([1-9][0-9]*)/?', value)
     return int(match.group(1)) if match else None
 
 
-def filled_section(body, heading):
-    match = re.search(r'^#{2,4}\s*' + re.escape(heading) + r'\s*\n(.*?)(?=^#{2,4}\s|\Z)', body or '', re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    if not match:
+def section(body, heading):
+    matches = re.findall(r'^#{2,4}[ \t]+' + re.escape(heading) + r'[ \t]*\n(.*?)(?=^#{2,4}[ \t]|\Z)', body or '', re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    if len(matches) != 1:
+        return ''
+    return re.sub(r'<!--.*?-->', '', matches[0], flags=re.DOTALL).strip()
+
+
+def rationale(body, heading):
+    value = section(body, heading)
+    # Reject common placeholders and checkbox-only answers; reviewers judge substance.
+    value = re.sub(r'(?m)^\s*[-*]\s*\[[ xX]\]\s*', '', value).strip()
+    if len(re.findall(r'[A-Za-z0-9]+', value)) < 3:
         return False
-    content = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
-    return bool(content and content.lower() not in {'n/a', 'none', 'unknown', 'tbd', 'todo', '-'} )
+    return not re.fullmatch(r'(?:unknown|unsure|unclear|uninvestigated|tbd|todo|n/a|not (?:yet |currently )?(?:known|understood|investigated|available|determined|sure))[.!?]*', value, re.IGNORECASE)
 
 
 def evaluate(pr, issue, files, repository):
@@ -57,8 +67,9 @@ def evaluate(pr, issue, files, repository):
                 errors.append('Unclassified issues require the approved label.')
             else:
                 body = issue.get('body') or ''
-                small = filled_section(body, 'Small blast radius')
-                understood = filled_section(body, 'Reproduction') and filled_section(body, 'Impacts')
+                choice = section(body, 'Assessment').lower()
+                small = choice == 'small' and rationale(body, 'Small blast radius')
+                understood = choice == 'understood' and rationale(body, 'Reproduction') and rationale(body, 'Impacts')
                 if not (small or understood):
                     errors.append('Bug issues need a documented small blast radius or both reproduction and understood impacts, or the approved label.')
     count = sum(1 for f in files if reviewable(f.get('filename', '')) or (f.get('previous_filename') and reviewable(f['previous_filename'])))
