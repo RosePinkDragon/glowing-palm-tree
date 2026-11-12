@@ -18,11 +18,10 @@ for db in fresh existing; do
   if [[ "$db" == existing ]]; then
     docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
   fi
-  for migration in supabase/migrations/*.sql; do
-    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$migration"
-  done
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000000_database_isolation.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/isolation.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000001_checkout.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/checkout.sql
   # Two sessions race the same first request and must both recover one order.
   fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -40,5 +39,7 @@ SQL
   wait "$second" || failed=1
   if (( failed )); then echo 'Concurrent order requests failed' >&2; exit 1; fi
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000002_notifications.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notifications.sql
 done
-echo 'Database isolation and checkout tests passed in fresh and existing PostGIS schemas.'
+echo 'Database isolation, checkout and notification tests passed in fresh and existing PostGIS schemas.'
