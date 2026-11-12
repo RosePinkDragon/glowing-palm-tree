@@ -1,0 +1,78 @@
+name: Manual EAS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App target
+        required: true
+        type: choice
+        options:
+          - ammu-sammu-customer
+          - ammu-sammu-admin
+          - konkan-fine-dine-customer
+          - konkan-fine-dine-admin
+      platform:
+        description: Build platform
+        required: true
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+      profile:
+        description: EAS build profile
+        required: true
+        type: choice
+        options:
+          - preview
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.app }}
+    env:
+      APP: ${{ inputs.app }}
+      PLATFORM: ${{ inputs.platform }}
+      PROFILE: ${{ inputs.profile }}
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      EXPO_PUBLIC_EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      EXPO_OWNER: ${{ vars.EXPO_OWNER }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate manual build request and credentials
+        shell: bash
+        run: |
+          case "$APP" in
+            ammu-sammu-customer|ammu-sammu-admin|konkan-fine-dine-customer|konkan-fine-dine-admin) ;;
+            *) echo "Unknown app target." >&2; exit 1 ;;
+          esac
+          if [[ ! -f "apps/$APP/package.json" ]]; then echo "The selected app workspace is not present on this branch." >&2; exit 1; fi
+          case "$PLATFORM" in all|android|ios) ;; *) echo "Unknown platform." >&2; exit 1 ;; esac
+          case "$PROFILE" in preview|production) ;; *) echo "Unknown profile." >&2; exit 1 ;; esac
+          if [[ -z "$EXPO_TOKEN" ]]; then echo "EXPO_TOKEN is required in this app's GitHub environment." >&2; exit 1; fi
+          if [[ ! "$EAS_PROJECT_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            echo "EAS_PROJECT_ID must be configured as a UUID in this app's GitHub environment." >&2
+            exit 1
+          fi
+      - run: npm ci
+      - name: Verify pinned EAS CLI
+        run: npx --yes eas-cli@27.9.0 --version
+      - name: Start the requested EAS build
+        run: |
+          cd "apps/$APP"
+          npx --yes eas-cli@27.9.0 build --platform "$PLATFORM" --profile "$PROFILE" --non-interactive --message "Manual $PROFILE build for $APP"

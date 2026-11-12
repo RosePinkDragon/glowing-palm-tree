@@ -1,0 +1,7 @@
+{
+  "cli": { "version": ">= 27.9.0" },
+  "build": {
+    "preview": { "distribution": "internal", "channel": "preview" },
+    "production": { "channel": "production" }
+  }
+}
