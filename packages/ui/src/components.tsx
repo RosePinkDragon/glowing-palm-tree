@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { useMarketTheme } from './theme';
 
 export function MarketText({ children, variant = 'body' }: { children: ReactNode; variant?: 'body' | 'muted' | 'eyebrow' | 'title' | 'heading' }) {
@@ -50,5 +50,5 @@ export function MarketHeader({ subtitle }: { subtitle?: string }) {
 
 export function MarketNavigation({ items }: { items: { label: string; onPress: () => void; selected?: boolean }[] }) {
   const { colors } = useMarketTheme();
-  return <View accessibilityRole="navigation" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{items.map(item => <Pressable key={item.label} accessibilityRole="button" accessibilityState={{ selected: !!item.selected }} onPress={item.onPress} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: item.selected ? colors.tint : 'transparent' }}><Text style={{ color: item.selected ? colors.primary : colors.muted, fontWeight: '700' }}>{item.label}</Text></Pressable>)}</View>;
+  return <View accessibilityRole="navigation" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{items.map(item => <Pressable key={item.label} accessibilityRole="button" accessibilityState={Platform.OS === 'web' ? undefined : { selected: !!item.selected }} aria-current={Platform.OS === 'web' && item.selected ? 'page' : undefined} onPress={item.onPress} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: item.selected ? colors.tint : 'transparent' }}><Text style={{ color: item.selected ? colors.primary : colors.muted, fontWeight: '700' }}>{item.label}</Text></Pressable>)}</View>;
 }
