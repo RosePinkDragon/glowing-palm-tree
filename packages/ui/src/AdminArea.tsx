@@ -34,6 +34,7 @@ function OrderQueue({ services }: { services: MarketServices }) {
   const [loading, setLoading] = useState(services.mode !== 'demo');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
   const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
   const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
@@ -51,8 +52,8 @@ function OrderQueue({ services }: { services: MarketServices }) {
     return () => { active = false; request.current++; unsubscribe?.(); };
   }, [services, load, subscriptionAttempt]);
   const transition = async (order: Order, status: OrderStatus) => {
-    setBusy(true); setNotice(''); setCancelOrder(null); request.current++;
-    try { const updated = await services.transitionOrder(order.id, status, order.version); setOrders(current => current.map(item => item.id === updated.id ? updated : item)); setFilter(updated.status === 'delivered' || updated.status === 'cancelled' ? 'complete' : updated.status); }
+    setBusy(true); setNotice(''); setSuccess(''); setCancelOrder(null); request.current++;
+    try { const updated = await services.transitionOrder(order.id, status, order.version); setOrders(current => current.map(item => item.id === updated.id ? updated : item)); setSuccess(`Order updated to ${statusLabel(updated.status)}.`); setFilter(updated.status === 'delivered' || updated.status === 'cancelled' ? 'complete' : updated.status); }
     catch (e) { setNotice(`Order was not confirmed as updated: ${message(e)}. Refreshing the latest order state.`); await load(); }
     finally { setBusy(false); }
   };
@@ -60,6 +61,7 @@ function OrderQueue({ services }: { services: MarketServices }) {
   return <View style={{ gap: 16 }}>
     <MarketText variant="heading">Order queue</MarketText>
     {services.mode === 'demo' ? <MarketStatus kind="empty" title="Sample mode" message="There are no live orders in sample mode. Connect the backend and sign in as an administrator to manage orders." /> : null}
+    {success ? <MarketText>{success}</MarketText> : null}
     {notice ? <MarketStatus kind="error" title="Order update notice" message={notice} action={<MarketButton label="Refresh and reconnect" variant="secondary" onPress={() => { setNotice(''); setSubscriptionAttempt(n => n + 1); }} />} /> : null}
     {error ? <MarketStatus kind="error" title="Could not load orders" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => void load()} />} /> : null}
     <MarketNavigation items={queueFilters.map(value => ({ label: statusLabel(value), selected: filter === value, onPress: () => setFilter(value) }))} />

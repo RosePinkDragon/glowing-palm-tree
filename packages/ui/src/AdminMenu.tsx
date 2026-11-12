@@ -13,6 +13,7 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [remove, setRemove] = useState<MenuItem | null>(null);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState(false);
@@ -22,19 +23,20 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     if (!draft) return;
     const pricePaise = parseRupees(draft.price);
     if (!draft.name.trim() || !draft.category.trim() || pricePaise === null) { setValidation(true); return; }
-    setBusy(true); setError('');
-    try { await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), category: draft.category.trim(), pricePaise, isAvailable: draft.isAvailable, isDemo: draft.isDemo }); setDraft(null); await load(); }
+    setBusy(true); setError(''); setSuccess('');
+    try { await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), category: draft.category.trim(), pricePaise, isAvailable: draft.isAvailable, isDemo: draft.isDemo }); setDraft(null); setSuccess('Item saved.'); await load(); }
     catch (e) { setError(message(e)); } finally { setBusy(false); }
   };
   const deleteItem = async () => {
     if (!remove) return;
-    setBusy(true); setError('');
-    try { await services.deleteMenuItem(remove.id); setRemove(null); await load(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    setBusy(true); setError(''); setSuccess('');
+    try { await services.deleteMenuItem(remove.id); setRemove(null); setSuccess('Item deleted.'); await load(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
   };
   return <View style={{ gap: 16 }}>
     <MarketText variant="heading">Menu</MarketText>
     <MarketText variant="muted">Manage availability and prices. Sample items are clearly labelled.</MarketText>
     {services.mode === 'demo' ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
+    {success ? <MarketText>{success}</MarketText> : null}
     {error ? <MarketStatus kind="error" title="Could not complete the request" message={error} action={<MarketButton label="Retry loading menu" variant="secondary" onPress={() => void load()} />} /> : null}
     {loading ? <MarketStatus kind="loading" title="Loading menu" /> : null}
     {draft ? <MarketCard>
