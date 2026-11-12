@@ -87,9 +87,43 @@ reset role;
 select public.test_assert(not exists(select 1 from public.notification_outbox where id=current_setting('test.rotated_job')::uuid),'re-registration invalidates old leased jobs');
 set role service_role;
 select public.test_assert(not public.finish_notification_job(current_setting('test.rotated_job')::uuid,current_setting('test.rotated_lease')::uuid,'unregistered'),'stale worker cannot remove new registration');
-update public.notification_outbox set completed_at=null, attempts=4, available_at=clock_timestamp()-interval '1 second', lease_id=null, lease_expires_at=null where id=current_setting('test.admin_job')::uuid;
-select public.test_assert((select count(*)=1 from public.claim_notification_jobs(1)),'fifth attempt claimed');
-select set_config('test.final_lease',(select lease_id::text from public.notification_outbox where id=current_setting('test.admin_job')::uuid),false);
-select public.test_assert(public.finish_notification_job(current_setting('test.admin_job')::uuid,current_setting('test.final_lease')::uuid,'retry'),'fifth retry acknowledged');
-select public.test_assert((select attempts=5 and completed_at is not null from public.notification_outbox where id=current_setting('test.admin_job')::uuid),'attempts capped');
 reset role;
+update public.orders set status='out_for_delivery' where id='70000000-0000-4000-8000-000000000001';
+set role service_role;
+select set_config('test.final_job',(select id::text from public.notification_outbox where completed_at is null and audience='customer'),false);
+update public.notification_outbox set attempts=4, available_at=clock_timestamp()-interval '1 second' where id=current_setting('test.final_job')::uuid;
+select public.test_assert((select count(*)=1 from public.claim_notification_jobs(1)),'fifth attempt claimed');
+select set_config('test.final_lease',(select lease_id::text from public.notification_outbox where id=current_setting('test.final_job')::uuid),false);
+select public.test_assert(public.finish_notification_job(current_setting('test.final_job')::uuid,current_setting('test.final_lease')::uuid,'retry'),'fifth retry acknowledged');
+select public.test_assert((select attempts=5 and completed_at is not null from public.notification_outbox where id=current_setting('test.final_job')::uuid),'attempts capped');
+reset role;
+
+-- A different, expired, or deleted session cannot remove the current session's registration.
+insert into auth.sessions(id,user_id) values
+('80000000-0000-4000-8000-000000000005','30000000-0000-4000-8000-000000000001'),
+('80000000-0000-4000-8000-000000000006','30000000-0000-4000-8000-000000000001');
+set role authenticated;
+select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-000000000005"}',false);
+select public.unregister_device_token('ammu-sammu','customer','customer-rotated');
+reset role;
+select public.test_assert(exists(select 1 from public.device_tokens where token='customer-rotated'), 'other active session cannot unregister token');
+update auth.sessions set not_after=clock_timestamp()-interval '1 second' where id='80000000-0000-4000-8000-000000000005';
+set role authenticated;
+do $$ begin
+  begin perform public.unregister_device_token('ammu-sammu','customer','customer-rotated'); raise exception 'expired session unregistered token'; exception when insufficient_privilege then null; end;
+end $$;
+select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-000000000006"}',false);
+reset role;
+delete from auth.sessions where id='80000000-0000-4000-8000-000000000006';
+set role authenticated;
+do $$ begin
+  begin perform public.unregister_device_token('ammu-sammu','customer','customer-rotated'); raise exception 'deleted session unregistered token'; exception when insufficient_privilege then null; end;
+end $$;
+select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-000000000002"}',false);
+do $$ begin
+  begin perform public.unregister_device_token('ammu-sammu','customer','customer-rotated'); raise exception 'foreign session unregistered token'; exception when insufficient_privilege then null; end;
+end $$;
+select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-000000000001"}',false);
+select public.unregister_device_token('ammu-sammu','customer','customer-rotated');
+reset role;
+select public.test_assert(not exists(select 1 from public.device_tokens where token='customer-rotated'), 'current session can unregister token');

@@ -30,10 +30,16 @@ begin
 end $$;
 create function public.unregister_device_token(p_business_slug text, p_audience text, p_token text)
 returns void language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); session uuid;
 begin
-  if auth.uid() is null then raise exception 'authentication required' using errcode='42501'; end if;
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  begin session := (auth.jwt()->>'session_id')::uuid;
+  exception when others then raise exception 'invalid session' using errcode='42501'; end;
+  if session is null then raise exception 'invalid session' using errcode='42501'; end if;
+  perform 1 from auth.sessions where id=session and user_id=caller and (not_after is null or not_after > clock_timestamp()) for share;
+  if not found then raise exception 'invalid session' using errcode='42501'; end if;
   delete from public.device_tokens d using public.businesses b
-  where b.slug=p_business_slug and d.business_id=b.id and d.audience=p_audience and d.token=p_token and d.user_id=auth.uid();
+  where b.slug=p_business_slug and d.business_id=b.id and d.audience=p_audience and d.token=p_token and d.user_id=caller and d.session_id=session;
 end $$;
 revoke all on function public.register_device_token(text,text,text), public.unregister_device_token(text,text,text) from public, anon, authenticated;
 grant execute on function public.register_device_token(text,text,text), public.unregister_device_token(text,text,text) to authenticated;
