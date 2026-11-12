@@ -9,10 +9,12 @@ export function webRedirectUrl(href: string): string {
 export function parseAuthCallback(href: string) {
   const url = new URL(href);
   const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
-  const hasAuth = authKeys.some(key => url.searchParams.has(key) || hash.has(key));
+  const hasAuth = authKeys.some(key => key !== 'type' && (url.searchParams.has(key) || hash.has(key)));
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error_description') ?? hash.get('error_description') ?? url.searchParams.get('error') ?? hash.get('error') ?? url.searchParams.get('error_code') ?? hash.get('error_code');
-  for (const key of authKeys) { url.searchParams.delete(key); hash.delete(key); }
-  url.hash = hash.toString();
+  if (hasAuth) {
+    for (const key of authKeys) { url.searchParams.delete(key); hash.delete(key); }
+    url.hash = hash.toString();
+  }
   return { code, error, hasAuth, cleanUrl: `${url.pathname}${url.search}${url.hash}` };
 }

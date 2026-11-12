@@ -60,4 +60,6 @@ test('auth callback keeps deployed app path and removes credentials even on erro
   const tokenOnly = parseAuthCallback('https://example.test/app/#access_token=foreign&refresh_token=foreign');
   assert.equal(tokenOnly.code, null);
   assert.equal(tokenOnly.cleanUrl, '/app/');
+  assert.equal(parseAuthCallback('https://example.test/app/?type=food#menu').hasAuth, false);
+  assert.equal(parseAuthCallback('https://example.test/app/?type=food#menu').cleanUrl, '/app/?type=food#menu');
 });
