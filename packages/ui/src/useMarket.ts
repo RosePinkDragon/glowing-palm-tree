@@ -41,7 +41,10 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
       const applySession = (s: Session) => { const next = nextIdentity(identity.current, s?.user.id ?? null); if (next !== identity.current) { identity.current = next; setIdentityVersion(next.generation); setOrders([]); } setSession(s); };
       void services.auth.session().then(s => { if (active && sameIdentity(started, identity.current)) applySession(s); }).catch(e => { if (active && sameIdentity(started, identity.current)) setError(messageOf(e)); });
       const unsubscribe = services.auth.onChange((event, s) => { if (active) { applySession(s); if (event === 'PASSWORD_RECOVERY') setRecovery(true); } });
+      const handledUrls = new Set<string>();
       const handleUrl = async (url: string) => {
+        if (handledUrls.has(url)) return;
+        handledUrls.add(url);
         try {
           const parsed = new URL(url); const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
           const code = parsed.searchParams.get('code'); const access = hash.get('access_token'); const refresh = hash.get('refresh_token');
@@ -51,7 +54,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
           if (parsed.searchParams.get('type') === 'recovery' || hash.get('type') === 'recovery') setRecovery(true);
           if (Platform.OS === 'web' && typeof window !== 'undefined') window.history.replaceState({}, '', parsed.pathname);
           setNotice('Email link confirmed.');
-        } catch (e) { setError(messageOf(e)); }
+        } catch (e) { handledUrls.delete(url); if (active) setError(messageOf(e)); }
       };
       void Linking.getInitialURL().then(url => { if (url) void handleUrl(url); });
       const link = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
