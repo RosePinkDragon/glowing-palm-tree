@@ -18,8 +18,27 @@ for db in fresh existing; do
   if [[ "$db" == existing ]]; then
     docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
   fi
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000000_database_isolation.sql
+  for migration in supabase/migrations/*.sql; do
+    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$migration"
+  done
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/isolation.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/checkout.sql
+  # Two sessions race the same first request and must both recover one order.
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  race_order() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'60000000-0000-4000-8000-000000000099');
+SQL
+  }
+  race_order & first=$!
+  race_order & second=$!
+  failed=0
+  wait "$first" || failed=1
+  wait "$second" || failed=1
+  if (( failed )); then echo 'Concurrent order requests failed' >&2; exit 1; fi
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
 done
-echo 'Database isolation tests passed in fresh and existing PostGIS schemas.'
+echo 'Database isolation and checkout tests passed in fresh and existing PostGIS schemas.'
