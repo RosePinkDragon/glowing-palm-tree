@@ -37,10 +37,10 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
     void load();
     void AsyncStorage.getItem(attemptKey(businessId)).then(value => { if (active) setAttempt(readAttempt(value, businessId)); }).catch(e => { if (active) setStorageError(messageOf(e)); }).finally(() => { if (active) setAttemptReady(true); });
     if (services.mode === 'backend') {
-      const started = identity.current;
+      const started = identity.current; let authEventSeen = false;
       const applySession = (s: Session) => { const next = nextIdentity(identity.current, s?.user.id ?? null); if (next !== identity.current) { identity.current = next; setIdentityVersion(next.generation); setOrders([]); } setSession(s); };
-      void services.auth.session().then(s => { if (active && sameIdentity(started, identity.current)) applySession(s); }).catch(e => { if (active && sameIdentity(started, identity.current)) setError(messageOf(e)); });
-      const unsubscribe = services.auth.onChange(async (event, s) => { if (active) { applySession(s); if (event === 'PASSWORD_RECOVERY') setRecovery(true); } });
+      void services.auth.session().then(s => { if (active && !authEventSeen && sameIdentity(started, identity.current)) applySession(s); }).catch(e => { if (active && !authEventSeen && sameIdentity(started, identity.current)) setError(messageOf(e)); });
+      const unsubscribe = services.auth.onChange(async (event, s) => { if (active) { authEventSeen = true; applySession(s); if (event === 'PASSWORD_RECOVERY') setRecovery(true); } });
       const handledUrls = new Set<string>();
       const handleUrl = async (url: string) => {
         if (handledUrls.has(url)) return;
