@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { MarketButton, MarketCard, MarketField, MarketText } from './components';
 import { messageOf, useMarket } from './useMarket';
+import { webRedirectUrl } from './auth-callback';
 
 type Market = ReturnType<typeof useMarket>;
 export function AuthPanel({ market }: { market: Market }) {
@@ -12,7 +13,7 @@ export function AuthPanel({ market }: { market: Market }) {
   const submit = async () => {
     setBusy(true); setMessage('');
     try {
-      const redirect = Linking.createURL('/');
+      const redirect = Platform.OS === 'web' && typeof window !== 'undefined' ? webRedirectUrl(window.location.href) : Linking.createURL('/');
       if (market.recovery) { await market.services.auth.updatePassword(password); market.setRecovery(false); setMessage('Password updated.'); }
       else if (mode === 'reset') { await market.services.auth.resetPassword(email.trim(), redirect); setMessage('If the account exists, a reset link has been sent.'); }
       else if (mode === 'signup') { const result = await market.services.auth.signUp(email.trim(), password, redirect); setMessage(result.confirmationRequired ? 'Check your email to confirm your account.' : 'Your account is ready.'); }

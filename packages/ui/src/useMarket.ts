@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createMarketServices } from '@market/services';
 import type { AppAudience, BusinessSlug, MenuItem, Order } from '@market/core';
+import { parseAuthCallback } from './auth-callback';
 import { attemptKey, nextIdentity, readAttempt, sameIdentity, type CheckoutAttempt, type Identity } from './checkout-state';
 
 type Services = ReturnType<typeof createMarketServices>;
@@ -45,18 +46,20 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
       const handleUrl = async (url: string) => {
         if (handledUrls.has(url)) return;
         handledUrls.add(url);
+        let callback: ReturnType<typeof parseAuthCallback> | undefined;
         try {
-          const parsed = new URL(url); const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-          const code = parsed.searchParams.get('code'); const access = hash.get('access_token'); const refresh = hash.get('refresh_token');
-          if (code) await services.auth.exchangeCodeForSession(code);
-          else if (access && refresh) await services.auth.setSession(access, refresh);
-          else return;
-          if (parsed.searchParams.get('type') === 'recovery' || hash.get('type') === 'recovery') setRecovery(true);
-          if (Platform.OS === 'web' && typeof window !== 'undefined') window.history.replaceState({}, '', parsed.pathname);
-          setNotice('Email link confirmed.');
-        } catch (e) { handledUrls.delete(url); if (active) setError(messageOf(e)); }
+          callback = parseAuthCallback(url);
+          if (callback.error) throw new Error(`Email link could not be completed: ${callback.error}. Request a new link and try again.`);
+          if (!callback.code) { if (callback.hasAuth) throw new Error('This email link is incomplete or expired. Request a new link and try again.'); return; }
+          await services.auth.exchangeCodeForSession(callback.code);
+          if (active) setNotice('Email link confirmed.');
+        } catch (e) { if (active) setError(messageOf(e)); }
+        finally {
+          if (callback?.hasAuth && Platform.OS === 'web' && typeof window !== 'undefined') window.history.replaceState({}, '', callback.cleanUrl);
+        }
       };
-      void Linking.getInitialURL().then(url => { if (url) void handleUrl(url); });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') void handleUrl(window.location.href);
+      else void Linking.getInitialURL().then(url => { if (url) void handleUrl(url); });
       const link = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
       return () => { active = false; link.remove(); unsubscribe(); services.dispose(); };
     }

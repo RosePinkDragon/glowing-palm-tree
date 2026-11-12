@@ -48,3 +48,16 @@ test('delayed order results are discarded after logout and after returning to th
   await pending;
   assert.equal(visible, '');
 });
+
+test('auth callback keeps deployed app path and removes credentials even on errors', async () => {
+  const { parseAuthCallback, webRedirectUrl } = await import('./auth-callback.ts');
+  const href = 'https://example.test/glowing-palm-tree/app/?code=secret&keep=yes#error_description=expired&access_token=foreign';
+  assert.equal(webRedirectUrl(href), 'https://example.test/glowing-palm-tree/app/');
+  const callback = parseAuthCallback(href);
+  assert.equal(callback.code, 'secret');
+  assert.equal(callback.error, 'expired');
+  assert.equal(callback.cleanUrl, '/glowing-palm-tree/app/?keep=yes');
+  const tokenOnly = parseAuthCallback('https://example.test/app/#access_token=foreign&refresh_token=foreign');
+  assert.equal(tokenOnly.code, null);
+  assert.equal(tokenOnly.cleanUrl, '/app/');
+});
