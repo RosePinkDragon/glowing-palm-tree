@@ -1,0 +1,17 @@
+{
+  "name": "glowing-palm-tree-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "check:codex": "node .github/scripts/validate-codex.mjs",
+    "test:codex": "node --test --test-isolation=none .github/scripts/validate-codex.test.mjs"
+  },
+  "devDependencies": {
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1"
+  }
+}
