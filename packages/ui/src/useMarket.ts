@@ -40,7 +40,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
       const started = identity.current;
       const applySession = (s: Session) => { const next = nextIdentity(identity.current, s?.user.id ?? null); if (next !== identity.current) { identity.current = next; setIdentityVersion(next.generation); setOrders([]); } setSession(s); };
       void services.auth.session().then(s => { if (active && sameIdentity(started, identity.current)) applySession(s); }).catch(e => { if (active && sameIdentity(started, identity.current)) setError(messageOf(e)); });
-      const unsubscribe = services.auth.onChange((event, s) => { if (active) { applySession(s); if (event === 'PASSWORD_RECOVERY') setRecovery(true); } });
+      const unsubscribe = services.auth.onChange(async (event, s) => { if (active) { applySession(s); if (event === 'PASSWORD_RECOVERY') setRecovery(true); } });
       const handledUrls = new Set<string>();
       const handleUrl = async (url: string) => {
         if (handledUrls.has(url)) return;
