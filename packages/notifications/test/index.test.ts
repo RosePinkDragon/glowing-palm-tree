@@ -65,3 +65,10 @@ test('failed backend removal is retained for a retry', async () => {
   await messaging.disable();
   assert.deepEqual(calls, ['remove', 'remove', 'delete']);
 });
+
+test('web analytics fails closed without verified stream policy before SDK initialization', async () => {
+  const { createWebAnalytics } = await import('../src/web.ts');
+  const config = { apiKey: 'public', projectId: 'project', appId: 'app', messagingSenderId: 'sender', measurementId: 'G-test' };
+  await assert.rejects(createWebAnalytics(config).enable(), /Enhanced Measurement.*explicitly verified/);
+  await assert.rejects(createWebAnalytics(config, { enhancedMeasurementDisabled: false }).enable(), /Enhanced Measurement.*explicitly verified/);
+});

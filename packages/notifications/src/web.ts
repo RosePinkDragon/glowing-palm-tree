@@ -22,13 +22,15 @@ function clearAnalyticsCookies() {
     for (let i = 0; i < host.length - 1; i++) document.cookie = `${name}=; Max-Age=0; path=/; domain=${host.slice(i).join('.')}; SameSite=Lax`;
   }
 }
-export function createWebAnalytics(config: Partial<WebConfig>): AnalyticsPort {
+/** Set this attestation only after verifying the GA4 stream in the Firebase/Google Analytics console. */
+export function createWebAnalytics(config: Partial<WebConfig>, policy?: { enhancedMeasurementDisabled?: boolean }): AnalyticsPort {
   let analytics: Analytics | undefined;
   const setDisabled = (disabled: boolean) => {
     if (typeof window !== 'undefined' && config.measurementId) (window as unknown as Record<string, unknown>)[`ga-disable-${config.measurementId}`] = disabled;
   };
   return {
     async enable() {
+      if (policy?.enhancedMeasurementDisabled !== true) throw new Error('Google Analytics is unavailable until Enhanced Measurement is disabled in the GA4 stream and explicitly verified.');
       if (!configured(config) || !config.measurementId) throw new Error('Google Analytics is not configured.');
       if (!(await analyticsSupported())) throw new Error('Google Analytics is unsupported in this browser.');
       setDisabled(false);
