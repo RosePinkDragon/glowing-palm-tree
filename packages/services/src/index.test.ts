@@ -179,3 +179,39 @@ test('password reset uses PKCE and persists the verifier', async () => {
     service.dispose();
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('browser callback waits for explicit code exchange', async () => {
+  const originalFetch = globalThis.fetch;
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const channelDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'BroadcastChannel');
+  const memory = new Map<string, string>();
+  const key = sessionStorageKey('https://example.test', slug, 'customer');
+  memory.set(`${key}-code-verifier`, JSON.stringify('stored-verifier'));
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
+  const requests: Record<string, unknown>[] = [];
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { href: 'https://app.example.test/?code=callback-code' }, addEventListener() {}, removeEventListener() {} } });
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} } });
+  Object.defineProperty(globalThis, 'BroadcastChannel', { configurable: true, value: undefined });
+  globalThis.fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
+  };
+  try {
+    const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
+    assert.equal(await service.auth.session(), null);
+    assert.equal(requests.length, 0);
+    assert.ok(memory.has(`${key}-code-verifier`));
+    await service.auth.exchangeCodeForSession('callback-code');
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].auth_code, 'callback-code');
+    assert.equal(requests[0].code_verifier, 'stored-verifier');
+    service.dispose();
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [name, descriptor] of [['window', windowDescriptor], ['document', documentDescriptor], ['BroadcastChannel', channelDescriptor]] as const) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});
