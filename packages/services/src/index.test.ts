@@ -93,7 +93,7 @@ test('SDK channel stops on sign out and dispose, including an in-flight subscrip
   globalThis.fetch = async (input) => {
     const url = String(input);
     if (url.includes('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: userId, aud: 'authenticated' } });
-    if (url.includes('/auth/v1/logout')) return new Response(null, { status: 204 });
+    if (url.includes('/auth/v1/logout')) { assert.equal(new URL(url).searchParams.get('scope'), 'local'); return new Response(null, { status: 204 }); }
     if (url.includes('/rest/v1/businesses')) {
       if (holdBusiness) await new Promise<void>(resolve => { unblockBusiness = resolve; });
       return Response.json({ id: 'tenant-id', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true });
@@ -124,4 +124,58 @@ test('SDK channel stops on sign out and dispose, including an in-flight subscrip
     await assert.rejects(pending, (error: unknown) => error instanceof ServiceError && error.code === 'SESSION_CHANGED');
     assert.equal(removed, 2);
   } finally { globalThis.fetch = originalFetch; SupabaseClient.prototype.channel = originalChannel; SupabaseClient.prototype.removeChannel = originalRemove; }
+});
+
+test('admin catalogue mutations use checked membership and tenant-scoped requests', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: { url: URL; method: string; body: Record<string, unknown> }[] = [];
+  const memory = new Map<string, string>();
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'user1', aud: 'authenticated' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-id', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true });
+    if (url.pathname.endsWith('/business_memberships')) {
+      assert.equal(url.searchParams.get('business_id'), 'eq.tenant-id');
+      assert.equal(url.searchParams.get('user_id'), 'eq.user1');
+      return Response.json({ role: 'admin' });
+    }
+    if (url.pathname.endsWith('/menu_items')) {
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      calls.push({ url, method, body });
+      return Response.json(method === 'DELETE' ? { id: 'item1' } : { id: 'item1', name: 'Dish', description: '', category: 'Main', price_paise: 100, available: true, is_demo: true, image_url: null });
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+  try {
+    const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
+    await service.auth.signIn('admin@example.test', 'password');
+    const item = { name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: true };
+    await service.saveMenuItem(item); await service.saveMenuItem({ ...item, id: 'item1' }); await service.deleteMenuItem('item1');
+    assert.equal(calls[0].method, 'POST'); assert.equal(calls[0].body.business_id, 'tenant-id'); assert.equal(calls[0].body.is_demo, true);
+    for (const call of calls.slice(1)) { assert.equal(call.url.searchParams.get('id'), 'eq.item1'); assert.equal(call.url.searchParams.get('business_id'), 'eq.tenant-id'); }
+    assert.equal(calls[1].method, 'PATCH'); assert.equal(calls[1].body.business_id, undefined); assert.equal(calls[2].method, 'DELETE');
+    await assert.rejects(service.saveMenuItem({ ...item, pricePaise: 1.5 }), /positive whole price/);
+    await assert.rejects(service.saveMenuItem({ ...item, isDemo: undefined as never }), /sample status/);
+    assert.equal(calls.length, 3); service.dispose();
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('password reset uses PKCE and persists the verifier', async () => {
+  const originalFetch = globalThis.fetch;
+  const memory = new Map<string, string>();
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_input, init) => { body = JSON.parse(String(init?.body)); return Response.json({}); };
+  try {
+    const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
+    await service.auth.resetPassword('user@example.test', 'market://reset');
+    assert.equal(typeof body.code_challenge, 'string');
+    assert.equal(body.code_challenge_method, 's256');
+    assert.ok([...memory.keys()].some(key => key.endsWith('-code-verifier')));
+    service.dispose();
+  } finally { globalThis.fetch = originalFetch; }
 });

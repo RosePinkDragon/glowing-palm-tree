@@ -5,6 +5,7 @@ import { storage } from './storage';
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
 export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean }
+export interface SaveMenuItemInput { id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean }
 export interface PlaceOrderInput { lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix; idempotencyKey: string }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
@@ -88,7 +89,7 @@ export function createMarketServices(options: ServiceOptions) {
   if (Boolean(url) !== Boolean(key)) throw new ServiceError('INVALID_CONFIG', 'Set both EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, or neither for demo browsing.');
   if (key && !isPublicKey(key)) throw new ServiceError('INVALID_CONFIG', 'Use a Supabase publishable key or legacy anon key for the client.');
   const persistence = safeStorage(options.storage ?? storage);
-  const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { storage: persistence.adapter, storageKey: sessionStorageKey(url, slug, audience), persistSession: true, autoRefreshToken: true, detectSessionInUrl: typeof window !== 'undefined' } }) : null;
+  const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { storage: persistence.adapter, storageKey: sessionStorageKey(url, slug, audience), persistSession: true, autoRefreshToken: true, flowType: 'pkce', detectSessionInUrl: typeof window !== 'undefined' } }) : null;
   let disposed = false;
   let generation = 0;
   let sessionUserId: string | undefined;
@@ -138,7 +139,7 @@ export function createMarketServices(options: ServiceOptions) {
     async exchangeCodeForSession(code: string) { const { data, error } = await requireClient().auth.exchangeCodeForSession(code); fail(error, 'Could not complete the email link'); return data.session; },
     async setSession(accessToken: string, refreshToken: string) { const { data, error } = await requireClient().auth.setSession({ access_token: accessToken, refresh_token: refreshToken }); fail(error, 'Could not complete the email link'); return data.session; },
     async updatePassword(password: string) { const { data, error } = await requireClient().auth.updateUser({ password }); fail(error, 'Could not update password'); return data.user; },
-    async signOut() { const db = requireClient(); clearSubscriptions(); const { error } = await db.auth.signOut(); fail(error, 'Could not sign out'); },
+    async signOut() { const db = requireClient(); clearSubscriptions(); const { error } = await db.auth.signOut({ scope: 'local' }); fail(error, 'Could not sign out'); },
     onChange(callback: Parameters<SupabaseClient['auth']['onAuthStateChange']>[0]) { const { data } = requireClient().auth.onAuthStateChange(callback); return () => data.subscription.unsubscribe(); },
   };
   const isAdmin = async (): Promise<boolean> => {
@@ -147,6 +148,38 @@ export function createMarketServices(options: ServiceOptions) {
     if (!user.user) return false;
     const { data, error } = await db.from('business_memberships').select('role').eq('business_id', business.id).eq('user_id', user.user.id).eq('role', 'admin').maybeSingle();
     fail(error, 'Could not verify admin membership'); return !!data;
+  };
+  const requireAdminBusiness = async (): Promise<Business> => {
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage the menu.');
+    const business = await getBusiness();
+    if (!await isAdmin()) throw new ServiceError('ADMIN_REQUIRED', 'Admin membership is required to manage the menu.');
+    return business;
+  };
+  const saveMenuItem = async (input: SaveMenuItemInput): Promise<MenuItem> => {
+    if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 100 ||
+        typeof input.category !== 'string' || !input.category.trim() || input.category.trim().length > 100 ||
+        typeof input.description !== 'string' || input.description.length > 1000 ||
+        !Number.isSafeInteger(input.pricePaise) || input.pricePaise <= 0 || input.pricePaise > 2147483647 ||
+        typeof input.isAvailable !== 'boolean' || typeof input.isDemo !== 'boolean' ||
+        (input.id !== undefined && (typeof input.id !== 'string' || !input.id.trim()))) {
+      throw new ServiceError('INVALID_MENU_ITEM', 'Enter a name and category (up to 100 characters), a description (up to 1000 characters), a positive whole price in paise, and availability and sample status.');
+    }
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const values = { name: input.name.trim(), description: input.description.trim(), category: input.category.trim(), price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo };
+    const query = input.id === undefined
+      ? db.from('menu_items').insert({ ...values, business_id: business.id })
+      : db.from('menu_items').update(values).eq('id', input.id).eq('business_id', business.id);
+    const { data, error } = await query.select('*').single();
+    fail(error, 'Could not save menu item');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
+    return mapMenu(data as MenuRow, slug);
+  };
+  const deleteMenuItem = async (id: string): Promise<void> => {
+    if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_MENU_ITEM', 'Choose a menu item to delete.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_items').delete().eq('id', id).eq('business_id', business.id).select('id').maybeSingle();
+    fail(error, 'Could not delete menu item');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
   const loadOrder = async (id: string): Promise<Order> => {
     const db = requireClient(); const business = await getBusiness();
@@ -190,8 +223,10 @@ export function createMarketServices(options: ServiceOptions) {
     return unsubscribe;
   };
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders };
 }
+
+export type MarketServices = ReturnType<typeof createMarketServices>;
 
 /** Subscribe to invalidations; refresh on each successful connection, including reconnects. */
 export function subscribeToOrderChanges(db: SupabaseClient, businessId: string, slug: BusinessSlug, audience: AppAudience, refresh: () => void, onError?: (error: ServiceError) => void): () => void {
