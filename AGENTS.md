@@ -8,7 +8,9 @@ Preserve user changes. Read-only investigation and planning may precede approval
 Start with an issue. Before implementing or delegating implementation of a feature,
 verify the exact remote `approved` label. The lead never self-approves; the lead may
 record an owner's explicit authorization to implement a named issue by applying the
-label with evidence. Do not infer approval from vague discussion. Classify work by its
+label with evidence. An owner may explicitly delegate applying approval after relevant
+agent review for a defined scope; record that authority and review before labeling.
+Do not infer approval from vague discussion. Classify work by its
 outcome, not its branch prefix: mixed feature and bug work is feature-gated, and a
 release branch does not bypass approval. For a bug, document reproduction and scope;
 proceed if the blast radius is small OR clearly understood, otherwise seek owner approval.
@@ -35,6 +37,9 @@ deletions, and renames. Exclude only `.gitignore`, files whose basename is READM
 (including README.md), and objectively generated lockfiles. Handwritten configuration,
 CI, tests, docs, agents, and skills count. Plan the count before implementation, split
 work if needed, and verify it again before a PR. The lead alone opens or updates the
-PR and requests owner review. Do not auto-merge.
+PR and normally requests owner review. With explicit owner delegation for the current
+effort, the lead may merge only the independently reviewed head after its checks pass.
+Record authority and review evidence; never bypass protections or self-approve a
+GitHub review.
 Do not start cloud builds or deployments unless explicitly requested. Local build,
 export, and compile validation is allowed. Report checks and limitations.
