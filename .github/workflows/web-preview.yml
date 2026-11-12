@@ -32,7 +32,7 @@ jobs:
           for app in ammu-sammu-customer ammu-sammu-admin konkan-fine-dine-customer konkan-fine-dine-admin; do
             if [[ ! -f "apps/$app/package.json" ]]; then echo "Missing app workspace: $app" >&2; exit 1; fi
             EXPO_PUBLIC_WEB_BASE_PATH="/glowing-palm-tree/$app/" npm run build:web --workspace "$app"
-            if [[ ! -f "apps/$app/dist/index.html" ]]; then echo "Web export is missing apps/$app/dist/index.html" >&2; exit 1; fi
+            if [[ ! -f "apps/$app/dist/web/index.html" ]]; then echo "Web export is missing apps/$app/dist/web/index.html" >&2; exit 1; fi
           done
       - name: Combine app exports into the Pages artifact
         shell: bash
@@ -41,7 +41,7 @@ jobs:
           mkdir -p pages-site/glowing-palm-tree
           for app in ammu-sammu-customer ammu-sammu-admin konkan-fine-dine-customer konkan-fine-dine-admin; do
             mkdir -p "pages-site/glowing-palm-tree/$app"
-            cp -R "apps/$app/dist/." "pages-site/glowing-palm-tree/$app/"
+            cp -R "apps/$app/dist/web/." "pages-site/glowing-palm-tree/$app/"
           done
       - uses: actions/upload-pages-artifact@v3
         with:
