@@ -18,7 +18,9 @@
     "check:codex": "node .github/scripts/validate-codex.mjs",
     "test:codex": "node --test --test-isolation=none .github/scripts/validate-codex.test.mjs",
     "test:core": "node scripts/workspaces.mjs test:core",
-    "test": "npm run test:codex && npm run test:workspaces && npm run test:core",
+    "test:packages": "node scripts/test-packages.mjs",
+    "test:config": "node --test --test-isolation=none config/app-config.test.cjs",
+    "test": "npm run test:codex && npm run test:workspaces && npm run test:config && npm run test:packages",
     "check": "npm run check:codex && npm run typecheck && npm test",
     "test:workspaces": "node --test --test-isolation=none .github/scripts/workspaces.test.mjs"
   },
