@@ -1,13 +1,6 @@
-/** Browser storage is deliberately guarded for server rendering and private browsing. */
+/** Accessing localStorage itself can throw in restricted browser contexts. */
 export const storage = {
-  getItem(key: string): string | null {
-    if (typeof localStorage === 'undefined') return null;
-    return localStorage.getItem(key);
-  },
-  setItem(key: string, value: string): void {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-  },
-  removeItem(key: string): void {
-    if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
-  },
+  getItem(key: string): string | null { return localStorage.getItem(key); },
+  setItem(key: string, value: string): void { localStorage.setItem(key, value); },
+  removeItem(key: string): void { localStorage.removeItem(key); },
 };

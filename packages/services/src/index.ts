@@ -23,6 +23,48 @@ export function sessionStorageKey(url: string, slug: BusinessSlug, audience: App
   return `market:${encodeURIComponent(url.replace(/\/+$/, ''))}:${slug}:${audience}`;
 }
 
+/** Accept only client-facing keys; decoding the JWT here does not verify its signature. */
+function isPublicKey(key: string): boolean {
+  if (/^sb_publishable_[A-Za-z0-9_-]+$/.test(key)) return true;
+  const parts = key.split('.');
+  if (parts.length !== 3 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) return false;
+  try {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const encoded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    let bits = 0, buffer = 0, decoded = '';
+    for (const char of encoded) {
+      buffer = (buffer << 6) | alphabet.indexOf(char); bits += 6;
+      if (bits >= 8) { bits -= 8; decoded += String.fromCharCode((buffer >> bits) & 255); }
+    }
+    return JSON.parse(decoded).role === 'anon';
+  } catch { return false; }
+}
+
+/** Retain the current session in memory if storage is blocked or fails. */
+function safeStorage(backing: SupportedStorage) {
+  const memory = new Map<string, string>();
+  let available = true;
+  const adapter: SupportedStorage = {
+    async getItem(key) {
+      if (available) try {
+        const value = await backing.getItem(key);
+        if (value != null) memory.set(key, value); else memory.delete(key);
+        return value;
+      } catch { available = false; }
+      return memory.get(key) ?? null;
+    },
+    async setItem(key, value) {
+      memory.set(key, value);
+      if (available) try { await backing.setItem(key, value); } catch { available = false; }
+    },
+    async removeItem(key) {
+      memory.delete(key);
+      if (available) try { await backing.removeItem(key); } catch { available = false; }
+    },
+  };
+  return { adapter, isAvailable: () => available };
+}
+
 // The direct property reads allow Expo to inline only public environment variables.
 function publicConfig(): PublicConfig {
   return { url: process.env.EXPO_PUBLIC_SUPABASE_URL, anonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY };
@@ -44,8 +86,21 @@ export function createMarketServices(options: ServiceOptions) {
   const url = config.url?.trim();
   const key = config.anonKey?.trim();
   if (Boolean(url) !== Boolean(key)) throw new ServiceError('INVALID_CONFIG', 'Set both EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, or neither for demo browsing.');
-  const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { storage: options.storage ?? storage, storageKey: sessionStorageKey(url, slug, audience), persistSession: true, autoRefreshToken: true, detectSessionInUrl: typeof window !== 'undefined' } }) : null;
+  if (key && !isPublicKey(key)) throw new ServiceError('INVALID_CONFIG', 'Use a Supabase publishable key or legacy anon key for the client.');
+  const persistence = safeStorage(options.storage ?? storage);
+  const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { storage: persistence.adapter, storageKey: sessionStorageKey(url, slug, audience), persistSession: true, autoRefreshToken: true, detectSessionInUrl: typeof window !== 'undefined' } }) : null;
+  let disposed = false;
+  let generation = 0;
+  let sessionUserId: string | undefined;
+  const subscriptions = new Set<() => void>();
+  const clearSubscriptions = () => { generation++; for (const unsubscribe of subscriptions) unsubscribe(); subscriptions.clear(); };
+  const authListener = client?.auth.onAuthStateChange((event, session) => {
+    const nextId = session?.user.id;
+    if (event === 'SIGNED_OUT' || (sessionUserId && nextId !== sessionUserId)) clearSubscriptions();
+    sessionUserId = nextId;
+  }).data.subscription;
   const requireClient = () => {
+    if (disposed) throw new ServiceError('DISPOSED', 'This service has been disposed.');
     if (!client) throw new ServiceError('DEMO_MODE', 'This is a sample menu. Connect the backend to sign in or place an order.');
     return client;
   };
@@ -83,7 +138,7 @@ export function createMarketServices(options: ServiceOptions) {
     async exchangeCodeForSession(code: string) { const { data, error } = await requireClient().auth.exchangeCodeForSession(code); fail(error, 'Could not complete the email link'); return data.session; },
     async setSession(accessToken: string, refreshToken: string) { const { data, error } = await requireClient().auth.setSession({ access_token: accessToken, refresh_token: refreshToken }); fail(error, 'Could not complete the email link'); return data.session; },
     async updatePassword(password: string) { const { data, error } = await requireClient().auth.updateUser({ password }); fail(error, 'Could not update password'); return data.user; },
-    async signOut() { const { error } = await requireClient().auth.signOut(); fail(error, 'Could not sign out'); },
+    async signOut() { const db = requireClient(); clearSubscriptions(); const { error } = await db.auth.signOut(); fail(error, 'Could not sign out'); },
     onChange(callback: Parameters<SupabaseClient['auth']['onAuthStateChange']>[0]) { const { data } = requireClient().auth.onAuthStateChange(callback); return () => data.subscription.unsubscribe(); },
   };
   const isAdmin = async (): Promise<boolean> => {
@@ -124,10 +179,18 @@ export function createMarketServices(options: ServiceOptions) {
     return loadOrder(data.id);
   };
   const subscribeOrders = async (refresh: () => void, onError?: (error: ServiceError) => void): Promise<() => void> => {
-    const db = requireClient(); const business = await getBusiness();
-    return subscribeToOrderChanges(db, business.id, slug, audience, refresh, onError);
+    const db = requireClient(); const started = generation;
+    const { data: session, error } = await db.auth.getSession(); fail(error, 'Could not restore session');
+    if (!session.session) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to receive order updates.');
+    const business = await getBusiness();
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Sign in again to receive order updates.');
+    const stop = subscribeToOrderChanges(db, business.id, slug, audience, refresh, onError);
+    const unsubscribe = () => { stop(); subscriptions.delete(unsubscribe); };
+    subscriptions.add(unsubscribe);
+    return unsubscribe;
   };
-  return { mode: client ? 'backend' as const : 'demo' as const, auth, getBusiness, getMenu, getOrders, isAdmin, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders };
+  const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); authListener?.unsubscribe(); };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders };
 }
 
 /** Subscribe to invalidations; refresh on each successful connection, including reconnects. */
