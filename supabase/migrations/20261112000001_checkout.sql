@@ -18,16 +18,17 @@ begin
   captured := (p_location->>'captured_at')::timestamptz;
   if lat is null or lon is null or accuracy_m is null or captured is null
      or lat not between -90 and 90 or lon not between -180 and 180
-     or accuracy_m <= 0 or accuracy_m > 100
+     or accuracy_m < 1 or accuracy_m > 100
      or captured < clock_timestamp() - interval '5 minutes'
      or captured > clock_timestamp() + interval '30 seconds' then
     return jsonb_build_object('eligible', false);
   end if;
   select n.nspname into strict spatial_schema from pg_catalog.pg_extension e
     join pg_catalog.pg_namespace n on n.oid = e.extnamespace where e.extname = 'postgis';
-  -- Geography buffers measure metres. The entire reported uncertainty circle
-  -- must be covered; touching the boundary is allowed by ST_Covers.
-  execute format('select %1$I.st_covers($1::%1$I.geography, %1$I.st_buffer(%1$I.st_setsrid(%1$I.st_makepoint($2,$3),4326)::%1$I.geography,$4))', spatial_schema)
+  -- The center must be covered and its spheroidal distance to every zone
+  -- boundary (including holes) must be at least the accuracy radius in metres.
+  -- This avoids accepting the gaps between a buffered polygon's chords.
+  execute format('select %1$I.st_covers($1::%1$I.geography, point) and %1$I.st_distance(point, %1$I.st_boundary($1)::%1$I.geography) >= $4 from (select %1$I.st_setsrid(%1$I.st_makepoint($2,$3),4326)::%1$I.geography as point) p', spatial_schema)
     into covered using b.service_area, lon, lat, accuracy_m;
   return jsonb_build_object('eligible', coalesce(covered, false));
 exception when others then
@@ -67,12 +68,12 @@ begin
     raise exception 'invalid delivery details' using errcode='22023';
   end if;
   if jsonb_typeof(p_items) is distinct from 'array' then raise exception 'invalid items' using errcode='22023'; end if;
-  if jsonb_array_length(p_items) not between 1 and 50 then raise exception 'invalid items' using errcode='22023'; end if;
+  if jsonb_array_length(p_items) not between 1 and 20 then raise exception 'invalid items' using errcode='22023'; end if;
   for item in select value from jsonb_array_elements(p_items) loop
     if jsonb_typeof(item) is distinct from 'object' or coalesce(item->>'menu_item_id','') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' or
-      coalesce(item->>'quantity','') !~ '^[1-9][0-9]{0,2}$' then raise exception 'invalid item' using errcode='22023'; end if;
+      coalesce(item->>'quantity','') !~ '^[1-9][0-9]?$' then raise exception 'invalid item' using errcode='22023'; end if;
     item_id := (item->>'menu_item_id')::uuid; qty := (item->>'quantity')::integer;
-    if qty > 100 or item_id = any(seen) then raise exception 'invalid item quantity or duplicate' using errcode='22023'; end if;
+    if qty > 10 or item_id = any(seen) then raise exception 'invalid item quantity or duplicate' using errcode='22023'; end if;
     seen := array_append(seen,item_id);
     select * into menu from public.menu_items where id=item_id and business_id=b.id and available for share;
     if not found then raise exception 'item unavailable' using errcode='22023'; end if;

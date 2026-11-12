@@ -11,10 +11,41 @@ select public.test_assert((public.check_delivery_eligibility('ammu-sammu',curren
 select public.test_assert(not (public.check_delivery_eligibility('konkan-fine-dine',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'unconfigured zone denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',2,'longitude',2,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'outside zone denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'uncertainty overlaps boundary denied');
+select public.test_assert((public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',1,'captured_at',clock_timestamp()))->>'eligible')::boolean,'one metre accuracy accepted');
+select public.test_assert((public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',100,'captured_at',clock_timestamp()))->>'eligible')::boolean,'100 metre accuracy accepted');
+select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',0.99,'captured_at',clock_timestamp()))->>'eligible')::boolean,'sub-metre accuracy denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',101,'captured_at',clock_timestamp()))->>'eligible')::boolean,'inaccurate fix denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()-interval '6 minutes'))->>'eligible')::boolean,'stale fix denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()+interval '1 minute'))->>'eligible')::boolean,'future fix denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu','{"latitude":"bad"}')->>'eligible')::boolean,'malformed fix denied');
+-- A 100 m buffered polygon is inscribed: its straight edges do not cover
+-- the entire 100 m circle despite matching the usual buffer approximation.
+reset role;
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set service_area=%1$I.st_multi(%1$I.st_buffer(%1$I.st_setsrid(%1$I.st_makepoint(0.5,0.5),4326)::%1$I.geography,100)::%1$I.geometry) where slug=''ammu-sammu''',ns);
+end $$;
+set role authenticated;
+select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',100,'captured_at',clock_timestamp()))->>'eligible')::boolean,'inscribed buffer does not cover full confidence circle');
+reset role;
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326) where slug=''ammu-sammu''',ns);
+end $$;
+set role authenticated;
+-- Generate a full-size catalog to exercise line-count and quantity boundaries.
+reset role;
+insert into public.menu_items (id,business_id,name,category,price_paise)
+select md5('boundary-item-' || n)::uuid,'10000000-0000-4000-8000-000000000001','Boundary ' || n,'Boundary',1000 from generate_series(1,21) n;
+set role authenticated;
+select set_config('test.twenty',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select id from public.menu_items where category='Boundary' order by id limit 20) x),false);
+select set_config('test.twenty_one',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select id from public.menu_items where category='Boundary' order by id limit 21) x),false);
+select public.test_assert((public.place_order('ammu-sammu',current_setting('test.twenty')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000010')->>'subtotal_paise')::integer=20000,'20 lines accepted');
+select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":10}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000011')->>'subtotal_paise')::integer=150000,'quantity 10 accepted');
+do $$ begin
+  begin perform public.place_order('ammu-sammu',current_setting('test.twenty_one')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000012'); raise exception '21 lines accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":11}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000013'); raise exception 'quantity 11 accepted'; exception when invalid_parameter_value then null; end;
+end $$;
 select set_config('test.result',public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001')::text,false);
 select set_config('test.order_id',current_setting('test.result')::jsonb->>'id',false);
 select public.test_assert((current_setting('test.result')::jsonb->>'total_paise')::integer=30500 and (current_setting('test.result')::jsonb->>'version')::integer=1,'server price and fee');
