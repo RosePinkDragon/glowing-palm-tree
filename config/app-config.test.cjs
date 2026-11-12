@@ -30,6 +30,17 @@ test('app targets retain distinct native identifiers and business audiences', ()
     assert.deepEqual(configs.map((config) => config.slug), keys);
     assert.equal(new Set(configs.map((config) => config.ios.bundleIdentifier)).size, keys.length);
     assert.deepEqual(configs.map((config) => config.extra.audience), ['customer', 'admin', 'customer', 'admin']);
+    for (const config of [configs[0], configs[2]]) {
+      assert.match(config.ios.infoPlist.NSLocationWhenInUseUsageDescription, /delivery area/);
+      assert.deepEqual(config.android.permissions, [
+        'android.permission.ACCESS_COARSE_LOCATION',
+        'android.permission.ACCESS_FINE_LOCATION',
+      ]);
+    }
+    for (const config of [configs[1], configs[3]]) {
+      assert.equal(config.ios.infoPlist, undefined);
+      assert.equal(config.android.permissions, undefined);
+    }
   });
 });
 

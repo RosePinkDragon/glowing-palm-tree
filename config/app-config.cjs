@@ -42,6 +42,15 @@ function getAppConfig(appKey) {
   const projectId = optionalProjectId();
   const owner = optionalOwner();
   const basePath = optionalWebBasePath();
+  if (target.audience === 'customer') {
+    config.ios.infoPlist = {
+      NSLocationWhenInUseUsageDescription: "Your delivery location helps confirm you're inside the selected restaurant's delivery area.",
+    };
+    config.android.permissions = [
+      'android.permission.ACCESS_COARSE_LOCATION',
+      'android.permission.ACCESS_FINE_LOCATION',
+    ];
+  }
   if (projectId) config.extra.eas = { projectId };
   if (owner) config.owner = owner;
   if (basePath) config.experiments = { baseUrl: basePath };
