@@ -41,5 +41,26 @@ SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000002_notifications.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notifications.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114000000_accepting_orders.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/accepting-orders.sql
+  # An order and a closing at the same moment are serialized by the business row lock.
+  as_user() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null 2>&1; }
+  set_open() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',%s);\n" "$1" | as_user; }
+  place_sql() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false); select public.place_order('ammu-sammu','[{\"menu_item_id\":\"20000000-0000-4000-8000-000000000001\",\"quantity\":1}]','{\"name\":\"Race\",\"phone\":\"123\",\"address_line\":\"Test\"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()),'%s');\n" "$1"; }
+  count_orders() { docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select count(*) from public.orders where idempotency_key='$1'"; }
+  # 1. An order in flight finishes first; the close waits for it.
+  set_open true
+  { echo 'begin;'; place_sql 60000000-0000-4000-8000-000000000584; echo 'select pg_sleep(2); commit;'; } | as_user & order_pid=$!
+  sleep 1
+  set_open false
+  wait "$order_pid" || { echo 'In-flight order was refused by a later close' >&2; exit 1; }
+  [[ "$(count_orders 60000000-0000-4000-8000-000000000584)" == 1 ]] || { echo 'In-flight order missing' >&2; exit 1; }
+  # 2. A close in flight finishes first; the order waits and is refused.
+  set_open true
+  { echo "begin; set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',false); select pg_sleep(2); commit;"; } | as_user & close_pid=$!
+  sleep 1
+  if place_sql 60000000-0000-4000-8000-000000000585 | as_user; then echo 'Order accepted during a close' >&2; exit 1; fi
+  wait "$close_pid"
+  [[ "$(count_orders 60000000-0000-4000-8000-000000000585)" == 0 ]] || { echo 'Order placed during a close' >&2; exit 1; }
 done
-echo 'Database isolation, checkout and notification tests passed in fresh and existing PostGIS schemas.'
+echo 'Database isolation, checkout, notification and open/closed tests passed in fresh and existing PostGIS schemas.'

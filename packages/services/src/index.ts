@@ -4,7 +4,7 @@ import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
-export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean }
+export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
 export interface SaveMenuItemInput { id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean }
 export interface PlaceOrderInput { lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix; idempotencyKey: string }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
@@ -18,6 +18,9 @@ export class ServiceError extends Error {
 function fail(error: { message: string; code?: string } | null, action: string): void {
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
 }
+
+/** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
+const NOT_ACCEPTING_ORDERS_SQLSTATE = '55000';
 
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
@@ -113,6 +116,7 @@ export function createMarketServices(options: ServiceOptions) {
   let generation = 0;
   let sessionUserId: string | undefined;
   const subscriptions = new Set<() => void>();
+  const publicSubscriptions = new Set<() => void>();
   const clearSubscriptions = () => { generation++; for (const unsubscribe of subscriptions) unsubscribe(); subscriptions.clear(); };
   const authListener = client?.auth.onAuthStateChange((event, session) => {
     const nextId = session?.user.id;
@@ -125,11 +129,11 @@ export function createMarketServices(options: ServiceOptions) {
     return client;
   };
   const getBusiness = async (): Promise<Business> => {
-    if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false };
-    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled').eq('slug', slug).single();
+    if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
+    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders').eq('slug', slug).single();
     fail(error, 'Could not load business');
     if (!data) throw new ServiceError('NOT_FOUND', 'Business not found.');
-    return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled };
+    return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
     if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', pricePaise: 0, isAvailable: false, isDemo: true }];
@@ -217,6 +221,7 @@ export function createMarketServices(options: ServiceOptions) {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery: { name: input.delivery.name, phone: input.delivery.phone, address_line: input.delivery.addressLine }, p_location: { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO }, p_idempotency_key: input.idempotencyKey });
+    if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (typeof data.id !== 'string') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
@@ -241,6 +246,24 @@ export function createMarketServices(options: ServiceOptions) {
     subscriptions.add(unsubscribe);
     return unsubscribe;
   };
+  /** Owners open or close the restaurant for new orders; the backend checks ownership. */
+  const setAcceptingOrders = async (accepting: boolean): Promise<boolean> => {
+    if (typeof accepting !== 'boolean') throw new ServiceError('INVALID_VALUE', 'Choose whether the restaurant is taking orders.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting });
+    fail(error, 'Could not change whether the restaurant is taking orders');
+    if (typeof data?.accepting_orders !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the change.');
+    return data.accepting_orders;
+  };
+  /** Public (guest-safe) updates to open/closed and dish availability; kept across sign-in and sign-out. */
+  const subscribeBusinessState = async (refresh: () => void, onError?: (error: ServiceError) => void): Promise<() => void> => {
+    const db = requireClient(); const business = await getBusiness();
+    if (disposed) throw new ServiceError('DISPOSED', 'This service has been disposed.');
+    const stop = subscribeToBusinessState(db, business.id, slug, audience, refresh, onError);
+    const unsubscribe = () => { stop(); publicSubscriptions.delete(unsubscribe); };
+    publicSubscriptions.add(unsubscribe);
+    return unsubscribe;
+  };
   // Bind the HTTP request to the initiating session, allowing its credentials to refresh.
   const deviceTokenRpc = async (action: 'register_device_token' | 'unregister_device_token', token: string, expectedAccessToken: string): Promise<void> => {
     const db = requireClient();
@@ -258,8 +281,8 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
-  const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, registerDeviceToken, unregisterDeviceToken };
+  const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
@@ -272,5 +295,20 @@ export function subscribeToOrderChanges(db: SupabaseClient, businessId: string, 
     if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect
     else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') onError?.(new ServiceError('REALTIME_ERROR', 'Order updates disconnected. Refresh to retry.'));
   });
+  return () => { active = false; void db.removeChannel(channel); };
+}
+
+/** Refresh business state on open/closed or dish changes, and after each (re)connection. */
+export function subscribeToBusinessState(db: SupabaseClient, businessId: string, slug: BusinessSlug, audience: AppAudience, refresh: () => void, onError?: (error: ServiceError) => void): () => void {
+  let active = true;
+  const notify = () => { if (active) refresh(); };
+  const channel = db.channel(`business-state:${slug}:${audience}:${Math.random()}`)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'businesses', filter: `id=eq.${businessId}` }, notify)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    .subscribe(status => {
+      if (!active) return;
+      if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') onError?.(new ServiceError('REALTIME_ERROR', 'Menu updates disconnected. Refresh to retry.'));
+    });
   return () => { active = false; void db.removeChannel(channel); };
 }
