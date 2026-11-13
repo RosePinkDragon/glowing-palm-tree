@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createMarketServices } from '@market/services';
 import type { AppAudience, BusinessSlug, MenuItem, Order } from '@market/core';
+import { useNotificationPreferences } from './useNotificationPreferences';
 import { parseAuthCallback } from './auth-callback';
 import { attemptKey, nextIdentity, readAttempt, sameIdentity, type CheckoutAttempt, type Identity } from './checkout-state';
 
@@ -33,6 +34,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
     catch (e) { setError(messageOf(e)); } finally { setLoading(false); }
   }, [services]);
   const refreshOrders = useCallback(async () => { const started = identity.current; const request = ++orderRequest.current; try { const result = await services.getOrders(); if (request === orderRequest.current && sameIdentity(started, identity.current)) setOrders(result); } catch (e) { if (request === orderRequest.current && sameIdentity(started, identity.current)) setError(messageOf(e)); } }, [services]);
+  const preferences = useNotificationPreferences(businessId, audience, session, services, refreshOrders);
   useEffect(() => {
     let active = true;
     void load();
@@ -79,5 +81,5 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
     void services.subscribeOrders(() => { if (active) void refreshOrders(); }, e => { if (active) setError(messageOf(e)); }).then(fn => { if (active) stop = fn; else fn(); }).catch(e => { if (active) setError(messageOf(e)); });
     return () => { active = false; stop?.(); };
   }, [session?.user.id, identityVersion, services, refreshOrders]);
-  return { services, business, menu, session, identity, identityVersion, orders, error, setError, loading, load, refreshOrders, attempt, setAttempt, attemptReady, storageError, recovery, setRecovery, notice, setNotice };
+  return { services, preferences, business, menu, session, identity, identityVersion, orders, error, setError, loading, load, refreshOrders, attempt, setAttempt, attemptReady, storageError, recovery, setRecovery, notice, setNotice };
 }

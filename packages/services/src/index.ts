@@ -41,6 +41,24 @@ function isPublicKey(key: string): boolean {
   } catch { return false; }
 }
 
+// JWT claims here are only a local equality guard; the backend verifies the signature,
+// active session and ownership on every RPC. Missing or malformed claims fail closed.
+function sessionIdentity(token: string): { userId: string; sessionId: string } | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !/^[A-Za-z0-9_-]+$/.test(parts[1])) return null;
+  try {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let bits = 0, buffer = 0, decoded = '';
+    for (const char of parts[1].replace(/-/g, '+').replace(/_/g, '/')) {
+      buffer = (buffer << 6) | alphabet.indexOf(char); bits += 6;
+      if (bits >= 8) { bits -= 8; decoded += String.fromCharCode((buffer >> bits) & 255); }
+    }
+    const claims = JSON.parse(decoded);
+    return typeof claims.sub === 'string' && claims.sub && typeof claims.session_id === 'string' && claims.session_id
+      ? { userId: claims.sub, sessionId: claims.session_id } : null;
+  } catch { return null; }
+}
+
 /** Retain the current session in memory if storage is blocked or fails. */
 function safeStorage(backing: SupportedStorage) {
   const memory = new Map<string, string>();
@@ -223,8 +241,25 @@ export function createMarketServices(options: ServiceOptions) {
     subscriptions.add(unsubscribe);
     return unsubscribe;
   };
+  // Bind the HTTP request to the initiating session, allowing its credentials to refresh.
+  const deviceTokenRpc = async (action: 'register_device_token' | 'unregister_device_token', token: string, expectedAccessToken: string): Promise<void> => {
+    const db = requireClient();
+    if (!token || !expectedAccessToken) throw new ServiceError('INVALID_TOKEN', 'A signed-in session and device token are required.');
+    const { data, error } = await db.auth.getSession(); fail(error, 'Could not restore session');
+    const expected = sessionIdentity(expectedAccessToken);
+    const currentToken = data.session?.access_token;
+    const current = currentToken ? sessionIdentity(currentToken) : null;
+    if (disposed || !expected || !current || expected.userId !== current.userId || expected.sessionId !== current.sessionId || data.session?.user.id !== current.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Please try again.');
+    const response = await fetch(`${url!.replace(/\/+$/, '')}/rest/v1/rpc/${action}`, {
+      method: 'POST', headers: { apikey: key!, Authorization: `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_business_slug: slug, p_audience: audience, p_token: token }),
+    });
+    if (!response.ok) throw new ServiceError('TOKEN_UPDATE_FAILED', 'Could not update notification settings. Please try again.');
+  };
+  const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
+  const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

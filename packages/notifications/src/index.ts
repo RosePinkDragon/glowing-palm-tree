@@ -48,6 +48,8 @@ export type TokenResult = { status: 'ready'; token: string } | Exclude<Availabil
 export interface MessagingPort {
   /** Called only from an explicit user gesture. */
   requestToken(): Promise<TokenResult>;
+  /** Restore only if browser permission was already granted; never prompt. */
+  resumeToken(): Promise<TokenResult>;
   deleteToken(): Promise<void>;
   onHint(refresh: () => void): () => void;
 }
@@ -72,26 +74,32 @@ export function createMessaging(port: MessagingPort, backend: TokenBackend) {
     await backend.remove(owned.userId, owned.token);
     owned = undefined;
   }
+  function start(userId: string, prompt: boolean): Promise<Availability> {
+    if (!userId) return Promise.resolve({ status: 'error', reason: 'Sign in before enabling notifications.' });
+    const current = ++epoch;
+    // Start synchronously to preserve the explicit click gesture.
+    const tokenResult = prompt ? port.requestToken() : port.resumeToken();
+    return run(async () => {
+      const result = await tokenResult;
+      if (current !== epoch) return { status: 'error', reason: 'Notification request was superseded.' };
+      if (result.status !== 'ready') return result;
+      if (!result.token) return { status: 'error', reason: 'No notification token was returned.' };
+      if (owned && (owned.userId !== userId || owned.token !== result.token)) await clear();
+      if (current !== epoch) return { status: 'error', reason: 'Notification request was superseded.' };
+      // Always rebind on resume: the same user can have a new auth session.
+      await backend.register(userId, result.token);
+      owned = { userId, token: result.token };
+      if (current !== epoch) { await clear(); return { status: 'error', reason: 'Notification request was superseded.' }; }
+      return { status: 'ready' };
+    });
+  }
   return {
     /** Invoke directly in response to an authenticated user's notification opt-in. */
-    async enable(userId: string): Promise<Availability> {
-      if (!userId) return { status: 'error', reason: 'Sign in before enabling notifications.' };
-      const current = ++epoch;
-      // Call synchronously before any await, preserving browser gesture requirements.
-      const tokenResult = port.requestToken();
-      return run(async () => {
-        const result = await tokenResult;
-        if (current !== epoch) return { status: 'error', reason: 'Notification request was superseded.' };
-        if (result.status !== 'ready') return result;
-        if (!result.token) return { status: 'error', reason: 'No notification token was returned.' };
-        if (owned && (owned.userId !== userId || owned.token !== result.token)) await clear();
-        if (!owned) {
-          await backend.register(userId, result.token);
-          owned = { userId, token: result.token };
-        }
-        return { status: 'ready' };
-      });
-    },
+    enable(userId: string): Promise<Availability> { return start(userId, true); },
+    /** Rebind an opted-in user and current auth session without requesting permission. */
+    resume(userId: string): Promise<Availability> { return start(userId, false); },
+    /** Immediately invalidate in-flight work before auth changes. */
+    invalidate(): void { ++epoch; },
     /** Call before signing out or switching accounts, while backend authentication remains valid. */
     disable(): Promise<void> {
       ++epoch;
@@ -105,6 +113,7 @@ export function createMessaging(port: MessagingPort, backend: TokenBackend) {
 export function unavailableNativeMessaging(): MessagingPort {
   return {
     async requestToken() { return { status: 'unsupported', reason: 'Native push requires a configured development build and provider integration.' }; },
+    async resumeToken() { return { status: 'unsupported', reason: 'Notifications are not available on this device.' }; },
     async deleteToken() {},
     onHint() { return () => {}; }
   };
