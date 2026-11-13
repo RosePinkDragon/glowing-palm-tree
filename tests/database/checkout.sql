@@ -8,7 +8,7 @@ select set_config('test.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'
 select set_config('test.items','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":2}]',false);
 select set_config('test.delivery','{"name":"Test Customer","phone":"123","address_line":"Test address"}',false);
 select public.test_assert((public.check_delivery_eligibility('ammu-sammu',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'inside confidence circle');
-select public.test_assert(not (public.check_delivery_eligibility('konkan-fine-dine',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'unconfigured zone denied');
+select public.test_assert(not (public.check_delivery_eligibility('kokani-dine-inn',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'unconfigured zone denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',2,'longitude',2,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'outside zone denied');
 select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'uncertainty overlaps boundary denied');
 select public.test_assert((public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',1,'captured_at',clock_timestamp()))->>'eligible')::boolean,'one metre accuracy accepted');

@@ -19,7 +19,7 @@ const soup: MenuItem = {
   pricePaise: 12550, isAvailable: true, isDemo: false,
 };
 const rice: MenuItem = { ...soup, id: 'rice', name: 'Rice', pricePaise: 9900 };
-const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'konkan-fine-dine' };
+const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'kokani-dine-inn' };
 
 function errorCode(fn: () => unknown, code: string): void {
   assert.throws(fn, (error: unknown) => error instanceof DomainValidationError && error.code === code);

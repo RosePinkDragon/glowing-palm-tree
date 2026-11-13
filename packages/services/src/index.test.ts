@@ -7,7 +7,7 @@ test('sessions are separated by business, audience, and backend', () => {
   const key = sessionStorageKey('https://one.example/', slug, 'customer');
   assert.equal(key, sessionStorageKey('https://one.example', slug, 'customer'));
   assert.notEqual(key, sessionStorageKey('https://one.example', slug, 'admin'));
-  assert.notEqual(key, sessionStorageKey('https://one.example', 'konkan-fine-dine', 'customer'));
+  assert.notEqual(key, sessionStorageKey('https://one.example', 'kokani-dine-inn', 'customer'));
   assert.notEqual(key, sessionStorageKey('https://two.example', slug, 'customer'));
 });
 test('demo browsing is labelled and checkout fails closed', async () => {

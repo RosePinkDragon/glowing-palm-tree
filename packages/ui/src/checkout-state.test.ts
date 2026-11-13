@@ -10,7 +10,7 @@ test('a persisted attempt preserves the original request for retries', () => {
   assert.equal(restored?.lines[0].quantity, 1);
   assert.equal(restored?.delivery.name, 'Name');
   assert.equal(restored?.idempotencyKey, 'key');
-  assert.throws(() => readAttempt(JSON.stringify(snapshot), 'konkan-fine-dine'));
+  assert.throws(() => readAttempt(JSON.stringify(snapshot), 'kokani-dine-inn'));
 });
 
 test('only a definite RPC rejection can release an attempt', async () => {
