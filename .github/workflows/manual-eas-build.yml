@@ -10,7 +10,7 @@ on:
         options:
           - ammu-sammu-customer
           - ammu-sammu-admin
-          - konkan-fine-dine-customer
+          - kokani-dine-inn-customer
           - konkan-fine-dine-admin
       platform:
         description: Build platform
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           case "$APP" in
-            ammu-sammu-customer|ammu-sammu-admin|konkan-fine-dine-customer|konkan-fine-dine-admin) ;;
+            ammu-sammu-customer|ammu-sammu-admin|kokani-dine-inn-customer|konkan-fine-dine-admin) ;;
             *) echo "Unknown app target." >&2; exit 1 ;;
           esac
           if [[ ! -f "apps/$APP/package.json" ]]; then echo "The selected app workspace is not present on this branch." >&2; exit 1; fi

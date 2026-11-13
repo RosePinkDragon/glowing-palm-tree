@@ -1,5 +1,5 @@
 {
-  "name": "konkan-fine-dine-customer",
+  "name": "kokani-dine-inn-customer",
   "version": "0.1.0",
   "private": true,
   "main": "index.js",
@@ -8,7 +8,7 @@
     "web": "expo start --web",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "build:web": "node ../../scripts/export-web.mjs konkan-fine-dine-customer",
+    "build:web": "node ../../scripts/export-web.mjs kokani-dine-inn-customer",
     "export:native": "expo export --platform android --platform ios --output-dir dist/native",
     "typecheck": "tsc --noEmit"
   },
