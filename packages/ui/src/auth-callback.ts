@@ -3,7 +3,9 @@ const authKeys = ['code', 'access_token', 'refresh_token', 'token_type', 'expire
 /** Keep the app's deployed base path while excluding callback secrets from redirect URLs. */
 export function webRedirectUrl(href: string): string {
   const url = new URL(href);
-  return `${url.origin}${url.pathname}`;
+  const next = url.searchParams.get('next');
+  const allowed = next && /^\/(?:cart|account|orders(?:\/[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?)$/.test(next);
+  return `${url.origin}${url.pathname}${allowed ? `?next=${encodeURIComponent(next)}` : ''}`;
 }
 
 export function parseAuthCallback(href: string) {

@@ -1,3 +1,4 @@
+import { webRedirectUrl } from './auth-callback.ts';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { freezeAttempt, readAttempt } from './checkout-state.ts';
@@ -77,4 +78,10 @@ test('two checkout clients cannot replace an uncertain persisted attempt', async
   release(); await assert.rejects(first, /response lost/);
   await withCheckoutGuard('ammu-sammu', true, async () => { const result = await prepareAttempt(storage, 'ammu-sammu', create); assert.equal(result.existing, true); sent.push(result.attempt.idempotencyKey); }, locks);
   assert.deepEqual(sent, ['key-1', 'key-1']); assert.equal(created, 1); assert.equal(readAttempt(stored, 'ammu-sammu')?.idempotencyKey, 'key-1');
+});
+
+test('auth redirects preserve only local allowlisted navigation targets', () => {
+  const id = '40000000-0000-4000-8000-000000000001';
+  assert.equal(webRedirectUrl(`https://app.test/login?next=/orders/${id}&code=secret`), `https://app.test/login?next=${encodeURIComponent(`/orders/${id}`)}`);
+  assert.equal(webRedirectUrl('https://app.test/login?next=https://evil.test/&code=secret'), 'https://app.test/login');
 });
