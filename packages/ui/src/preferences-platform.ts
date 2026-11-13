@@ -9,7 +9,7 @@ export function preferenceAdapters() {
     messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
     measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
   };
-  const configuredBase = process.env.EXPO_PUBLIC_APP_BASE_PATH || '/';
+  const configuredBase = process.env.EXPO_PUBLIC_WEB_BASE_PATH || '/';
   // Invalid bases fail same-origin validation in the messaging adapter.
   const base = configuredBase.endsWith('/') ? configuredBase : `${configuredBase}/`;
   return {

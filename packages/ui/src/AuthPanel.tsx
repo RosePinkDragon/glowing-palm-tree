@@ -42,7 +42,7 @@ import type { useNotificationPreferences } from './useNotificationPreferences';
 export function NotificationPreferences({ settings }: { settings: ReturnType<typeof useNotificationPreferences> }) {
   return <View style={{ gap: 12 }}>
     <MarketText variant="heading">Your preferences</MarketText>
-    <MarketText>Help us improve the app with anonymous usage information.</MarketText>
+    <MarketText>Help us improve the app with basic app usage information.</MarketText>
     <MarketButton variant="secondary" disabled={!settings.ready || settings.busy} label={settings.prefs.analytics ? 'Turn analytics off' : 'Turn analytics on'} onPress={() => void settings.setAnalytics(!settings.prefs.analytics)} />
     {settings.analyticsMessage ? <MarketText>{settings.analyticsMessage}</MarketText> : null}
     <MarketText>Receive notifications about updates to your orders.</MarketText>
