@@ -236,3 +236,27 @@ test('signout removes a stale stored session after writes fail', async () => {
     assert.equal(await restored.auth.session(), null); restored.dispose();
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('device token RPCs are tied to the initiating session and app context', async () => {
+  const original = globalThis.fetch;
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'u1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`;
+  const requests: { url: string; auth: string | null; body: unknown }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'u1', aud: 'authenticated' } });
+    requests.push({ url, auth: new Headers(init?.headers).get('Authorization'), body: JSON.parse(String(init?.body)) });
+    return Response.json(null);
+  };
+  const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' } });
+  try {
+    await service.auth.signIn('person@example.test', 'password');
+    await service.registerDeviceToken('device', token);
+    await service.unregisterDeviceToken('device', token);
+    await assert.rejects(service.registerDeviceToken('device', 'stale'), (e: unknown) => e instanceof ServiceError && e.code === 'SESSION_CHANGED');
+    assert.equal(requests.length, 2);
+    assert.match(requests[0].url, /\/register_device_token$/);
+    assert.match(requests[1].url, /\/unregister_device_token$/);
+    assert.equal(requests[0].auth, `Bearer ${token}`);
+    assert.deepEqual(requests[0].body, { p_business_slug: slug, p_audience: 'admin', p_token: 'device' });
+  } finally { service.dispose(); globalThis.fetch = original; }
+});

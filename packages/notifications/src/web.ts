@@ -52,7 +52,16 @@ export function createWebMessaging(config: Partial<WebConfig>, options: { vapidK
   let unsubscribe: (() => void) | undefined;
   let listener: (() => void) | undefined;
   return {
-    requestToken(): Promise<TokenResult> {
+    requestToken(): Promise<TokenResult> { return token(true); },
+    resumeToken(): Promise<TokenResult> { return token(false); },
+    async deleteToken() { unsubscribe?.(); unsubscribe = undefined; if (messaging) await deleteToken(messaging); },
+    onHint(refresh) {
+      listener = refresh;
+      if (messaging) { unsubscribe?.(); unsubscribe = onMessage(messaging, () => listener?.()); }
+      return () => { if (listener === refresh) { unsubscribe?.(); unsubscribe = undefined; listener = undefined; } };
+    }
+  };
+  function token(prompt: boolean): Promise<TokenResult> {
       if (!configured(config) || !options.vapidKey) return Promise.resolve({ status: 'unconfigured', reason: 'Firebase messaging or the public VAPID key is not configured.' });
       if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) return Promise.resolve({ status: 'unsupported', reason: 'This browser does not support web notifications.' });
       let worker: URL;
@@ -63,7 +72,7 @@ export function createWebMessaging(config: Partial<WebConfig>, options: { vapidK
         if (worker.origin !== location.origin || scope.origin !== location.origin || !scope.pathname.endsWith('/') || !worker.pathname.startsWith(scope.pathname)) throw new Error();
       } catch { return Promise.resolve({ status: 'error', reason: 'The notification worker and its scope must be on this app origin and path.' }); }
       // Request immediately inside the caller's click handler, before any async SDK work.
-      const permission = Notification.requestPermission();
+      const permission = prompt ? Notification.requestPermission() : Promise.resolve(Notification.permission);
       return (async (): Promise<TokenResult> => {
         try {
           if (await permission !== 'granted') return { status: 'denied', reason: 'Notification permission was not granted.' };
@@ -77,12 +86,5 @@ export function createWebMessaging(config: Partial<WebConfig>, options: { vapidK
           return { status: 'ready', token };
         } catch { return { status: 'error', reason: 'Could not initialize notifications. Check the browser and Firebase configuration.' }; }
       })();
-    },
-    async deleteToken() { unsubscribe?.(); unsubscribe = undefined; if (messaging) await deleteToken(messaging); },
-    onHint(refresh) {
-      listener = refresh;
-      if (messaging) { unsubscribe?.(); unsubscribe = onMessage(messaging, () => listener?.()); }
-      return () => { if (listener === refresh) { unsubscribe?.(); unsubscribe = undefined; listener = undefined; } };
     }
-  };
 }
