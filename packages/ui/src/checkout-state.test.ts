@@ -22,6 +22,8 @@ test('only a definite RPC rejection can release an attempt', async () => {
   assert.equal(isDefiniteOrderRejection(error('Could not place order: business unavailable', '22023')), false);
   assert.equal(isDefiniteOrderRejection(error('Could not place order: authentication and idempotency key required', '22023')), false);
   assert.equal(isDefiniteOrderRejection(new Error('Network timeout')), false);
+  assert.equal(isDefiniteOrderRejection(error('The restaurant is not taking orders right now.', 'NOT_ACCEPTING_ORDERS')), true);
+  assert.equal(isDefiniteOrderRejection(error('Could not place order: restaurant is not accepting orders', 'PT409')), false);
 });
 
 test('responses from a previous identity cannot be accepted after account changes', async () => {

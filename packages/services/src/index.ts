@@ -20,7 +20,7 @@ function fail(error: { message: string; code?: string } | null, action: string):
 }
 
 /** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
-const NOT_ACCEPTING_ORDERS_SQLSTATE = '55000';
+const NOT_ACCEPTING_ORDERS_SQLSTATE = 'PT409';
 
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
@@ -304,7 +304,10 @@ export function subscribeToBusinessState(db: SupabaseClient, businessId: string,
   const notify = () => { if (active) refresh(); };
   const channel = db.channel(`business-state:${slug}:${audience}:${Math.random()}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'businesses', filter: `id=eq.${businessId}` }, notify)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    // Realtime cannot filter deletes (the old row carries only its key), so any deleted dish triggers a refresh.
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'menu_items' }, notify)
     .subscribe(status => {
       if (!active) return;
       if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect

@@ -272,23 +272,25 @@ test('device token RPCs accept refreshed credentials only for the initiating use
 
 test('business state realtime follows open/closed and dish changes, reconnects and cleans up', async () => {
   const { subscribeToBusinessState } = await import('./index.ts');
-  const listeners: { table: string; event: string; filter: string; callback: () => void }[] = [];
+  const listeners: { table: string; event: string; filter?: string; callback: () => void }[] = [];
   let status: ((value: string) => void) | undefined;
   let removed = false, refreshes = 0, errors = 0;
   const channel = {
-    on(_kind: string, spec: { table: string; event: string; filter: string }, callback: () => void) { listeners.push({ ...spec, callback }); return this; },
+    on(_kind: string, spec: { table: string; event: string; filter?: string }, callback: () => void) { listeners.push({ ...spec, callback }); return this; },
     subscribe(callback: (value: string) => void) { status = callback; return this; },
   };
   const client = { channel: () => channel, removeChannel: async (value: unknown) => { assert.equal(value, channel); removed = true; } };
   const cleanup = subscribeToBusinessState(client as never, 'tenant-id', slug, 'customer', () => { refreshes++; }, () => { errors++; });
   assert.deepEqual(listeners.map(({ table, event, filter }) => ({ table, event, filter })), [
     { table: 'businesses', event: 'UPDATE', filter: 'id=eq.tenant-id' },
-    { table: 'menu_items', event: '*', filter: 'business_id=eq.tenant-id' },
+    { table: 'menu_items', event: 'INSERT', filter: 'business_id=eq.tenant-id' },
+    { table: 'menu_items', event: 'UPDATE', filter: 'business_id=eq.tenant-id' },
+    { table: 'menu_items', event: 'DELETE', filter: undefined },
   ]);
-  status?.('SUBSCRIBED'); listeners[0].callback(); listeners[1].callback(); status?.('CHANNEL_ERROR'); status?.('SUBSCRIBED');
-  assert.equal(refreshes, 4); assert.equal(errors, 1);
+  status?.('SUBSCRIBED'); for (const listener of listeners) listener.callback(); status?.('CHANNEL_ERROR'); status?.('SUBSCRIBED');
+  assert.equal(refreshes, 6); assert.equal(errors, 1);
   cleanup(); listeners[0].callback(); status?.('SUBSCRIBED');
-  assert.equal(removed, true); assert.equal(refreshes, 4);
+  assert.equal(removed, true); assert.equal(refreshes, 6);
 });
 
 test('open/closed is read, changed only by owners, and a closed refusal has its own error', async () => {
@@ -309,7 +311,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
       const name = url.pathname.split('/').pop()!;
       rpcs.push({ name, body: JSON.parse(String(init?.body)) });
       if (name === 'set_accepting_orders') return Response.json({ business_id: 'tenant-id', accepting_orders: false });
-      if (name === 'place_order') return Response.json({ code: '55000', message: 'restaurant is not accepting orders', details: null, hint: null }, { status: 400 });
+      if (name === 'place_order') return Response.json({ code: 'PT409', message: 'restaurant is not accepting orders', details: null, hint: null }, { status: 409 });
     }
     throw new Error(`Unexpected request ${url}`);
   };

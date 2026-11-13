@@ -28,7 +28,7 @@ declare caller uuid := auth.uid(); b public.businesses%rowtype;
 begin
   if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
   if p_accepting is null then raise exception 'a value is required' using errcode='22023'; end if;
-  select * into b from public.businesses where slug=p_business_slug for update;
+  select * into b from public.businesses where slug=p_business_slug for no key update;
   if not found then raise exception 'business unavailable' using errcode='42501'; end if;
   -- Lock the membership so revocation and the change cannot race.
   perform 1 from public.business_memberships where business_id=b.id and user_id=caller and role='admin' for share;
@@ -69,7 +69,8 @@ begin
     return jsonb_build_object('id',existing.id,'business_id',existing.business_id,'status',existing.status,'version',existing.version,'subtotal_paise',existing.subtotal_paise,'delivery_fee_paise',existing.delivery_fee_paise,'total_paise',existing.total_paise,'created_at',existing.created_at);
   end if;
   if not b.accepting_orders then
-    raise exception 'restaurant is not accepting orders' using errcode='55000';
+    -- PT409: PostgREST answers HTTP 409 rather than a server error.
+    raise exception 'restaurant is not accepting orders' using errcode='PT409';
   end if;
   if not coalesce((public.check_delivery_eligibility(p_business_slug,p_location)->>'eligible')::boolean,false) then
     raise exception 'delivery unavailable' using errcode='22023';

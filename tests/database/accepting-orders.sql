@@ -23,9 +23,8 @@ set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
 do $$ begin
   begin perform public.set_accepting_orders('ammu-sammu',true); raise exception 'customer opened restaurant'; exception when insufficient_privilege then null; end;
-  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000581'); raise exception 'order accepted while closed'; exception when object_not_in_prerequisite_state then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000581'); raise exception 'order accepted while closed'; exception when sqlstate 'PT409' then null; end;
 end $$;
-select public.test_assert((select count(*)=0 from public.accepting_orders_changes), 'customer sees no change log');
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000004',false);
 do $$ begin
   begin perform public.set_accepting_orders('ammu-sammu',true); raise exception 'other owner opened restaurant'; exception when insufficient_privilege then null; end;
@@ -43,6 +42,8 @@ select public.set_accepting_orders('ammu-sammu',true);
 select public.test_assert((select count(*)=1 from public.accepting_orders_changes where accepting_orders and changed_by='30000000-0000-4000-8000-000000000003'), 'one change logged with owner; repeat is a no-op');
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000004',false);
 select public.test_assert((select count(*)=0 from public.accepting_orders_changes), 'other owner cannot see change log');
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.test_assert((select count(*)=0 from public.accepting_orders_changes), 'customer cannot see change log');
 
 -- Open: a customer orders. Closed: retries still return that order, new orders are refused.
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
@@ -53,7 +54,7 @@ select public.test_assert((select count(*)=2 from public.accepting_orders_change
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
 select public.test_assert(public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000582')->>'id'=current_setting('test.open_order'), 'retry after closing returns the existing order');
 do $$ begin
-  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000583'); raise exception 'new order accepted after closing'; exception when object_not_in_prerequisite_state then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000583'); raise exception 'new order accepted after closing'; exception when sqlstate 'PT409' then null; end;
 end $$;
 -- Orders placed before closing carry on through every status.
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
