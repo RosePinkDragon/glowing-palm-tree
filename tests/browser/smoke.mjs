@@ -71,6 +71,7 @@ await context.route(origin + '/**', async route => {
 });
 const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Add to cart', exact: true }).waitFor(); return page; };
+const focused = (page, text) => page.waitForFunction(expected => document.activeElement?.textContent === expected, text);
 const account = page => page.getByRole('button', { name: 'Account', exact: true }).click();
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async page => {
@@ -119,7 +120,9 @@ const prepareCart = async page => {
   await admin.getByText('Order queue', { exact: true }).waitFor();
   await admin.getByRole('button', { name: 'View details', exact: true }).click();
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
+  await focused(admin, `Cancel order ${orderId}?`);
   await admin.getByRole('button', { name: 'Keep order', exact: true }).click();
+  await focused(admin, 'Cancel order');
   assert.equal(mutations.length, 0);
   await admin.getByRole('button', { name: 'Mark accepted', exact: true }).click();
   await admin.getByText('Order updated to Accepted.', { exact: true }).waitFor();
@@ -137,10 +140,18 @@ const prepareCart = async page => {
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).waitFor();
   assert.equal(mutations[2].price_paise, 12345);
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
+  await focused(admin, 'Edit item');
+  await admin.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await focused(admin, 'Edit Test dish');
+  await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
   await admin.getByLabel('Price in rupees', { exact: true }).fill('125.67');
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   await admin.getByText('Meals · ₹125.67', { exact: true }).waitFor();
   assert.equal(mutations[3].price_paise, 12567);
+  await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
+  await focused(admin, 'Delete Test dish?');
+  await admin.getByRole('button', { name: 'Keep item', exact: true }).click();
+  await focused(admin, 'Delete Test dish');
   await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
   await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
   await admin.getByText('Item deleted.', { exact: true }).waitFor();
