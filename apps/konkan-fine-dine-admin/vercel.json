@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd ../.. && npm ci",
+  "buildCommand": "cd ../.. && npm run build:web --workspace konkan-fine-dine-admin",
+  "outputDirectory": "dist/web",
+  "headers": [
+    {
+      "source": "/firebase-messaging-worker.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
+  ]
+}

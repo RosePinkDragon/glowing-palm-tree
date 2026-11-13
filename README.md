@@ -1,11 +1,14 @@
 # glowing-palm-tree
 
-Shared delivery applications for Ammu Sammu and Konkan Fine Dine.
+Four Expo applications share delivery, admin, and provider services for Ammu Sammu and Konkan Fine Dine.
 
-Repository setup is being introduced through small, issue-linked pull requests.
+| Workspace | Audience |
+| --- | --- |
+| `ammu-sammu-customer` | Ammu Sammu customers |
+| `ammu-sammu-admin` | Ammu Sammu administrators |
+| `konkan-fine-dine-customer` | Konkan Fine Dine customers |
+| `konkan-fine-dine-admin` | Konkan Fine Dine administrators |
 
-- #2: Codex team roles and team-lead coordination.
-- #3: Issue approvals, branch naming, and PR review limits.
-- #1: Four-app Expo monorepo, pending separate approval.
+Use Node 24 and `npm ci`, then `npm run app -- ammu-sammu-customer web` to run an app locally. Run `npm run check` for repository checks or `npm run build:web --workspace ammu-sammu-customer` to export one web app. Substitute another workspace from the table as needed.
 
-Previously prepared application screens and setup remain preserved on local branches.
+See [release setup](docs/RELEASE.md) for Vercel, provider configuration, native builds, and launch gates. Provider projects, credentials, verified delivery areas, and production deployments still require operator setup. See the [team workflow](.agents/skills/team-lead/SKILL.md) for issue approval and review.
