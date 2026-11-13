@@ -65,7 +65,7 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
       try { const parsed = raw ? JSON.parse(raw) : null; value = { analytics: parsed?.analytics === true, push: parsed?.push === true }; } catch { /* Invalid saved preferences default off. */ }
       if (!subscribed || active.current !== generation) return;
       setPrefs(value); pushEnabled.current = value.push; setReady(true);
-      if (value.analytics) void controllers.analytics.setConsent(true).catch(() => { if (subscribed && active.current === generation) setAnalyticsMessage('Analytics is not available yet.'); });
+      if (value.analytics) void controllers.analytics.setConsent(true).then(() => { if (subscribed && active.current === generation) return controllers.analytics.track('app_open'); }).catch(() => { if (subscribed && active.current === generation) setAnalyticsMessage('Analytics is not available yet.'); });
       if (value.push) resume();
     }).catch(() => { if (subscribed && active.current === generation) { setReady(true); setAnalyticsMessage('Settings could not be restored on this device.'); } });
     const onStorage = (event: StorageEvent) => {
@@ -87,7 +87,7 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
       const next = { ...prefs, analytics: enabled }; await save(next);
       if (generation !== active.current) return;
       setPrefs(next);
-      if (enabled) await controllers.analytics.setConsent(true);
+      if (enabled) { await controllers.analytics.setConsent(true); if (generation === active.current) await controllers.analytics.track('app_open'); }
       if (generation === active.current) setAnalyticsMessage(enabled ? 'Analytics is on.' : 'Analytics is off.');
     } catch { if (generation === active.current) setAnalyticsMessage('Could not update analytics. Please try again.'); }
     finally { if (generation === active.current) setBusy(false); }
@@ -108,7 +108,7 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
     // The call must begin here, within the click handler, before any await.
     void controllers.messaging.enable(userId).then(async result => {
       if (generation !== active.current) return;
-      if (result.status === 'ready') { const next = { ...prefs, push: true }; await save(next); if (generation !== active.current) return; setPrefs(next); pushEnabled.current = true; }
+      if (result.status === 'ready') { const next = { ...prefs, push: true }; await save(next); if (generation !== active.current) return; setPrefs(next); pushEnabled.current = true; void controllers.analytics.track('notifications_enabled').catch(() => {}); }
       if (generation === active.current) setPushMessage(explain(result));
     }).catch(() => { void controllers.messaging.disable().catch(() => {}); if (generation === active.current) setPushMessage('Could not update notifications. Please try again.'); }).finally(() => { if (generation === active.current) setBusy(false); });
   }, [controllers, prefs, key, userId]);

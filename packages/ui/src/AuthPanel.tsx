@@ -44,9 +44,9 @@ export function NotificationPreferences({ settings }: { settings: ReturnType<typ
     <MarketText variant="heading">Your preferences</MarketText>
     <MarketText>Help us improve the app with basic app usage information.</MarketText>
     <MarketButton variant="secondary" disabled={!settings.ready || settings.busy} label={settings.prefs.analytics ? 'Turn analytics off' : 'Turn analytics on'} onPress={() => void settings.setAnalytics(!settings.prefs.analytics)} />
-    {settings.analyticsMessage ? <MarketText>{settings.analyticsMessage}</MarketText> : null}
+    <View accessibilityLiveRegion="polite" role="status"><MarketText>{settings.analyticsMessage}</MarketText></View>
     <MarketText>Receive notifications about updates to your orders.</MarketText>
     <MarketButton variant="secondary" disabled={!settings.ready || settings.busy} label={settings.prefs.push ? 'Turn notifications off' : 'Turn notifications on'} onPress={() => settings.setPush(!settings.prefs.push)} />
-    {settings.pushMessage ? <MarketText>{settings.pushMessage}</MarketText> : null}
+    <View accessibilityLiveRegion="polite" role="status"><MarketText>{settings.pushMessage}</MarketText></View>
   </View>;
 }

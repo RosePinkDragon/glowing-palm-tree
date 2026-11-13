@@ -15,6 +15,18 @@ test('analytics waits for explicit consent and only forwards allowlisted context
   assert.deepEqual(calls, ['enable', ['app_open', { brand: 'ammu_sammu', audience: 'customer' }], 'disable']);
 });
 
+test('notification events require successful analytics consent and stop after withdrawal', async () => {
+  const calls: string[] = [];
+  const analytics = createAnalytics({ async enable() { calls.push('enable'); }, async disable() { calls.push('disable'); }, send(name) { calls.push(name); } }, { brand: 'ammu_sammu', audience: 'customer' });
+  assert.equal(await analytics.track('notifications_enabled'), false);
+  await analytics.setConsent(true);
+  assert.equal(await analytics.track('app_open'), true);
+  assert.equal(await analytics.track('notifications_enabled'), true);
+  await analytics.setConsent(false);
+  assert.equal(await analytics.track('notifications_enabled'), false);
+  assert.deepEqual(calls, ['enable', 'app_open', 'notifications_enabled', 'disable']);
+});
+
 test('withdrawal during initialization prevents a queued event', async () => {
   let finish!: () => void;
   const calls: string[] = [];
