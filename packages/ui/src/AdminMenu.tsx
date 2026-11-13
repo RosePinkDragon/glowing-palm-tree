@@ -17,6 +17,7 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [remove, setRemove] = useState<MenuItem | null>(null);
   const [error, setError] = useState('');
+  const [operationError, setOperationError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -27,14 +28,14 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     if (!draft) return;
     const pricePaise = parseRupees(draft.price);
     if (!draft.name.trim() || !draft.category.trim() || pricePaise === null || pricePaise <= 0 || pricePaise > 2147483647) { setValidation(true); return; }
-    setBusy(true); setError(''); setSuccess('');
+    setBusy(true); setOperationError(''); setSuccess('');
     try { await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), category: draft.category.trim(), pricePaise, isAvailable: draft.isAvailable, isDemo: draft.isDemo }); closeDraft(); setSuccess('Item saved.'); await load(); }
-    catch (e) { setError(message(e)); } finally { setBusy(false); }
+    catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
   };
   const deleteItem = async () => {
     if (!remove) return;
-    setBusy(true); setError(''); setSuccess('');
-    try { await services.deleteMenuItem(remove.id); setRemove(null); setSuccess('Item deleted.'); await load(); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    setBusy(true); setOperationError(''); setSuccess('');
+    try { await services.deleteMenuItem(remove.id); setRemove(null); setSuccess('Item deleted.'); await load(); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); } catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
   };
   return <View style={{ gap: 16 }}>
     <Text nativeID="admin-menu-heading" accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 22, fontWeight: '700' }}>Menu</Text>
@@ -44,6 +45,7 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     {error ? <MarketStatus kind="error" title="Could not complete the request" message={error} action={<MarketButton label="Retry loading menu" variant="secondary" onPress={() => void load()} />} /> : null}
     {loading ? <MarketStatus kind="loading" title="Loading menu" /> : null}
     {draft ? <AccessiblePanel title={draft.id ? 'Edit item' : 'Add item'} onClose={() => { if (!busy) closeDraft(); }}>
+      {operationError ? <MarketStatus kind="error" title="Could not save item" message={operationError} /> : null}
       <MarketField label="Name" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} error={validation && !draft.name.trim() ? 'Enter a name.' : undefined} />
       <MarketField label="Category" value={draft.category} onChangeText={category => setDraft({ ...draft, category })} error={validation && !draft.category.trim() ? 'Enter a category.' : undefined} />
       <MarketField label="Description" value={draft.description} onChangeText={description => setDraft({ ...draft, description })} multiline />
@@ -52,9 +54,9 @@ export function AdminMenu({ services }: { services: MarketServices }) {
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><MarketText>Sample item</MarketText><Switch accessibilityLabel="Sample item" value={draft.isDemo} onValueChange={isDemo => setDraft({ ...draft, isDemo })} /></View>
       <MarketButton label={busy ? 'Saving…' : 'Save item'} onPress={() => void save()} disabled={busy || services.mode === 'demo'} />
       <MarketButton label="Cancel" variant="secondary" onPress={closeDraft} disabled={busy} />
-    </AccessiblePanel> : <MarketButton label="Add item" onPress={() => { trigger.current = capturePanelFocus(); setValidation(false); setDraft(blank()); }} disabled={services.mode === 'demo'} />}
-    {remove ? <AccessiblePanel title={`Delete ${remove.name}?`} onClose={() => { if (!busy) closeRemove(); }}><MarketText>This removes the item from the menu.</MarketText><MarketButton label={busy ? 'Deleting…' : 'Confirm delete'} onPress={() => void deleteItem()} disabled={busy} /><MarketButton label="Keep item" variant="secondary" onPress={closeRemove} disabled={busy} /></AccessiblePanel> : null}
+    </AccessiblePanel> : <MarketButton label="Add item" onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft(blank()); }} disabled={services.mode === 'demo'} />}
+    {remove ? <AccessiblePanel title={`Delete ${remove.name}?`} onClose={() => { if (!busy) closeRemove(); }}><MarketText>This removes the item from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete item" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete'} onPress={() => void deleteItem()} disabled={busy} /><MarketButton label="Keep item" variant="secondary" onPress={closeRemove} disabled={busy} /></AccessiblePanel> : null}
     {!loading && !items.length && !error ? <MarketStatus kind="empty" title="No menu items yet" message="Add an item to get started." /> : null}
-    {items.map(item => <MarketCard key={item.id}><MarketText variant="heading">{item.name}</MarketText><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setValidation(false); setDraft({ ...item, price: rupeesInput(item.pricePaise) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setRemove(item); }} /></MarketCard>)}
+    {items.map(item => <MarketCard key={item.id}><MarketText variant="heading">{item.name}</MarketText><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, price: rupeesInput(item.pricePaise) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
   </View>;
 }
