@@ -27,5 +27,5 @@ jobs:
         if: always()
         with:
           name: browser-evidence
-          path: test-results/browser
+          path: dist/browser
           if-no-files-found: ignore

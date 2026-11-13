@@ -7,7 +7,7 @@ let customerServer, adminServer, browser, context;
 try {
 customerServer = await serveWeb('apps/ammu-sammu-customer/dist/web');
 adminServer = await serveWeb('apps/ammu-sammu-admin/dist/web');
-await mkdir('test-results/browser', { recursive: true });
+await mkdir('dist/browser', { recursive: true });
 
 const origin = 'https://market-fixture.supabase.co';
 const businessId = '10000000-0000-4000-8000-000000000001';
@@ -22,20 +22,25 @@ const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', deliv
 const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category: 'Meals', price_paise: 15000, available: true, is_demo: false, image_url: null };
 let savedOrder;
 let adminAllowed = false;
+let failSave = true, failDelete = true;
 let menuItems = [item];
 const mutations = [];
 let externalRequests = [];
+const externalSockets = [];
 let permissionRequests = 0;
 const requests = [];
 browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-context = await browser.newContext({ viewport: { width: 390, height: 844 }, geolocation: { latitude: 17.719, longitude: 73.397, accuracy: 10 }, permissions: ['geolocation'] });
-await context.routeWebSocket('wss://market-fixture.supabase.co/**', socket => socket.onMessage(message => {
+context = await browser.newContext({ viewport: { width: 390, height: 844 }, geolocation: { latitude: 17.719, longitude: 73.397, accuracy: 10 }, permissions: ['geolocation'], serviceWorkers: 'block' });
+await context.routeWebSocket(/.*/, socket => {
+  if (new URL(socket.url()).origin !== 'wss://market-fixture.supabase.co') { externalSockets.push(socket.url()); socket.close(); return; }
+  socket.onMessage(message => {
   const data = JSON.parse(String(message));
   const array = Array.isArray(data);
   const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
   const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index+1 })) } };
   if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
-}));
+  });
+});
 await context.addInitScript(() => { if ('Notification' in window) Notification.requestPermission = () => { window.__permissionRequests = (window.__permissionRequests || 0) + 1; return Promise.resolve('denied'); }; });
 await context.route('**/*', async route => {
   const url = new URL(route.request().url());
@@ -51,9 +56,9 @@ await context.route(origin + '/**', async route => {
   if (url.pathname === '/rest/v1/businesses') return json(business);
   if (url.pathname === '/rest/v1/menu_items') {
     if (req.method() === 'GET') return json(menuItems);
-    if (req.method() === 'POST') { const row = { ...req.postDataJSON(), id: '20000000-0000-4000-8000-000000000002' }; mutations.push(row); menuItems.push(row); return json(row); }
+    if (req.method() === 'POST') { if (failSave) { failSave = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture save failure' }) }); } const row = { ...req.postDataJSON(), id: '20000000-0000-4000-8000-000000000002' }; mutations.push(row); menuItems.push(row); return json(row); }
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
-    if (req.method() === 'DELETE') { menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
+    if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
   if (url.pathname === '/rest/v1/business_memberships') return json(adminAllowed ? { role: 'admin' } : null);
   if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
@@ -108,7 +113,7 @@ const prepareCart = async page => {
   await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).waitFor();
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   assert.equal(await second.getByText('Delivery: ₹20.00 · Total: ₹170.00', { exact: true }).count(), 1);
-  await second.screenshot({ path: 'test-results/browser/customer-confirmed-mobile.png', fullPage: true });
+  await second.screenshot({ path: 'dist/browser/customer-confirmed-mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
   console.log('PASS: cross-tab lost-response recovery reuses exact key/payload and confirms one server order');
   const admin = await context.newPage(); admin.on('pageerror', error => errors.push(error.message));
@@ -137,10 +142,17 @@ const prepareCart = async page => {
   await admin.getByLabel('Category', { exact: true }).fill('Meals');
   await admin.getByLabel('Price in rupees', { exact: true }).fill('123.45');
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
+  const addDialog = admin.getByRole('dialog');
+  await addDialog.getByRole('alert').getByText(/Fixture save failure/).waitFor();
+  assert.equal(await addDialog.getByLabel('Name', { exact: true }).inputValue(), 'Test dish');
+  assert.equal(await addDialog.getByLabel('Category', { exact: true }).inputValue(), 'Meals');
+  assert.equal(await addDialog.getByLabel('Price in rupees', { exact: true }).inputValue(), '123.45');
+  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).waitFor();
   assert.equal(mutations[2].price_paise, 12345);
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
   await focused(admin, 'Edit item');
+  assert.equal(await admin.getByRole('dialog').getByRole('alert').count(), 0);
   await admin.getByRole('button', { name: 'Cancel', exact: true }).click();
   await focused(admin, 'Edit Test dish');
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
@@ -154,10 +166,16 @@ const prepareCart = async page => {
   await focused(admin, 'Delete Test dish');
   await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
   await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
+  await admin.getByRole('dialog').getByRole('alert').getByText(/Fixture delete failure/).waitFor();
+  await admin.getByRole('button', { name: 'Keep item', exact: true }).click();
+  await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
+  assert.equal(await admin.getByRole('dialog').getByRole('alert').count(), 0);
+  await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
   await admin.getByText('Item deleted.', { exact: true }).waitFor();
   assert.equal(menuItems.length, 1);
   assert.deepEqual(errors, []);
   assert.deepEqual(externalRequests, []);
+  assert.deepEqual(externalSockets, []);
   permissionRequests += await first.evaluate(() => window.__permissionRequests || 0);
   permissionRequests += await admin.evaluate(() => window.__permissionRequests || 0);
   assert.equal(permissionRequests, 0);
