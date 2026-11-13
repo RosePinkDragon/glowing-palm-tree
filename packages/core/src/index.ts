@@ -27,5 +27,5 @@ export type {
 
 export const businesses: Record<BusinessSlug, { name: string; locale: string; currency: string }> = {
   'ammu-sammu': { name: 'Ammu Sammu', locale: 'en-IN', currency: 'INR' },
-  'konkan-fine-dine': { name: 'Konkan Fine Dine', locale: 'en-IN', currency: 'INR' },
+  'konkan-fine-dine': { name: 'Kokani Dine Inn', locale: 'en-IN', currency: 'INR' },
 };
