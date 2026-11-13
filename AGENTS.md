@@ -18,8 +18,8 @@ Resolve scope or approval ambiguity with the owner.
 
 Use a lowercase branch matching
 `(feature|bug|release)/<app_name>-<issue-number>-<short-desc>`. Valid app names are
-`ammu-sammu-customer`, `ammu-sammu-admin`, `konkan-fine-dine-customer`,
-`konkan-fine-dine-admin`, `kokani-dine-inn-customer`, `kokani-dine-inn-admin`, and `monorepo`. Use lowercase letters, digits, and hyphens
+`ammu-sammu-customer`, `ammu-sammu-admin`, `kokani-dine-inn-customer`,
+`kokani-dine-inn-admin`, and `monorepo`. Use lowercase letters, digits, and hyphens
 for the short description.
 
 ## Team and delivery

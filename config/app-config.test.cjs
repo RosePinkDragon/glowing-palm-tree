@@ -6,7 +6,7 @@ const keys = [
   'ammu-sammu-customer',
   'ammu-sammu-admin',
   'kokani-dine-inn-customer',
-  'konkan-fine-dine-admin',
+  'kokani-dine-inn-admin',
 ];
 const envNames = ['EXPO_PUBLIC_EAS_PROJECT_ID', 'EXPO_OWNER', 'EXPO_PUBLIC_WEB_BASE_PATH'];
 

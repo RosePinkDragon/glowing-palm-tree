@@ -1,4 +1,4 @@
-const scopes = '(?:ammu-sammu-(?:customer|admin)|(?:konkan-fine-dine|kokani-dine-inn)-(?:customer|admin)|monorepo)';
+const scopes = '(?:ammu-sammu-(?:customer|admin)|kokani-dine-inn-(?:customer|admin)|monorepo)';
 export const BRANCH = new RegExp(`^(feature|bug|release)/(${scopes})-([1-9][0-9]*)-([a-z0-9]+(?:-[a-z0-9]+)*)$`);
 const excluded = new Set(['.gitignore', 'README', 'README.md', 'README.rst', 'README.txt', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'Cargo.lock', 'Pipfile.lock', 'poetry.lock', 'uv.lock', 'Gemfile.lock', 'composer.lock', 'go.sum']);
 export const reviewable = path => !excluded.has(path.split('/').at(-1));
