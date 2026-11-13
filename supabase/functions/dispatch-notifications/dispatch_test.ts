@@ -6,7 +6,7 @@ function fixture() {
   const calls: string[] = [];
   const ports: Ports = {
     claim: async () => { calls.push('claim'); return [job]; },
-    destination: async () => { calls.push('destination'); return 'opaque-token'; },
+    destination: async () => { calls.push('destination'); return { token: 'opaque-token', order_id: null }; },
     send: async () => { calls.push('send'); return 'sent'; },
     finish: async (_job, result) => { calls.push(`finish:${result}`); },
   };
@@ -49,4 +49,12 @@ Deno.test('provider outcomes distinguish unregistered, temporary and permanent f
     [429, {}, 'retry'], [503, {}, 'retry'], [403, {}, 'retry'], [400, {}, 'discard'],
   ];
   for (const [status, body, expected] of cases) assert(classify(status, body) === expected, `wrong classification ${status}`);
+});
+
+Deno.test('customer routing contains only a validated opaque order id', () => {
+  const id = '40000000-0000-4000-8000-000000000001';
+  const data = message('opaque-token', id).message.data;
+  assert(JSON.stringify(data) === JSON.stringify({ kind: 'order_changed', order_id: id }), 'unexpected customer metadata');
+  assert(!('order_id' in message('opaque-token', 'https://outside.test/').message.data), 'external path leaked');
+  assert(!('order_id' in message('opaque-token', null).message.data), 'admin route changed');
 });
