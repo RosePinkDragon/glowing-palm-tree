@@ -4,7 +4,7 @@ import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketNavigation, MarketStatus, MarketText } from './components';
 import { AdminMenu } from './AdminMenu';
-import { nextStatuses, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
+import { applyOrderTransition, mergeOrderSnapshot, nextStatuses, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 export function AdminArea({ services }: { services: MarketServices }) {
@@ -29,6 +29,7 @@ export function AdminArea({ services }: { services: MarketServices }) {
 }
 function OrderQueue({ services }: { services: MarketServices }) {
   const [orders, setOrders] = useState<Order[]>([]);
+  const ordersRef = useRef<Order[]>([]);
   const [filter, setFilter] = useState<QueueFilter>('placed');
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(services.mode !== 'demo');
@@ -41,7 +42,7 @@ function OrderQueue({ services }: { services: MarketServices }) {
   const request = useRef(0);
   const load = useCallback(async () => {
     const current = ++request.current;
-    try { const result = await services.getOrders(); if (current === request.current) { setOrders(result); setError(''); } }
+    try { const result = await services.getOrders(); if (current === request.current) { ordersRef.current = mergeOrderSnapshot(ordersRef.current, result); setOrders(ordersRef.current); setError(''); } }
     catch (e) { if (current === request.current) setError(message(e)); } finally { if (current === request.current) setLoading(false); }
   }, [services]);
   useEffect(() => {
@@ -53,7 +54,15 @@ function OrderQueue({ services }: { services: MarketServices }) {
   }, [services, load, subscriptionAttempt]);
   const transition = async (order: Order, status: OrderStatus) => {
     setBusy(true); setNotice(''); setSuccess(''); setCancelOrder(null); request.current++;
-    try { const updated = await services.transitionOrder(order.id, status, order.version); request.current++; setOrders(current => current.map(item => item.id === updated.id ? updated : item)); setSuccess(`Order updated to ${statusLabel(updated.status)}.`); setFilter(updated.status === 'delivered' || updated.status === 'cancelled' ? 'complete' : updated.status); }
+    try {
+      const updated = await services.transitionOrder(order.id, status, order.version);
+      const result = applyOrderTransition(ordersRef.current, updated);
+      ordersRef.current = result.orders; setOrders(result.orders);
+      if (result.observed) {
+        setSuccess(result.observed.version > updated.version ? `Order is now ${statusLabel(result.observed.status)}.` : `Order updated to ${statusLabel(result.observed.status)}.`);
+        setFilter(result.observed.status === 'delivered' || result.observed.status === 'cancelled' ? 'complete' : result.observed.status);
+      } else setNotice('Order updated, but it is no longer in the current queue.');
+    }
     catch (e) { setNotice(`Order was not confirmed as updated: ${message(e)}. Refreshing the latest order state.`); await load(); }
     finally { setBusy(false); }
   };
