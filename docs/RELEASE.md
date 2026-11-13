@@ -19,6 +19,12 @@ In each project's Settings → Environment Variables, set the public values from
 
 The export places `firebase-messaging-worker.js` at the same-origin root. The configuration requires revalidation of this worker so updates can reach browsers. Current views use React state and the root callback query, so no SPA rewrite is needed. After deployment, open each domain, verify its callback, and inspect the root worker response and its `Cache-Control` header. Report a live URL only after deployment and browser verification.
 
+## GitHub branch protection
+
+A repository administrator should open GitHub **Settings → Branches** (branch protection rules) or **Settings → Rules → Rulesets** and protect `main`: require pull requests, require passing checks (`Delivery policy`, `quality`, `export`, `tests`, `policy`, `validate`, `postgis-rls`, and `dispatcher`), require branches to be up to date before merging, and disallow force pushes. After the browser QA workflow is merged and its check is available, require the `browser` check as well. Select the intended check sources where available and consult [the repository workflow](WORKFLOW.md) for enforcement limits and review policy. These protections are account settings and are not established by this repository.
+
+A formal GitHub approval requires a distinct eligible reviewer; agent review reports or PR comments are not GitHub approvals, and the PR author cannot approve their own PR. Arrange an eligible reviewer before requiring formal approval or CODEOWNERS review so the rule is workable.
+
 ## Supabase and launch data
 
 1. Create one Supabase project for the intended environment. In the dashboard, use **Connect** for the Project URL and **Project Settings → API Keys** for the publishable key (the legacy `anon` key also works). Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in all four Vercel projects. These are public client values; never expose the service-role key.
