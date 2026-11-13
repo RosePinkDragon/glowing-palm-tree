@@ -1,14 +1,42 @@
 # Release setup
 
-This repository contains release configuration, not release credentials or provider
-projects. The app workspaces and provider implementations must be present before a
-build can run. Never add service credentials, signing keys, provider private keys, or
-real project identifiers to the repository.
+This repository does not create provider projects, configure credentials, or deploy the apps. Never commit private credentials or send them in chat. Public client configuration can be entered in Vercel's environment settings. Complete and verify the provider and launch steps below before accepting real orders.
 
-## App targets
+## Web: four Vercel projects
 
-Create one EAS project and one GitHub environment for each app. Native identifiers are
-defined in `config/app-targets.json` and shared by app configuration:
+Connect the GitHub repository using the Vercel GitHub integration and import it four times, one project per row. Select a Vercel plan appropriate for the intended commercial use; review [Vercel's plan terms](https://vercel.com/pricing) before choosing. This setup uses the integration, so no `VERCEL_TOKEN` or GitHub Actions deployment secret is needed.
+
+| Project / app | Root Directory |
+| --- | --- |
+| Ammu Sammu customer | `apps/ammu-sammu-customer` |
+| Ammu Sammu admin | `apps/ammu-sammu-admin` |
+| Konkan Fine Dine customer | `apps/konkan-fine-dine-customer` |
+| Konkan Fine Dine admin | `apps/konkan-fine-dine-admin` |
+
+For each import, set Framework Preset to **Other**, Node.js Version to **24.x**, Production Branch to `main`, and enable **Include source files outside of the Root Directory in the Build Step** in the Root Directory settings. The app's `vercel.json` supplies the install command `cd ../.. && npm ci`, build command `cd ../.. && npm run build:web --workspace <app>` (with that app's workspace name), and output directory `dist/web` relative to the app root. Confirm these settings in the project before deploying. Use a separate domain or Vercel project domain for each app; leave `EXPO_PUBLIC_WEB_BASE_PATH` blank or set it to `/`.
+
+In each project's Settings → Environment Variables, set the public values from `.env.example` for the appropriate environment before building. Apply production values to Production; use a separate staging provider project and values for Preview where possible. Public variables are embedded in the exported client. Each app receives the same Supabase URL and publishable key for the intended environment and its own Firebase web app configuration. `EXPO_PUBLIC_EAS_PROJECT_ID` is for EAS, not required for a web deployment. Redeploy after changing build-time variables. The integration deploys `main` to production and can create preview deployments for branches and pull requests. Restrict previews and only allow trusted preview URLs in authentication settings.
+
+The export places `firebase-messaging-worker.js` at the same-origin root. The configuration requires revalidation of this worker so updates can reach browsers. Current views use React state and the root callback query, so no SPA rewrite is needed. After deployment, open each domain, verify its callback, and inspect the root worker response and its `Cache-Control` header. Report a live URL only after deployment and browser verification.
+
+## Supabase and launch data
+
+1. Create one Supabase project for the intended environment. In the dashboard, use **Connect** for the Project URL and **Project Settings → API Keys** for the publishable key (the legacy `anon` key also works). Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in all four Vercel projects. These are public client values; never expose the service-role key.
+2. From a trusted machine, authenticate the Supabase CLI, link the intended project with `supabase link --project-ref <project-ref>`, review the target and migrations, then run `supabase db push`. Both businesses share this database; verify row-level security and cross-business isolation with appropriate accounts. `supabase/seed.sql` is demonstration data, not a production catalog or verified boundary; don't use it as launch data. Keep business and menu `is_demo` flags consistent with real, reviewed data.
+3. Configure **Supabase Auth** and its implemented sign-in method. In Authentication → URL Configuration, add the four exact production domain roots to Redirect URLs; add only current trusted preview roots if previews need authentication. A separate staging project is preferable for previews. Set the Site URL appropriately and verify sign-in and callback on each app. Avoid broad preview wildcards.
+4. Through a trusted administrative database setup, create the appropriate `business_memberships` for authenticated admin users and verify each admin can access only their business. Do not distribute service credentials to clients.
+5. Before enabling ordering, obtain and independently verify the Khed, Ratnagiri delivery boundary as GeoJSON for each business. Record its source, version, and verification timestamp with the valid service-area geometry. Confirm actual menu items and prices, delivery fees, minimum orders, and cash-on-delivery terms with the businesses. Replace demo data, review `is_demo` and `ordering_enabled`, and test the server-enforced checkout and geographic boundary before enabling real orders.
+
+## Firebase, analytics, and notifications
+
+1. Create one Firebase project for the environment and register four web apps, one per target. In Firebase Console → Project settings → General → Your apps, select each web app and copy its public config into the matching Vercel project's `EXPO_PUBLIC_FIREBASE_API_KEY`, `AUTH_DOMAIN`, `PROJECT_ID`, `STORAGE_BUCKET`, `MESSAGING_SENDER_ID`, and `APP_ID` variables. The prefix for each is `EXPO_PUBLIC_FIREBASE_`. Firebase client config is public; control access through provider settings and security rules. Supabase provides authentication for these apps.
+2. For analytics, find the web app's measurement ID in its Firebase web config or Google Analytics → Admin → Data streams → the web stream, and set `EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID`. In that same stream turn **Enhanced Measurement** off, verify it is off for the actual stream, and only then set `EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED=true`. Leave it false until verified. Analytics also requires user consent.
+3. For web push, find or generate the public Web Push certificate key pair in Firebase Console → Project settings → Cloud Messaging → Web Push certificates and set its public key as `EXPO_PUBLIC_FIREBASE_VAPID_KEY`. Configure Firebase Cloud Messaging for the project. Verify permission, token registration, and delivery on each deployed origin.
+4. Deploy `dispatch-notifications` with the Supabase CLI from a trusted machine after linking the correct project: `supabase functions deploy dispatch-notifications`. Store `FCM_SERVICE_ACCOUNT` (service account JSON with `project_id`, `client_email`, and `private_key`) and a strong `NOTIFICATION_DISPATCH_SECRET` of at least 32 characters in Supabase Edge Function secrets. The function also uses Supabase's server-side `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Keep these private values out of chat, GitHub, and Vercel frontend variables. Configure a trusted scheduler to POST to the deployed function URL with `Authorization: Bearer <NOTIFICATION_DISPATCH_SECRET>`; the function checks that secret and has JWT verification disabled specifically for this endpoint. Verify scheduling and delivery without exposing the secret. See [function notes](../supabase/functions/dispatch-notifications/README.md).
+
+## EAS native builds
+
+Native builds use a separate EAS project per target. The identifiers in `config/app-targets.json` are:
 
 | App | iOS bundle ID and Android package |
 | --- | --- |
@@ -17,85 +45,6 @@ defined in `config/app-targets.json` and shared by app configuration:
 | `konkan-fine-dine-customer` | `com.rosepinkdragon.konkanfinedine.customer` |
 | `konkan-fine-dine-admin` | `com.rosepinkdragon.konkanfinedine.admin` |
 
-## Supabase
+Create each EAS project and a matching GitHub environment. Add `EXPO_TOKEN` as an environment secret, that project's UUID as the `EAS_PROJECT_ID` environment variable, and `EXPO_OWNER` if needed. The manual workflow maps the ID to `EXPO_PUBLIC_EAS_PROJECT_ID`. Once provider settings and signing credentials are ready, run **Actions → Manual EAS Build**, choosing the app, platform and preview or production profile. No build or store submission starts automatically. Review signing, store metadata, and privacy separately.
 
-1. Create a Supabase project for the intended environment and record its URL and
-   publishable anon key. Put them in the app's public runtime configuration as
-   `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
-2. From a trusted development machine, install or run the Supabase CLI, authenticate,
-   and link the intended project:
-   ```sh
-   supabase link --project-ref <project-ref>
-   supabase db push
-   ```
-   Review the SQL and target project before applying it. The schema uses
-   PostGIS and enables ordering only after a delivery area has been verified.
-3. Configure Supabase Auth providers and the exact web/native redirect URLs for the
-   app. Verify row-level-security policies and the service-area data before enabling
-   customer ordering. `supabase/seed.sql` contains demo catalog rows only; it does not
-   define a verified delivery area.
-4. Keep the Supabase service-role key in a trusted server or function secret store. It
-   must never be included in an `EXPO_PUBLIC_*` variable, app bundle, or `.env.example`.
-
-## Firebase
-
-1. Create or select the Firebase project for the intended environment. Register each
-   platform app using the identifiers in the table above.
-2. Enable only the Firebase Auth providers the product has implemented, and configure
-   authorized domains and OAuth redirect URLs to match the deployed app origins.
-3. Copy the web app's public Firebase configuration into the corresponding
-   `EXPO_PUBLIC_FIREBASE_*` entries from `.env.example`. Firebase client configuration
-   is public and must be protected with Firebase Security Rules and provider settings.
-4. Store Firebase Admin credentials and other private keys only in server-side secret
-   storage. Do not add `google-services.json`, `GoogleService-Info.plist`, private
-   keys, or service-account files to this repository. Configure any required native
-   Firebase files through EAS secret file variables after the app config consumes
-   them.
-5. Push notifications are not configured by these release pipelines. Register APNs
-   and FCM credentials in EAS only when the notification implementation and its
-   permission flows are ready.
-
-## EAS native builds
-
-1. In Expo, create a separate EAS project for each app target. Use the matching native
-   identifiers above and record that project's UUID; no project UUID is committed.
-2. In GitHub Settings, create an environment whose name exactly matches each app key.
-   Add `EXPO_TOKEN` as an environment secret and that app's `EAS_PROJECT_ID` as an
-   environment variable. Add `EXPO_OWNER` as a variable only if the Expo project uses
-   an owner. Use a distinct project UUID for each app.
-3. The shared config reads `EXPO_PUBLIC_EAS_PROJECT_ID`, validates its UUID format,
-   and places it in `extra.eas.projectId`. The workflow maps the selected environment's
-   `EAS_PROJECT_ID` into that public config value. It also validates the token and
-   project ID before invoking EAS.
-4. After the app workspace and credentials exist, open **Actions → Manual EAS Build**,
-   select an app, platform, and `preview` or `production` profile, then run it
-   deliberately. The workflow uses EAS CLI `27.9.0`. Preview builds use internal
-   distribution; production builds create binaries on the production channel. No
-   build starts automatically and no store submission is configured.
-5. Configure or verify Apple and Google signing credentials in EAS. Perform store
-   metadata, privacy, and release review separately before submitting binaries.
-
-## Manual GitHub Pages preview
-
-**GitHub Pages is currently disabled, so no preview URL is live.** After this workflow
-is merged to `main`, a repository administrator should verify Pages is available and
-that the `github-pages` environment and Actions permissions are suitable. Then open
-**Actions → Manual Web Preview** on `main` and run it manually. The workflow checks out
-`main`, exports each app under `/glowing-palm-tree/<app-key>/`, and deploys the
-combined artifact with GitHub's Pages actions. The configure step requests Pages
-enablement; report a published preview only after a successful deployment and a
-browser check of all four app paths.
-
-## Remaining launch gates
-
-- Add and review actual app workspaces, then configure the four Expo projects and GitHub
-  environments. This change does not create app code or provider project IDs.
-- Connect the chosen Supabase or Firebase Auth implementation and verify production
-  security rules. Keep provider private credentials server-side.
-- Configure and verify production delivery-area geometry, ordering controls, and the
-  server-authoritative order endpoint before accepting real orders. Demo data is not a
-  launch-ready service area.
-- Add push credentials and permission handling only with the notification feature.
-- Run the manual preview workflow and native build workflows after credentials and
-  platform signing are configured. CI exports web/native app artifacts, but these are
-  not deployments or store releases.
+Register the four native identifiers with Firebase when native integration is implemented; native push currently requires additional provider integration, development builds, and APNs/FCM setup. Do not commit native provider files or private credentials. See [notification notes](../packages/notifications/README.md).
