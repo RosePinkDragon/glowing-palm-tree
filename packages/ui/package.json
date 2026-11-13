@@ -19,6 +19,6 @@
     "react-native": "0.88.1"
   },
   "scripts": {
-    "test": "node --test --test-isolation=none src/checkout-state.test.ts"
+    "test": "node --test --test-isolation=none src/checkout-state.test.ts src/admin-model.test.ts"
   }
 }
