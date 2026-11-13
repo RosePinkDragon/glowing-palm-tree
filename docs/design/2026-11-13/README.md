@@ -17,6 +17,22 @@ The owner authorized attaching these screens to their issues and fixing remainin
 
 Original ZIP SHA-256: `7bbfac0428629308fc5f1557132bdae4f4efcedcdc6f4669b6ecdda9fdca50e7`.
 
+## Owner-supplied logo sources
+
+The owner supplied these SVGs alongside the final screen references. Both files are preserved byte for byte. They contain vector paths/shapes and accessible titles, with no embedded raster images, external resources or font dependencies.
+
+| Business | Source SVG | Intrinsic dimensions |
+| --- | --- | --- |
+| Ammu Sammu | [ammu-sammu-logo.svg](./logos/ammu-sammu-logo.svg) | 680 × 680 |
+| Kokani Dine Inn | [kokani-dine-inn-logo.svg](./logos/kokani-dine-inn-logo.svg) | 742 × 678 |
+
+Use these sources for the corresponding customer and owners' apps in #39/#53, and the Kokani identity in #40. Preserve the artwork, aspect ratio, colours and existing transparency. Platform icon/splash exports and app integration remain future implementation work; adding references does not change the paused implementation checkpoint.
+
+Source SHA-256 checksums:
+
+- Ammu Sammu: `467b3ed4a35ee0a38375c6bdfdf227ee117a3cb6df6bacaf4ae90dec239baf91`.
+- Kokani Dine Inn: `b02410d0c324fffd694b6d5ebcf3ff3fb7428624a6b01d6c81274622c3e35ec3`.
+
 ## Issue-to-screen map
 
 Each linked issue also records its own relevant references. #62 uses the existing login screens as context only; its SMS-specific designs are not included in this delivery.
