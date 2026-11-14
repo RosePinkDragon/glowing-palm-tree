@@ -10,8 +10,8 @@ Connect the GitHub repository using the Vercel GitHub integration and import it 
 | --- | --- |
 | Ammu Sammu customer | `apps/ammu-sammu-customer` |
 | Ammu Sammu admin | `apps/ammu-sammu-admin` |
-| Konkan Fine Dine customer | `apps/konkan-fine-dine-customer` |
-| Konkan Fine Dine admin | `apps/konkan-fine-dine-admin` |
+| Kokani Dine Inn customer | `apps/kokani-dine-inn-customer` |
+| Kokani Dine Inn admin | `apps/kokani-dine-inn-admin` |
 
 For each import, set Framework Preset to **Other**, Node.js Version to **24.x**, Production Branch to `main`, and enable **Include source files outside of the Root Directory in the Build Step** in the Root Directory settings. The app's `vercel.json` supplies the install command `cd ../.. && npm ci`, build command `cd ../.. && npm run build:web --workspace <app>` (with that app's workspace name), and output directory `dist/web` relative to the app root. Confirm these settings in the project before deploying. Use a separate domain or Vercel project domain for each app; leave `EXPO_PUBLIC_WEB_BASE_PATH` blank or set it to `/`.
 
@@ -48,8 +48,8 @@ Native builds use a separate EAS project per target. The identifiers in `config/
 | --- | --- |
 | `ammu-sammu-customer` | `com.rosepinkdragon.ammusammu.customer` |
 | `ammu-sammu-admin` | `com.rosepinkdragon.ammusammu.admin` |
-| `konkan-fine-dine-customer` | `com.rosepinkdragon.konkanfinedine.customer` |
-| `konkan-fine-dine-admin` | `com.rosepinkdragon.konkanfinedine.admin` |
+| `kokani-dine-inn-customer` | `com.rosepinkdragon.kokanidineinn.customer` |
+| `kokani-dine-inn-admin` | `com.rosepinkdragon.kokanidineinn.admin` |
 
 Create each EAS project and a matching GitHub environment. Add `EXPO_TOKEN` as an environment secret, that project's UUID as the `EAS_PROJECT_ID` environment variable, and `EXPO_OWNER` if needed. The manual workflow maps the ID to `EXPO_PUBLIC_EAS_PROJECT_ID`. Once provider settings and signing credentials are ready, run **Actions → Manual EAS Build**, choosing the app, platform and preview or production profile. No build or store submission starts automatically. Review signing, store metadata, and privacy separately.
 

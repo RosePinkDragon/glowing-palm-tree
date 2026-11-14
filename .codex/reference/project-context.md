@@ -5,7 +5,7 @@ this file is guidance, not evidence that an app or configuration already exists.
 
 ## Business and audience
 
-Ammu Sammu and Konkan Fine Dine each have customer and admin scopes. Keep identities,
+Ammu Sammu and Kokani Dine Inn each have customer and admin scopes. Keep identities,
 branding, access and business data separate. App identifiers or hidden routes are not
 authorization; enforce business membership and roles on the trusted backend when present.
 The confirmed service location is Khed, Ratnagiri; the delivery boundary still requires
