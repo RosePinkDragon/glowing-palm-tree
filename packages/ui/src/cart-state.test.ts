@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { menuItem } from '../../../tests/fixtures/menu.ts';
 import { addCartItem, type BusinessSlug, type MenuItem } from '@market/core';
 import { cartKey, CustomerCartStore, importCart, readCart, reconcileCart, type CartStorage } from './cart-state.ts';
 import { attemptKey, freezeAttempt } from './checkout-state.ts';
 
 const business: BusinessSlug = 'ammu-sammu';
-const item: MenuItem = { id: 'dish', businessId: business, name: 'Dish', description: 'Fresh', category: 'Meals', pricePaise: 10000, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0, diet: 'veg' };
+const item: MenuItem = menuItem({ id: 'dish', businessId: business, name: 'Dish', description: 'Fresh', category: 'Meals', pricePaise: 10000, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0, diet: 'veg' });
 const line = { item, quantity: 1 };
 function memory() {
   const values = new Map<string, string>();
