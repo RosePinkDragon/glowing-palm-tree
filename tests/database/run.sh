@@ -66,5 +66,21 @@ SQL
   grep -q 'restaurant is not accepting orders' <<<"$refusal" || { echo "$refusal" >&2; echo 'Order during a close failed for another reason' >&2; exit 1; }
   wait "$close_pid"
   [[ "$(count_orders 60000000-0000-4000-8000-000000000585)" == 0 ]] || { echo 'Order placed during a close' >&2; exit 1; }
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114082153_menu_diet_snapshots.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
 done
-echo 'Database isolation, checkout, notification and open/closed tests passed in fresh and existing PostGIS schemas.'
+# Installation order differs from the staged regression suites: apply every
+# migration before seed, proving unknown sample data can be bootstrapped safely.
+for db in all_fresh all_existing; do
+  docker exec "$container" createdb -U postgres "$db"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/fixture.sql
+  if [[ "$db" == all_existing ]]; then
+    docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
+  fi
+  for migration in supabase/migrations/*.sql; do
+    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$migration"
+  done
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
+done
+echo 'Database isolation, checkout, notification, open/closed and diet tests passed, including all migrations before seed in both PostGIS schemas.'

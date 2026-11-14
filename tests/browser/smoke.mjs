@@ -231,6 +231,9 @@ const prepareCart = async (page, add = true) => {
   await admin.getByLabel('Category', { exact: true }).filter({ visible: true }).fill('Meals');
   await admin.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).fill('123.45');
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
+  await admin.getByText('Choose a diet classification.', { exact: true }).waitFor();
+  await admin.getByRole('button', { name: 'Contains egg', exact: true }).click();
+  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   const addDialog = admin.getByRole('dialog');
   await addDialog.getByRole('alert').getByText(/Fixture save failure/).waitFor();
   assert.equal(await addDialog.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Test dish');
@@ -239,6 +242,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).waitFor();
   assert.equal(mutations[2].price_paise, 12345);
+  assert.equal(mutations[2].diet, 'egg');
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
   await focused(admin, 'Edit item');
   assert.equal(await admin.getByRole('dialog').getByRole('alert').count(), 0);
@@ -269,4 +273,103 @@ const prepareCart = async (page, add = true) => {
   permissionRequests += await admin.evaluate(() => window.__permissionRequests || 0);
   assert.equal(permissionRequests, 0);
   console.log('PASS: admin membership, order transition, cancellation and menu CRUD');
+
+  // The real exports for each brand render the same accessible shapes everywhere.
+  for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
+    const customer = await serveWeb(`apps/${slug}-customer/dist/web`);
+    const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
+    const dietContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    try {
+      const dietErrors = [], dietWrites = [];
+      const labels = ['Vegetarian', 'Contains egg', 'Non-vegetarian'];
+      let dishes = ['veg', 'egg', 'non_veg', null].map((diet, index) => ({ ...item, id: `20000000-0000-4000-8000-00000000004${index}`, name: `Diet fixture ${index + 1}`, diet }));
+      const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
+      await dietContext.addInitScript(({ slug, session }) => {
+        for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session));
+      }, { slug, session });
+      await dietContext.routeWebSocket(/.*/, socket => socket.close());
+      await dietContext.route('**/*', async route => {
+        const request = route.request(), url = new URL(request.url());
+        if (url.hostname === '127.0.0.1') return route.fallback();
+        if (url.origin !== origin) throw new Error('Unexpected diet fixture external request: ' + url.href);
+        const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        if (url.pathname === '/auth/v1/user') return json(user);
+        if (url.pathname === '/auth/v1/token') return json(session);
+        if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn', accepting_orders: true });
+        if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
+        if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
+        if (url.pathname === '/rest/v1/menu_items') {
+          if (request.method() === 'GET') return json(dishes);
+          const values = request.postDataJSON(); dietWrites.push(values);
+          const id = url.searchParams.get('id')?.replace('eq.', '');
+          dishes = dishes.map(dish => dish.id === id ? { ...dish, ...values } : dish);
+          return json(dishes.find(dish => dish.id === id));
+        }
+        throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
+      });
+      const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));
+      const marks = page => page.getByRole('img');
+      const assertMarks = async page => {
+        for (const label of labels) assert.equal(await page.getByRole('img', { name: label, exact: true }).count(), 1);
+        assert.equal(await marks(page).count(), 3, 'the unclassified fourth dish has no mark');
+      };
+      await page.goto(customer.url, { waitUntil: 'networkidle' });
+      await page.getByRole('button', { name: 'Add to cart', exact: true }).first().waitFor();
+      await assertMarks(page);
+      const shapes = await marks(page).evaluateAll(nodes => nodes.map(node => {
+        const square = getComputedStyle(node.firstElementChild), shape = getComputedStyle(node.firstElementChild.firstElementChild);
+        return { squareWidth: square.width, squareHeight: square.height, border: square.borderTopStyle, width: shape.width, height: shape.height, radius: shape.borderRadius, triangle: shape.borderBottomWidth, left: shape.borderLeftColor };
+      }));
+      for (const shape of shapes) { assert.equal(shape.squareWidth, shape.squareHeight); assert.equal(shape.border, 'solid'); }
+      assert.equal(shapes[0].width, shapes[0].height, 'veg is a circle');
+      assert.notEqual(shapes[1].width, shapes[1].height, 'egg is an oval');
+      assert.equal(shapes[2].width, '12px', 'triangle width is the two transparent 6px borders'); assert.equal(shapes[2].triangle, '11px'); assert.equal(shapes[2].left, 'rgba(0, 0, 0, 0)', 'non-veg is a triangle');
+      await page.setViewportSize({ width: 390, height: 2400 });
+      await page.screenshot({ path: `dist/browser/${slug}-diet-menu-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(index).click();
+      await page.getByRole('button', { name: /^Cart \(/ }).click();
+      await page.getByRole('heading', { name: 'Your cart', exact: true }).waitFor(); await assertMarks(page);
+      await page.reload({ waitUntil: 'networkidle' }); await assertMarks(page);
+      await page.setViewportSize({ width: 390, height: 2400 });
+      await page.screenshot({ path: `dist/browser/${slug}-diet-checkout-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      // Catalog changes affect the draft, but past orders use the stored diet.
+      dishes[0] = { ...dishes[0], diet: 'egg' };
+      await page.goto(customer.url + '/orders', { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { name: 'Your orders', exact: true }).waitFor(); await assertMarks(page);
+      await page.screenshot({ path: `dist/browser/${slug}-diet-history-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: `dist/browser/${slug}-diet-history-desktop.png`, fullPage: true });
+      // An uncertain attempt displays its own immutable dish classification.
+      const attempt = { version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: 'Frozen vegetarian dish', description: '', category: 'Meals', pricePaise: 15000, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 1 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+      await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: `market:checkout:${slug}`, value: JSON.stringify(attempt) });
+      await page.goto(customer.url + '/cart', { waitUntil: 'networkidle' });
+      await page.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
+      await page.getByText('1 × Frozen vegetarian dish · ₹150.00', { exact: true }).filter({ visible: true }).waitFor();
+      assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1, 'only frozen attempt retains the old mark');
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), JSON.stringify(attempt));
+      const adminPage = await dietContext.newPage(); adminPage.on('pageerror', error => dietErrors.push(error.message));
+      await adminPage.goto(owner.url, { waitUntil: 'networkidle' });
+      await adminPage.getByRole('button', { name: 'View details', exact: true }).click();
+      await assertMarks(adminPage);
+      await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
+      const dialog = adminPage.getByRole('dialog');
+      await dialog.getByText('Not classified yet. No diet mark is shown to customers.', { exact: true }).waitFor();
+      await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).focus(); await adminPage.keyboard.press('Enter');
+      assert.equal(await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).getAttribute('aria-pressed'), 'true');
+      await adminPage.setViewportSize({ width: 390, height: 1400 });
+      await adminPage.screenshot({ path: `dist/browser/${slug}-diet-owner-mobile.png`, fullPage: true });
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
+      await adminPage.getByText('Item saved.', { exact: true }).waitFor();
+      assert.equal(dietWrites.at(-1).diet, 'non_veg');
+      await adminPage.setViewportSize({ width: 1440, height: 900 });
+      await adminPage.screenshot({ path: `dist/browser/${slug}-diet-owner-desktop.png`, fullPage: true });
+      assert.deepEqual(dietErrors, []);
+      console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
+    } finally { await dietContext.close(); await customer.close(); await owner.close(); }
+  }
+
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
