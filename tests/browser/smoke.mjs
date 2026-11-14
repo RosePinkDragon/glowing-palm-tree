@@ -3,6 +3,8 @@ import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
+const categoriesOnly = process.argv.includes('--categories');
+const selectedBrand = process.argv.find(arg => arg.startsWith('--brand='))?.slice(8);
 let customerServer, adminServer, browser, context;
 try {
 customerServer = await serveWeb('apps/ammu-sammu-customer/dist/web');
@@ -21,6 +23,7 @@ const session = { access_token: token, refresh_token: 'fixture-refresh', expires
 const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true };
 const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 15000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
 let savedOrder;
+if (categoriesOnly) savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Synthetic', customer_phone: '123', delivery_address_line: 'Synthetic address', created_at: new Date().toISOString(), order_items: [], order_status_history: [] };
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
 let adminAllowed = false;
@@ -94,6 +97,7 @@ const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Check my delivery location', exact: true }).click();
   await page.getByText('Delivery location confirmed. Refresh if your location changes.', { exact: true }).filter({ visible: true }).waitFor();
 };
+  if (!categoriesOnly) {
   const first = await open();
   await first.getByRole('button', { name: 'Add to cart', exact: true }).click();
   await first.getByRole('button', { name: /^Cart \(/ }).click();
@@ -275,8 +279,10 @@ const prepareCart = async (page, add = true) => {
   assert.equal(permissionRequests, 0);
   console.log('PASS: admin membership, order transition, cancellation and menu CRUD');
 
+  }
   // The real exports for each brand render the same accessible shapes everywhere.
   for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
+    if (selectedBrand && slug !== selectedBrand) continue;
     const customer = await serveWeb(`apps/${slug}-customer/dist/web`);
     const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
     const dietContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
@@ -293,6 +299,7 @@ const prepareCart = async (page, add = true) => {
       let groups = [{ id: item.category_id, name: 'Meals', sort_order: 0 }];
       let failCategorySave = true, categoryDeleteRace = true;
       const categoryWrites = [];
+      let categoryReloadGate = null, failCategoryReload = false;
       const joined = dish => ({ ...dish, menu_categories: groups.find(group => group.id === dish.category_id) });
       const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
       await dietContext.addInitScript(({ slug, session }) => {
@@ -314,7 +321,11 @@ const prepareCart = async (page, add = true) => {
         if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
         if (url.pathname === '/rest/v1/menu_categories') {
           const method = request.method(), id = url.searchParams.get('id')?.replace('eq.', '');
-          if (method === 'GET') return json([...groups].sort((a,b) => a.sort_order-b.sort_order || a.name.localeCompare(b.name)));
+          if (method === 'GET') {
+            if (categoryReloadGate) { const gate = categoryReloadGate; categoryReloadGate = null; gate.requested(); await gate.wait; }
+            if (failCategoryReload) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Category reload failed' }) });
+            return json([...groups].sort((a,b) => a.sort_order-b.sort_order || a.name.localeCompare(b.name)));
+          }
           assert.equal(url.searchParams.get('business_id'), method === 'POST' ? null : `eq.${businessId}`);
           const values = method === 'DELETE' ? {} : request.postDataJSON();
           categoryWrites.push({ method, values, id });
@@ -339,11 +350,14 @@ const prepareCart = async (page, add = true) => {
         throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
       });
       const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));
+      const adminPage = await dietContext.newPage(); adminPage.on('pageerror', error => dietErrors.push(error.message));
+      const dialog = adminPage.getByRole('dialog');
       const marks = page => page.getByRole('img');
       const assertMarks = async page => {
         for (const label of labels) assert.equal(await page.getByRole('img', { name: label, exact: true }).count(), 1);
         assert.equal(await marks(page).count(), 3, 'the unclassified fourth dish has no mark');
       };
+      if (!categoriesOnly) {
       await page.goto(customer.url, { waitUntil: 'networkidle' });
       await page.getByRole('button', { name: 'Add to cart', exact: true }).first().waitFor();
       await assertMarks(page);
@@ -381,13 +395,11 @@ const prepareCart = async (page, add = true) => {
       await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
       assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1, 'only frozen attempt retains the old mark');
       assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), JSON.stringify(attempt));
-      const adminPage = await dietContext.newPage(); adminPage.on('pageerror', error => dietErrors.push(error.message));
       await adminPage.goto(owner.url, { waitUntil: 'networkidle' });
       await adminPage.getByRole('button', { name: 'View details', exact: true }).click();
       await assertMarks(adminPage);
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
-      const dialog = adminPage.getByRole('dialog');
       await dialog.getByText('Not classified yet. No diet mark is shown to customers.', { exact: true }).waitFor();
       await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).focus(); await adminPage.keyboard.press('Enter');
       assert.equal(await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -484,6 +496,11 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await page.locator('#featured-menu').count(), 0);
       assert.equal(await page.getByRole('heading', { name: featureHeading, exact: true }).count(), 0);
       console.log(`PASS: ${slug} owner featured/order validation and persistence, stable public order, unavailable exclusion and empty section hiding`);
+      } else {
+        await adminPage.goto(owner.url, { waitUntil: 'networkidle' });
+        await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
+        await page.goto(customer.url, { waitUntil: 'networkidle' });
+      }
       // Categories use independent IDs, with a real category named All.
       await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
       await focused(adminPage, 'Add category');
@@ -520,7 +537,7 @@ const prepareCart = async (page, add = true) => {
       const allDishes = page.getByRole('button', { name: 'All dishes', exact: true });
       const realAll = page.getByRole('button', { name: 'All', exact: true });
       await realAll.waitFor();
-      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), categoriesOnly ? ['Diet fixture 4','Diet fixture 1','Diet fixture 2','Diet fixture 3'] : ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
       await realAll.click();
       assert.equal(await realAll.getAttribute('aria-pressed'), 'true');
       assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), ['Diet fixture 4']);
@@ -533,13 +550,38 @@ const prepareCart = async (page, add = true) => {
       await adminPage.getByRole('button', { name: 'Delete category Temporary', exact: true }).click();
       await dialog.getByRole('button', { name: 'Confirm delete category', exact: true }).click();
       await dialog.getByText('Move all dishes to another category before deleting this category.', { exact: true }).waitFor();
+      let reloadRequested, releaseReload;
+      const reloadStarted = new Promise(resolve => { reloadRequested = resolve; });
+      categoryReloadGate = { requested: () => reloadRequested(), wait: new Promise(resolve => { releaseReload = resolve; }) };
       await dialog.getByRole('button', { name: 'Confirm delete category', exact: true }).click();
+      await reloadStarted;
+      await adminPage.getByText('Loading menu', { exact: true }).waitFor();
+      assert.equal(await adminPage.getByText('Category deleted.', { exact: true }).count(), 0, 'success waits for the category reload');
+      assert.equal(await adminPage.getByRole('button', { name: 'Edit category Temporary', exact: true }).count(), 1, 'held reload proves the stale UI window');
+      releaseReload();
       await adminPage.getByText('Category deleted.', { exact: true }).waitFor();
       assert.equal(await adminPage.getByRole('button', { name: 'Edit category Temporary', exact: true }).count(), 0);
+      await focused(adminPage, 'Menu');
+      // A committed deletion followed by a failed refresh must not announce success
+      // or repeat the DELETE when the owner retries loading the catalog.
+      await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
+      await dialog.getByLabel('Category name', { exact: true }).fill('Reload failure');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Delete category Reload failure', exact: true }).click();
+      failCategoryReload = true;
+      await dialog.getByRole('button', { name: 'Confirm delete category', exact: true }).click();
+      await adminPage.getByText(/Could not load categories: Category reload failed/).waitFor();
+      assert.equal(await adminPage.getByText('Category deleted.', { exact: true }).count(), 0);
+      const deletesBeforeRetry = categoryWrites.filter(write => write.method === 'DELETE').length;
+      failCategoryReload = false;
+      await adminPage.getByRole('button', { name: 'Retry loading menu', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Edit category Reload failure', exact: true }).waitFor({ state: 'hidden' });
+      assert.equal(categoryWrites.filter(write => write.method === 'DELETE').length, deletesBeforeRetry);
+      console.log(`PASS: ${slug} deletion waits for reload, restores focus, and reload failure retries without duplicate deletion`);
       assert.ok(categoryWrites.every(write => write.method !== 'PATCH' || write.values.business_id === undefined));
       console.log(`PASS: ${slug} category create/rename/order/picker, duplicate and retry errors, in-use restriction/race, keyboard focus and real All filter`);
       assert.deepEqual(dietErrors, []);
-      console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
+      if (!categoriesOnly) console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
     } finally { await dietContext.close(); await customer.close(); await owner.close(); }
   }
 

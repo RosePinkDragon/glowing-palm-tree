@@ -32,7 +32,7 @@ function validLines(value: unknown, businessId: BusinessSlug): value is CartLine
         item.businessId !== businessId || typeof item.name !== 'string' || !item.name || item.name.length > 100 ||
         typeof item.categoryId !== 'string' || !item.categoryId || item.categoryId.length > 128 ||
         !Number.isInteger(item.categorySortOrder) || item.categorySortOrder < -2147483648 || item.categorySortOrder > 2147483647 ||
-        typeof item.description !== 'string' || item.description.length > 1000 || typeof item.category !== 'string' || item.category.length > 100 ||
+        typeof item.description !== 'string' || item.description.length > 1000 || typeof item.category !== 'string' || [...item.category].length > 100 ||
         !Number.isSafeInteger(item.pricePaise) || item.pricePaise < 0 || item.pricePaise > 2147483647 ||
         typeof item.isAvailable !== 'boolean' || typeof item.isDemo !== 'boolean' ||
         (item.imageUrl !== undefined && (typeof item.imageUrl !== 'string' || item.imageUrl.length > 4096)) ||

@@ -31,7 +31,7 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState(false);
-  const load = async () => { setLoading(true); try { const [menu, groups] = await Promise.all([services.getMenu(), services.getCategories()]); setItems(menu); setCategories(sortCategories(groups)); setError(''); } catch (e) { setError(message(e)); } finally { setLoading(false); } };
+  const load = async () => { setLoading(true); try { const [menu, groups] = await Promise.all([services.getMenu(), services.getCategories()]); setItems(menu); setCategories(sortCategories(groups)); setError(''); return true; } catch (e) { setError(message(e)); return false; } finally { setLoading(false); } };
   useEffect(() => { void load(); }, [services]);
   const save = async () => {
     if (!draft) return;
@@ -58,7 +58,7 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const deleteCategory = async () => {
     if (!removeCategory) return;
     setBusy(true); setOperationError(''); setSuccess('');
-    try { await services.deleteCategory(removeCategory.id); setRemoveCategory(null); setSuccess('Category deleted.'); await load(); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); }
+    try { await services.deleteCategory(removeCategory.id); setRemoveCategory(null); if (await load()) setSuccess('Category deleted.'); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); }
     catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
   };
   const openCategory = (category?: MenuCategory) => { trigger.current = capturePanelFocus(); setValidation(false); setOperationError(''); setCategoryDraft(category ? { id: category.id, name: category.name, order: String(category.sortOrder) } : { name: '', order: '0' }); };
