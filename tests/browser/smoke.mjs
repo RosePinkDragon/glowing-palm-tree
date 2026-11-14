@@ -148,6 +148,7 @@ const prepareCart = async page => {
   // Drawer traps keyboard focus, dismisses with Escape and restores its opener.
   await second.getByRole('button', { name: 'Account', exact: true }).click();
   await focused(second, 'Your account');
+  await second.waitForTimeout(250);
   await second.screenshot({ path: 'dist/browser/customer-drawer-mobile.png', fullPage: true });
   await second.keyboard.press('Shift+Tab'); await focused(second, 'Browse menu');
   await second.keyboard.press('Tab'); await focused(second, 'Close');
@@ -160,6 +161,20 @@ const prepareCart = async page => {
   await second.goBack();
   await second.getByRole('button', { name: /^Cart \(/ }).click();
   assert.equal(await second.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Draft stays');
+  const acceptedTap = await second.evaluate(async id => {
+    const channel = new MessageChannel();
+    const accepted = new Promise(resolve => { channel.port1.onmessage = event => { resolve(event.data?.accepted); channel.port1.close(); }; });
+    const event = new MessageEvent('message', { data: { type: 'market:notification-tap', path: `/orders/${id}` }, ports: [channel.port2] });
+    Object.defineProperty(event, 'source', { value: { scriptURL: location.origin + '/firebase-messaging-worker.js' } });
+    navigator.serviceWorker.dispatchEvent(event);
+    return accepted;
+  }, orderId);
+  assert.equal(acceptedTap, true);
+  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.goBack();
+  assert.equal(new URL(second.url()).pathname, '/cart');
+  assert.equal(await second.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Draft stays');
+  assert.equal(await second.getByRole('button', { name: /^Cart \(/ }).count(), 1);
   const asset = await context.request.get(customerServer.url + '/orders/missing.js'); assert.equal(asset.status(), 404);
   const worker = await context.request.get(customerServer.url + '/firebase-messaging-worker.js'); assert.match(worker.headers()['content-type'], /javascript/);
   // A signed-out deep link returns to its exact order after authenticating.
