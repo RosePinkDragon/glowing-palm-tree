@@ -26,6 +26,7 @@ jobs:
       - run: npm run build:web --workspace kokani-dine-inn-admin
       - run: npm run test:browser
       - run: node tests/browser/cart.mjs
+      - run: node tests/browser/photos.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

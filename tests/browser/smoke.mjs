@@ -352,7 +352,7 @@ const prepareCart = async (page, add = true) => {
       const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));
       const adminPage = await dietContext.newPage(); adminPage.on('pageerror', error => dietErrors.push(error.message));
       const dialog = adminPage.getByRole('dialog');
-      const marks = page => page.getByRole('img');
+      const marks = page => page.getByRole('img', { name: /^(Vegetarian|Contains egg|Non-vegetarian)$/ });
       const assertMarks = async page => {
         for (const label of labels) assert.equal(await page.getByRole('img', { name: label, exact: true }).count(), 1);
         assert.equal(await marks(page).count(), 3, 'the unclassified fourth dish has no mark');

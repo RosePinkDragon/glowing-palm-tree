@@ -18,10 +18,19 @@ import { PricingChangedError } from '@market/services';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
 import { RevisedPricing } from './RevisedPricing';
 import { cartKey, readCart } from './cart-state';
+import { DishPhoto } from './DishPhoto';
+import { DishDetails } from './DishDetails';
+import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 
 const money = formatINRFromPaise;
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const market = useMarket(businessId); const { colors, name } = useMarketTheme(); const { width } = useWindowDimensions();
+  const [selectedDish, setSelectedDish] = useState<{ id: string; identity: typeof market.identity.current } | null>(null);
+  const dishTrigger = useRef<HTMLElement | null>(null);
+  const [viewportRevision, setViewportRevision] = useState(0);
+  const closeDish = () => { setSelectedDish(null); restorePanelFocus(dishTrigger.current); };
+  useEffect(() => { setSelectedDish(null); }, [businessId, market.identityVersion]);
+  const currentDish = selectedDish && sameIdentity(selectedDish.identity, market.identity.current) ? market.menu.find(item => item.id === selectedDish.id) : undefined;
   const [category, setCategory] = useState<string | null>(null);
   const navigation = useRef<{ go: (path: string) => void; login: (next: string) => void } | null>(null);
   const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading);
@@ -136,8 +145,30 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!saved) { setLocalError('This order was already recovered. Refresh your orders.'); return; }
     await send(saved);
   }); };
-  const renderMenuItem = (item: MenuItem) => <View key={item.id} style={{ width: width >= 760 ? '48%' : '100%' }}><MarketCard><View accessible={false} style={{ height: 90, backgroundColor: colors.tint, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 32, color: colors.primary, fontWeight: '700' }}>{item.name.charAt(0)}</Text></View><MarketText variant="eyebrow">{item.category}{item.isDemo ? ' · Example' : ''}</MarketText><Text accessibilityRole="header" style={{ fontSize: 22, lineHeight: 29, color: colors.ink, fontWeight: '700' }}>{item.name}</Text><DietMark diet={item.diet} /><MarketText variant="muted">{item.description}</MarketText><MarketText>{item.isDemo ? 'Example price: ' : ''}{money(item.pricePaise)}</MarketText><MarketButton label={demo || item.isDemo ? 'Add example to cart' : item.isAvailable ? 'Add to cart' : 'Unavailable'} disabled={(!item.isAvailable && !demo && !item.isDemo) || locked} onPress={() => changeCart(lines => addCartItem(lines, item))} /></MarketCard></View>;
-  const render = (page: CustomerScreen, orderId?: string) => <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: width >= 760 ? 40 : 20, paddingVertical: 28, gap: 24 }}>
+  const openDish = (item: MenuItem) => { dishTrigger.current = capturePanelFocus(); setSelectedDish({ id: item.id, identity: market.identity.current }); };
+  const addDetails = async (quantity: number) => {
+    if (locked || !currentDish?.isAvailable) throw new Error('This dish or your cart is currently unavailable.');
+    const started = market.identity.current;
+    let applied = false;
+    await draft.changeCart(lines => {
+      if (!sameIdentity(started, market.identity.current)) throw new Error('Your account changed. Review your cart before adding dishes.');
+      const next = addCartItem(lines, currentDish, quantity);
+      applied = true; return next;
+    });
+    if (!applied || !sameIdentity(started, market.identity.current)) throw new Error('Your cart or account changed. Review it before adding this dish.');
+    setLocalError('');
+  };
+  const renderMenuItem = (item: MenuItem) => <View key={item.id} style={{ width: width >= 760 ? '48%' : '100%' }}><MarketCard>
+    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => openDish(item)} style={{ gap: 12 }}>
+      <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} viewportRevision={viewportRevision} />
+    </Pressable>
+    <MarketText variant="eyebrow">{item.category}{item.isDemo ? ' · Example' : ''}</MarketText>
+    <Text accessibilityRole="header" onPress={() => openDish(item)} style={{ fontSize: 22, lineHeight: 29, color: colors.ink, fontWeight: '700' }}>{item.name}</Text>
+    <DietMark diet={item.diet} />{item.isFeatured ? <MarketText variant="eyebrow">{featuredLabel(businessId, 'customer')}</MarketText> : null}
+    <MarketText variant="muted">{item.description}</MarketText><MarketText>{item.isDemo ? 'Example price: ' : ''}{money(item.pricePaise)}</MarketText>
+    <MarketButton label={demo || item.isDemo ? 'Add example to cart' : item.isAvailable ? 'Add to cart' : 'Unavailable'} disabled={(!item.isAvailable && !demo && !item.isDemo) || locked} onPress={() => changeCart(lines => addCartItem(lines, item))} />
+  </MarketCard></View>;
+  const render = (page: CustomerScreen, orderId?: string) => <ScrollView keyboardShouldPersistTaps="handled" scrollEventThrottle={100} onScroll={Platform.OS === 'web' ? undefined : event => setViewportRevision(event.nativeEvent.contentOffset.y)} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: width >= 760 ? 40 : 20, paddingVertical: 28, gap: 24 }}>
 
     <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View>
 
@@ -169,5 +200,5 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       </>}
     </View> : null}
   </ScrollView>;
-  return <CustomerNavigation market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} />;
+  return <><CustomerNavigation market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} onAdd={addDetails} onClose={closeDish} /> : null}</>;
 }
