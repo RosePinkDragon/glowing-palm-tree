@@ -116,5 +116,6 @@ for db in all_fresh all_existing; do
   done
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
 done
 echo 'Database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'

@@ -123,8 +123,8 @@ function publicConfig(): PublicConfig {
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
 type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
-export function mapMenu(row: MenuRow, slug: BusinessSlug): MenuItem {
-  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
+export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): MenuItem {
+  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
   return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
@@ -137,6 +137,7 @@ export function createMarketServices(options: ServiceOptions) {
   const config = options.config ?? publicConfig();
   const url = config.url?.trim();
   const key = config.anonKey?.trim();
+  const photoBase = `${url?.replace(/\/+$/, '')}/storage/v1/object/public/menu-images/`;
   if (Boolean(url) !== Boolean(key)) throw new ServiceError('INVALID_CONFIG', 'Set both EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, or neither for demo browsing.');
   if (key && !isPublicKey(key)) throw new ServiceError('INVALID_CONFIG', 'Use a Supabase publishable key or legacy anon key for the client.');
   const persistence = safeStorage(options.storage ?? storage);
@@ -169,7 +170,7 @@ export function createMarketServices(options: ServiceOptions) {
     const business = await getBusiness();
     const { data, error } = await client.from('menu_items').select(menuSelect).eq('business_id', business.id).order('sort_order').order('name').order('id');
     fail(error, 'Could not load menu');
-    return (data ?? []).map(row => mapMenu(row as MenuRow, slug));
+    return (data ?? []).map(row => mapMenu(row as MenuRow, slug, photoBase));
   };
   const getOrders = async (): Promise<Order[]> => {
     const db = requireClient(); const business = await getBusiness();
@@ -262,7 +263,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (error?.code === '23503') throw new ServiceError('CATEGORY_MISSING', 'This category is no longer available. Reload the menu and choose a category.', error);
     fail(error, 'Could not save menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
-    return mapMenu(data as MenuRow, slug);
+    return mapMenu(data as MenuRow, slug, photoBase);
   };
   const deleteMenuItem = async (id: string): Promise<void> => {
     if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_MENU_ITEM', 'Choose a menu item to delete.');
@@ -271,6 +272,25 @@ export function createMarketServices(options: ServiceOptions) {
     fail(error, 'Could not delete menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
+  const photoRequest = async (action: 'upload' | 'remove' | 'cleanup', item?: MenuItem, bytes?: ArrayBuffer): Promise<{ cleanupComplete: boolean }> => {
+    const db = requireClient();
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage dish photos.');
+    if (item && (item.businessId !== slug || !item.id || (item.imageUrl && !item.imageUrl.startsWith(photoBase)))) throw new ServiceError('INVALID_PHOTO', 'Reload this restaurant’s menu before changing its photo.');
+    if (action === 'upload' && (!bytes || bytes.byteLength < 1 || bytes.byteLength > 5 * 1024 * 1024)) throw new ServiceError('INVALID_PHOTO', 'Choose a photo up to 5 MB.');
+    const { data, error } = await db.auth.getSession(); fail(error, 'Could not restore your session');
+    if (!data.session) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to manage dish photos.');
+    const response = await fetch(`${url?.replace(/\/+$/, '')}/functions/v1/menu-photos`, {
+      method: 'POST', headers: { authorization: `Bearer ${data.session.access_token}`, apikey: key!, 'content-type': 'application/octet-stream', 'x-business-slug': slug, 'x-photo-action': action,
+        ...(item ? { 'x-menu-item': item.id, 'x-photo-expected': item.imageUrl?.slice(photoBase.length) ?? '' } : {}) },
+      body: bytes, signal: AbortSignal.timeout(60000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new ServiceError('PHOTO_FAILED', typeof result.message === 'string' ? result.message : 'The photo could not be saved. Reload this dish before retrying.');
+    return { cleanupComplete: result.cleanupComplete === true };
+  };
+  const uploadMenuPhoto = (item: MenuItem, bytes: ArrayBuffer) => photoRequest('upload', item, bytes);
+  const removeMenuPhoto = (item: MenuItem) => photoRequest('remove', item);
+  const retryMenuPhotoCleanup = () => photoRequest('cleanup');
   const loadOrder = async (id: string): Promise<Order> => {
     const db = requireClient(); const business = await getBusiness();
     const { data, error } = await db.from('orders').select(orderSelect).eq('business_id', business.id).eq('id', id).single();
@@ -356,7 +376,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

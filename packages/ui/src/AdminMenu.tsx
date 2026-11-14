@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, Switch, Text, View } from 'react-native';
+import { Image, Platform, Pressable, Switch, Text, View } from 'react-native';
 import { dietLabels, formatINRFromPaise, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
+import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
 import { useMarketTheme } from './theme';
 import { featuredLabel, parseItemOrder, sortCategories, sortMenuItems } from './menu-model';
 import { parseRupees, rupeesInput } from './admin-model';
@@ -22,6 +23,8 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const [categoryDraft, setCategoryDraft] = useState<{ id?: string; name: string; order: string } | null>(null);
   const [removeCategory, setRemoveCategory] = useState<MenuCategory | null>(null);
   const closeCategory = () => { setCategoryDraft(null); setRemoveCategory(null); restorePanelFocus(trigger.current); };
+  const [photoItem, setPhotoItem] = useState<MenuItem | null>(null);
+  const closePhoto = () => { setPhotoItem(null); restorePanelFocus(trigger.current); };
   const [items, setItems] = useState<MenuItem[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [remove, setRemove] = useState<MenuItem | null>(null);
@@ -90,8 +93,11 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     </AccessiblePanel> : null}
     {removeCategory ? <AccessiblePanel title={`Delete category ${removeCategory.name}?`} onClose={() => { if (!busy) closeCategory(); }}><MarketText>This removes the empty category from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete category" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete category'} disabled={busy} onPress={() => void deleteCategory()} /><MarketButton label="Keep category" variant="secondary" disabled={busy} onPress={closeCategory} /></AccessiblePanel> : null}
     <Text accessibilityRole="header" style={{ fontSize: 22, fontWeight: '700', color: colors.ink }}>Dishes</Text>
+    <MarketButton label="Retry photo cleanup" variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { setBusy(true); setSuccess(''); void services.retryMenuPhotoCleanup().then(result => setSuccess(result.cleanupComplete ? 'Unused photo cleanup completed.' : 'Some photos are still queued. Please retry in a few minutes.')).catch(e => setError(message(e))).finally(() => setBusy(false)); }} />
+    {photoItem ? <MenuPhotoEditor item={photoItem} services={services} onClose={closePhoto} onSaved={async note => { if (!await load()) throw new Error('Could not reload the menu. Retry loading before changing the photo.'); setSuccess(note); }} /> : null}
     {draft ? <AccessiblePanel title={draft.id ? 'Edit item' : 'Add item'} onClose={() => { if (!busy) closeDraft(); }}>
       {operationError ? <MarketStatus kind="error" title="Could not save item" message={operationError} action={<MarketButton label="Reload categories" variant="secondary" disabled={busy || loading} onPress={() => void load()} />} /> : null}
+      <MarketText variant="muted">{draft.id ? 'Save your changes, then use Manage photo for this dish to upload, replace or remove its photo.' : 'Save this dish before adding a photo. Then choose Manage photo from its menu card.'}</MarketText>
       <MarketField label="Name" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} error={validation && !draft.name.trim() ? 'Enter a name.' : undefined} />
       <View style={{ gap: 8 }}><MarketText>Category</MarketText><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {categories.map(category => <Pressable key={category.id} accessibilityRole="button" accessibilityLabel={`Category: ${category.name}`} aria-pressed={draft.categoryId === category.id} accessibilityState={{ selected: draft.categoryId === category.id, disabled: busy }} disabled={busy} onPress={() => setDraft({ ...draft, categoryId: category.id })} style={{ minHeight: 48, padding: 12, borderWidth: draft.categoryId === category.id ? 2 : 1, borderRadius: 10, borderColor: colors.inputBorder, backgroundColor: draft.categoryId === category.id ? colors.tint : colors.surface }}><MarketText>{category.name}</MarketText></Pressable>)}
@@ -117,6 +123,82 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     </AccessiblePanel> : <MarketButton label="Add item" onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft(blank()); }} disabled={services.mode === 'demo' || loading || !!error || !categories.length || busy} />}
     {remove ? <AccessiblePanel title={`Delete ${remove.name}?`} onClose={() => { if (!busy) closeRemove(); }}><MarketText>This removes the item from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete item" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete'} onPress={() => void deleteItem()} disabled={busy} /><MarketButton label="Keep item" variant="secondary" onPress={closeRemove} disabled={busy} /></AccessiblePanel> : null}
     {!loading && !items.length && !error ? <MarketStatus kind="empty" title="No menu items yet" message="Add an item to get started." /> : null}
-    {sortMenuItems(items).map(item => <MarketCard key={item.id}><MarketText variant="heading">{item.name}</MarketText><DietMark diet={item.diet} /><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}{item.isFeatured ? ` · ${featureLabel}` : ''}{` · Order ${item.sortOrder}`}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, diet: item.diet ?? null, price: rupeesInput(item.pricePaise), order: String(item.sortOrder) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
+    {sortMenuItems(items).map(item => <MarketCard key={item.id}>{item.imageUrl ? <Image accessibilityLabel={item.name} source={{ uri: item.imageUrl }} style={{ width: 120, height: 90, borderRadius: 12 }} resizeMode="cover" /> : <MarketText variant="muted">No photo</MarketText>}<MarketText variant="heading">{item.name}</MarketText><DietMark diet={item.diet} /><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}{item.isFeatured ? ` · ${featureLabel}` : ''}{` · Order ${item.sortOrder}`}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Manage photo for ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setPhotoItem(item); }} /><MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, diet: item.diet ?? null, price: rupeesInput(item.pricePaise), order: String(item.sortOrder) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
   </View>;
+}
+
+function MenuPhotoEditor({ item, services, onSaved, onClose }: {
+  item: MenuItem; services: MarketServices; onSaved: (message: string) => Promise<void>; onClose: () => void;
+}) {
+  const { colors } = useMarketTheme();
+  const [selected, setSelected] = useState<DocumentPickerAsset | null>(null);
+  const [preview, setPreview] = useState<string | undefined>(item.imageUrl);
+  const [busy, setBusy] = useState(false);
+  const active = useRef(false);
+  const [error, setError] = useState('');
+  const [uncertain, setUncertain] = useState(false);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    if (!selected) { setPreview(item.imageUrl); return; }
+    // Expo's web picker already owns a blob URL for this asset.
+    const uri = selected.uri;
+    setPreview(uri); setBroken(false);
+    return () => { if (Platform.OS === 'web' && uri.startsWith('blob:')) URL.revokeObjectURL(uri); };
+  }, [selected, item.imageUrl]);
+  const choose = async () => {
+    if (active.current) return;
+    setError('');
+    try {
+      const result = await getDocumentAsync({ type: ['image/jpeg', 'image/png', 'image/webp'], multiple: false, copyToCacheDirectory: true, base64: false });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if ((asset.size ?? asset.file?.size ?? 0) > 5 * 1024 * 1024) {
+        if (Platform.OS === 'web' && asset.uri.startsWith('blob:')) URL.revokeObjectURL(asset.uri);
+        setError('Choose a photo up to 5 MB.'); return;
+      }
+      setSelected(asset);
+    } catch { setError('The photo picker could not open. Please try again.'); }
+  };
+  const save = async (remove = false) => {
+    if (active.current) return;
+    active.current = true; setBusy(true); setError('');
+    let sent = false;
+    try {
+      let bytes: ArrayBuffer | undefined;
+      if (!remove) {
+        if (!selected) throw new Error('Choose a photo first.');
+        if (Platform.OS === 'web') {
+          if (!selected.file) throw new Error('Choose this photo again.');
+          bytes = await selected.file.arrayBuffer();
+        } else {
+          const { File } = await import('expo-file-system');
+          bytes = await new File(selected.uri).arrayBuffer();
+        }
+        if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) throw new Error('Choose a photo up to 5 MB.');
+      }
+      sent = true;
+      const result = remove ? await services.removeMenuPhoto(item) : await services.uploadMenuPhoto(item, bytes!);
+      await onSaved(`${remove ? 'Photo removed.' : 'Photo saved.'}${result.cleanupComplete ? '' : ' Old photos are queued for cleanup; use Retry photo cleanup.'}`);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The photo could not be saved.');
+      // A lost HTTP response may follow a successful attachment. Require a fresh
+      // dish snapshot before retrying, preserving optimistic concurrency.
+      setUncertain(sent);
+    } finally { active.current = false; setBusy(false); }
+  };
+  return <AccessiblePanel title={`Photo for ${item.name}`} onClose={() => { if (!busy) onClose(); }}>
+    <View style={{ height: 200, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}>
+      {preview && !broken ? <Image accessibilityLabel={item.name} source={{ uri: preview }} onError={() => setBroken(true)} style={{ width: '100%', height: '100%' }} resizeMode="contain" /> : <MarketText variant="muted">No photo</MarketText>}
+    </View>
+    <MarketText variant="muted">Use your restaurant’s own JPEG, PNG or WebP, up to 5 MB and 16 megapixels. Photos are checked and resized before saving.</MarketText>
+    {selected ? <MarketText>Selected: {selected.name}</MarketText> : null}
+    {error ? <MarketStatus kind="error" title="Could not save photo" message={error} /> : null}
+    {uncertain ? <><MarketText>Reload the dish to check its current photo before trying again.</MarketText><MarketButton label="Reload dish photo" disabled={busy} onPress={() => { void onSaved('Current photo reloaded.').then(onClose).catch(() => setError('Could not reload the menu. Close and retry loading it.')); }} /></> : <>
+      <MarketButton label={selected || item.imageUrl ? 'Choose another photo' : 'Choose photo'} variant="secondary" disabled={busy} onPress={() => void choose()} />
+      <MarketButton label={busy ? 'Saving photo…' : item.imageUrl ? 'Replace photo' : 'Upload photo'} disabled={busy || !selected} onPress={() => void save()} />
+      {item.imageUrl ? <MarketButton label="Remove photo" variant="secondary" disabled={busy} onPress={() => void save(true)} /> : null}
+    </>}
+    <MarketButton label={busy ? 'Please wait…' : 'Close photo editor'} variant="secondary" disabled={busy} onPress={onClose} />
+  </AccessiblePanel>;
 }
