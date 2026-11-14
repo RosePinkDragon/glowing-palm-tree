@@ -13,6 +13,10 @@ import { messageOf, useMarket } from './useMarket';
 import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { DietMark } from './DietMark';
 import { useCustomerCart } from './useCustomerCart';
+import { PricingChangedError } from '@market/services';
+import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
+import { RevisedPricing } from './RevisedPricing';
+import { cartKey, readCart } from './cart-state';
 
 const money = formatINRFromPaise;
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
@@ -23,8 +27,19 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const { cart, setCart, details, setDetails, location, setLocation, eligible, setEligible, receipt, setReceipt } = draft;
   const [busy, setBusy] = useState(false); const [localError, setLocalError] = useState('');
   const sending = useRef(false);
+  const [revision, setRevision] = useState<RevisedQuote | null>(null);
+  const quote = visibleQuote(revision, market.identity.current, market.authReady);
+  useEffect(() => { setRevision(null); setLocalError(''); }, [businessId, market.identityVersion]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key === cartKey(businessId)) setRevision(current => current && current.sourceCart !== event.newValue ? null : current);
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, [businessId]);
   const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
-  const locked = !!market.attempt || !market.attemptReady || !!market.storageError || !draft.ready || draft.saving || !!draft.cartError;
+  const locked = !!quote || !!market.attempt || !market.attemptReady || !!market.storageError || !draft.ready || draft.saving || !!draft.cartError;
   const unavailable = cart.some(line => !line.item.isAvailable && !line.item.isDemo);
   const subtotal = cartSubtotalPaise(cart.filter(line => line.item.isAvailable || line.item.isDemo));
   const categories = ['All', ...new Set(market.menu.map(item => item.category))];
@@ -46,7 +61,20 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       void market.refreshOrders();
     } catch (e) {
       if (!sameIdentity(started, market.identity.current)) return;
-      if (isDefiniteOrderRejection(e)) {
+      if (e instanceof PricingChangedError) {
+        try {
+          const sourceCart = await AsyncStorage.getItem(cartKey(businessId));
+          const source = readCart(sourceCart, businessId);
+          await AsyncStorage.removeItem(attemptKey(businessId));
+          market.setAttempt(null);
+          if (!sameIdentity(started, market.identity.current)) return;
+          if (!sourceCart || source?.ownerId !== saved.userId || JSON.stringify(source.lines.map(line => [line.item.id, line.quantity])) !== JSON.stringify(saved.lines.map(line => [line.item.id, line.quantity]))) {
+            setLocalError('Your cart changed in another window. Review it before ordering.'); return;
+          }
+          setRevision({ original: saved, pricing: e.pricing, identity: started, sourceCart });
+          navigation.current?.go('/cart');
+        } catch { setLocalError('The revised quote could not be saved safely. Retry recovery before placing another order.'); }
+      } else if (isDefiniteOrderRejection(e)) {
         try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; setDetails(saved.delivery); setEligible(false); setLocalError(`${messageOf(e)} Please check your details and try again.`); } }
         catch { setLocalError('The order was declined, but its saved attempt could not be cleared. Retry recovery before placing another order.'); }
       } else setLocalError(`${messageOf(e)} The result may be uncertain. Retry this same order to recover its status.`);
@@ -68,12 +96,36 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       if (!location || !eligible) throw new Error('Check your delivery location first.');
       const userId = market.session?.user.id;
       if (!userId || market.identity.current.userId !== userId) throw new Error('Sign in before placing your order.');
-      const result = await prepareAttempt(AsyncStorage, businessId, () => freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, delivery: validateDeliveryDetails(details), location: validateLocationFix(location) }));
+      const pricing = capturePricing(cart, market.business.deliveryFeePaise, market.business.minOrderPaise);
+      const result = await prepareAttempt(AsyncStorage, businessId, () => freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, pricing, delivery: validateDeliveryDetails(details), location: validateLocationFix(location) }));
       market.setAttempt(result.attempt);
       if (result.existing) { setLocalError('An earlier order needs confirmation. Retry its recovery before placing another order.'); return; }
       await send(result.attempt);
     });
   };
+  const acceptRevision = () => { void guarded(async () => {
+    const current = visibleQuote(revision, market.identity.current, market.authReady);
+    if (!current || current.pricing.subtotal_paise < current.pricing.min_order_paise) return;
+    // Read under the checkout guard: a preceding confirmation clears the shared
+    // cart before releasing this guard, even if its storage event is still queued.
+    if (await AsyncStorage.getItem(cartKey(businessId)) !== current.sourceCart) {
+      setRevision(null); throw new Error('Your cart changed in another window. Review it before ordering.');
+    }
+    const result = await prepareAttempt(AsyncStorage, businessId, () => {
+      if (!sameIdentity(current.identity, market.identity.current)) throw new Error('Your account changed. Review your cart before ordering.');
+      return freezeAttempt({ ...current.original, idempotencyKey: Crypto.randomUUID(), lines: revisedLines(current), pricing: current.pricing });
+    });
+    market.setAttempt(result.attempt); setRevision(null);
+    if (result.existing) { setLocalError('An earlier order needs confirmation. Retry its recovery before placing another order.'); return; }
+    await send(result.attempt);
+  }); };
+  const editRevision = () => { void guarded(async () => {
+    const current = visibleQuote(revision, market.identity.current, market.authReady);
+    if (!current) return;
+    await setCart(revisedLines(current));
+    if (!sameIdentity(current.identity, market.identity.current)) return;
+    setRevision(null); setDetails(current.original.delivery); setLocation(current.original.location); setEligible(false);
+  }); };
   const retry = () => { void guarded(async () => {
     const saved = readAttempt(await AsyncStorage.getItem(attemptKey(businessId)), businessId);
     market.setAttempt(saved);
@@ -90,6 +142,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {market.error || market.storageError || (localError && (page !== 'Cart' || !cart.length)) ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{market.storageError || localError || market.error}</Text>{market.error ? <MarketButton label="Retry loading" variant="secondary" onPress={() => void market.load()} /> : null}</MarketCard> : null}
     {market.storageError ? <MarketText>Saved checkout state is unavailable. Ordering is paused to avoid creating a duplicate order.</MarketText> : null}
     {market.attempt ? <MarketCard><MarketText variant="heading">Order awaiting confirmation</MarketText><MarketText>Your previous order may have been received. Retry the same request to recover its result before changing the cart or placing another order.</MarketText>{market.authReady && market.session?.user.id === market.attempt.userId ? market.attempt.lines.map(line => <View key={line.item.id} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.item.name} · {money(line.item.pricePaise * line.quantity)}</MarketText><DietMark diet={line.item.diet} /></View>) : null}<MarketButton label={busy ? 'Checking…' : 'Retry order recovery'} disabled={busy} onPress={retry} /></MarketCard> : null}
+    {quote ? <RevisedPricing quote={quote} busy={busy || !!market.attempt || !draft.ready} accept={acceptRevision} edit={editRevision} /> : null}
     {page === 'Menu' ? <View style={{ gap: 20 }}>
       <MarketText variant="heading">Our menu</MarketText>
       {market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{categories.map(item => <Pressable key={item} accessibilityRole="button" aria-pressed={category === item} onPress={() => setCategory(item)} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: category === item ? colors.primary : colors.tint }}><Text style={{ color: category === item ? colors.onPrimary : colors.primary, fontWeight: '700' }}>{item}</Text></Pressable>)}</View>
@@ -97,7 +150,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       {!market.menu.length ? <MarketStatus kind="empty" title="No menu items yet" message="Please check back later." /> : null}</>}
     </View> : null}
     {page === 'Cart' ? <View style={{ gap: 16 }}><MarketText variant="heading">{demo ? 'Sample cart' : 'Your cart'}</MarketText>{demo ? <MarketText variant="muted">Example items and prices are for browsing only. Checkout is unavailable.</MarketText> : null}{!draft.ready && !draft.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : !cart.length ? <MarketStatus kind="empty" title="Your cart is empty" message="Explore the menu to get started." /> : cart.map(line => <MarketCard key={line.item.id}><MarketText variant="heading">{line.item.name}</MarketText><DietMark diet={line.item.diet} /><MarketText>{!line.item.isAvailable && !line.item.isDemo ? 'Last shown price: ' : ''}{money(line.item.pricePaise)} × {line.quantity} = {money(line.item.pricePaise * line.quantity)}</MarketText>{!line.item.isAvailable && !line.item.isDemo ? <><MarketText>This dish is unavailable. Remove it before checkout.</MarketText><MarketButton label={`Remove unavailable ${line.item.name}`} variant="secondary" disabled={locked} onPress={() => changeCart(lines => removeCartItem(lines, line.item.id))} /></> : null}<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}><MarketButton label={`Remove one ${line.item.name}`} variant="secondary" disabled={locked} onPress={() => changeCart(lines => { const current = lines.find(value => value.item.id === line.item.id); return current && current.quantity > 1 ? setCartItemQuantity(lines, line.item.id, current.quantity - 1) : removeCartItem(lines, line.item.id); })} /><MarketButton label={`Add one ${line.item.name}`} variant="secondary" disabled={locked || line.quantity >= 10 || (!line.item.isAvailable && !demo)} onPress={() => changeCart(lines => { const current = lines.find(value => value.item.id === line.item.id); return current ? setCartItemQuantity(lines, line.item.id, current.quantity + 1) : lines; })} /></View></MarketCard>)}
-      {cart.length ? <MarketCard><MarketText variant="heading">Delivery details</MarketText><MarketText>{unavailable ? 'Subtotal (available dishes)' : 'Subtotal'}: {money(subtotal)}</MarketText><MarketText>Delivery fee: {money(market.business?.deliveryFeePaise ?? 0)}</MarketText><MarketText>Total: {money(subtotal + (market.business?.deliveryFeePaise ?? 0))}</MarketText><MarketText variant="muted">Payment: cash on delivery. Final amounts are confirmed by the restaurant.</MarketText><MarketField label="Name" value={details.name} editable={!locked} onChangeText={name => setDetails({ ...details, name })} /><MarketField label="Mobile number" value={details.phone} editable={!locked} keyboardType="phone-pad" onChangeText={phone => setDetails({ ...details, phone })} /><MarketField label="Delivery address" value={details.addressLine} editable={!locked} multiline onChangeText={addressLine => setDetails({ ...details, addressLine })} /><MarketButton variant="secondary" label={busy ? 'Checking…' : 'Check my delivery location'} disabled={busy || locked || demo} onPress={() => void locate()} />{eligible ? <MarketText>Delivery location confirmed. Refresh if your location changes.</MarketText> : null}<MarketButton label={busy ? 'Please wait…' : 'Place order'} disabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled} onPress={() => void checkout()} />{localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{localError}</Text> : null}{!market.business?.orderingEnabled && !demo ? <MarketText>Ordering is currently unavailable.</MarketText> : null}</MarketCard> : null}
+      {cart.length ? <MarketCard><MarketText variant="heading">Delivery details</MarketText><MarketText>{unavailable ? 'Subtotal (available dishes)' : 'Subtotal'}: {money(subtotal)}</MarketText><MarketText>Delivery fee: {money(market.business?.deliveryFeePaise ?? 0)}</MarketText><MarketText>Minimum order: {money(market.business?.minOrderPaise ?? 0)}</MarketText><MarketText>Total: {money(subtotal + (market.business?.deliveryFeePaise ?? 0))}</MarketText><MarketText variant="muted">Payment: cash on delivery. Any price changes require your acceptance before ordering.</MarketText><MarketField label="Name" value={details.name} editable={!locked} onChangeText={name => setDetails({ ...details, name })} /><MarketField label="Mobile number" value={details.phone} editable={!locked} keyboardType="phone-pad" onChangeText={phone => setDetails({ ...details, phone })} /><MarketField label="Delivery address" value={details.addressLine} editable={!locked} multiline onChangeText={addressLine => setDetails({ ...details, addressLine })} /><MarketButton variant="secondary" label={busy ? 'Checking…' : 'Check my delivery location'} disabled={busy || locked || demo} onPress={() => void locate()} />{eligible ? <MarketText>Delivery location confirmed. Refresh if your location changes.</MarketText> : null}<MarketButton label={busy ? 'Please wait…' : 'Place order'} disabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled} onPress={() => void checkout()} />{localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{localError}</Text> : null}{!market.business?.orderingEnabled && !demo ? <MarketText>Ordering is currently unavailable.</MarketText> : null}</MarketCard> : null}
     </View> : null}
     {page === 'Account' || page === 'Login' ? <AuthPanel market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' || page === 'Order' ? <View style={{ gap: 16 }}>

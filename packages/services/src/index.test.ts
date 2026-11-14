@@ -16,7 +16,7 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   assert.equal((await service.getBusiness()).orderingEnabled, false);
   assert.equal((await service.getBusiness()).acceptingOrders, false);
   assert.equal((await service.getMenu())[0].isDemo, true);
-  await assert.rejects(service.placeOrder({ lines: [], delivery: { name: '', phone: '', addressLine: '' }, location: { latitude: 0, longitude: 0, accuracy: 0, capturedAtISO: '' }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
+  await assert.rejects(service.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: '', phone: '', addressLine: '' }, location: { latitude: 0, longitude: 0, accuracy: 0, capturedAtISO: '' }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
 });
 test('maps database menu and complete order into domain values', () => {
@@ -339,7 +339,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     await assert.rejects(customer.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
     await customer.auth.signIn('customer@example.test', 'password');
     const item = { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false };
-    await assert.rejects(customer.placeOrder({ lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
+    await assert.rejects(customer.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -353,4 +353,48 @@ test('demo diet stays unknown and explicit menu marks map for both restaurants',
     }
     service.dispose();
   }
+});
+
+test('revised pricing validates every line and amount before releasing the uncertain attempt', async () => {
+  const { validateRevisedPricing } = await import('./index.ts');
+  const lines = [{ item: { id: 'dish', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false }, quantity: 2 }];
+  const valid = { lines: [{ menu_item_id: 'dish', quantity: 2, unit_price_paise: 150, line_total_paise: 300 }], delivery_fee_paise: 40, min_order_paise: 500, subtotal_paise: 300, total_paise: 340 };
+  assert.deepEqual(validateRevisedPricing(valid, lines), valid, 'below minimum is a valid revised quote');
+  for (const value of [null, {}, { ...valid, total_paise: 1 }, { ...valid, delivery_fee_paise: -1 }, { ...valid, min_order_paise: '500' }, { ...valid, subtotal_paise: 1 }, { ...valid, lines: [] }, { ...valid, lines: [{ ...valid.lines[0], menu_item_id: 'foreign' }] }, { ...valid, lines: [{ ...valid.lines[0], quantity: 3 }] }, { ...valid, lines: [{ ...valid.lines[0], unit_price_paise: 0 }] }, { ...valid, lines: [{ ...valid.lines[0], line_total_paise: 1 }] }]) {
+    assert.throws(() => validateRevisedPricing(value, lines), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_RESPONSE');
+  }
+});
+
+test('checkout passes frozen terms and treats only validated no-order responses as revised pricing', async () => {
+  const { PricingChangedError } = await import('./index.ts');
+  const originalFetch = globalThis.fetch;
+  const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false };
+  const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 0, subtotal_paise: 100, total_paise: 120 };
+  const request = { lines: [{ item, quantity: 1 }], pricing, delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' };
+  const revised = { ...pricing, delivery_fee_paise: 40, total_paise: 140 };
+  let response: unknown = { outcome: 'pricing_changed', pricing: revised };
+  let orderReply: Record<string, unknown> | null = null;
+  const calls: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/rpc/place_order')) { calls.push(JSON.parse(String(init?.body))); return Response.json(response); }
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant', slug, name: 'Test', delivery_fee_paise: 999, min_order_paise: 999, is_demo: false, ordering_enabled: true, accepting_orders: true });
+    if (url.pathname.endsWith('/orders')) return orderReply ? Response.json(orderReply) : Response.json({ message: 'saved details unavailable', code: '22023' }, { status: 400 });
+    throw new Error('Unexpected request ' + url);
+  };
+  const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://pricing.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+  try {
+    await assert.rejects(service.placeOrder(request), (e: unknown) => e instanceof PricingChangedError && e.pricing.total_paise === 140);
+    assert.deepEqual((calls[0] as { p_accepted_pricing: unknown }).p_accepted_pricing, pricing, 'never fetch current business terms to replace accepted prices');
+    for (const invalid of [{ outcome: 'pricing_changed', pricing: { ...revised, total_paise: 1 } }, { outcome: 'pricing_changed', pricing: revised, id: 'order' }, { id: '40000000-0000-4000-8000-000000000001' }, { outcome: 'placed', id: 'invalid' }, null]) {
+      response = invalid;
+      await assert.rejects(service.placeOrder(request), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_RESPONSE');
+    }
+    response = { outcome: 'placed', id: '40000000-0000-4000-8000-000000000001' };
+    await assert.rejects(service.placeOrder(request), /Order was saved, but its details could not be loaded/);
+    orderReply = { id: '40000000-0000-4000-8000-000000000001', status: 'placed', version: 1, subtotal_paise: 100, delivery_fee_paise: 20, total_paise: 121, customer_name: 'Name', customer_phone: '123', delivery_address_line: 'Address', created_at: '2026-11-14', order_items: [{ menu_item_id: item.id, name: 'Dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], order_status_history: [] };
+    await assert.rejects(service.placeOrder(request), /does not match the accepted pricing/);
+    orderReply.total_paise = 120;
+    assert.equal((await service.placeOrder(request)).totalPaise, 120);
+  } finally { service.dispose(); globalThis.fetch = originalFetch; }
 });

@@ -67,7 +67,26 @@ SQL
   wait "$close_pid"
   [[ "$(count_orders 60000000-0000-4000-8000-000000000585)" == 0 ]] || { echo 'Order placed during a close' >&2; exit 1; }
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114082153_menu_diet_snapshots.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114133057_accepted_checkout_pricing.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/pricing.sql
+  # Exercise the accepted-pricing signature under simultaneous first requests.
+  set_open true
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  race_priced_order() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1)),'{"name":"Pricing race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'64000000-0000-4000-8000-000000000099',jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',b.delivery_fee_paise,'min_order_paise',b.min_order_paise,'subtotal_paise',m.price_paise,'total_paise',m.price_paise+b.delivery_fee_paise)) from public.menu_items m join public.businesses b on b.id=m.business_id where m.id='20000000-0000-4000-8000-000000000001';
+SQL
+  }
+  race_priced_order & first=$!
+  race_priced_order & second=$!
+  failed=0
+  wait "$first" || failed=1
+  wait "$second" || failed=1
+  if (( failed )); then echo 'Concurrent accepted-pricing requests failed' >&2; exit 1; fi
+  [[ "$(count_orders 64000000-0000-4000-8000-000000000099)" == 1 ]] || { echo 'Accepted-pricing race did not create exactly one order' >&2; exit 1; }
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.

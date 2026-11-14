@@ -13,7 +13,7 @@ insert into public.business_memberships(business_id,user_id,role) values
 delete from public.business_memberships where user_id='43000000-0000-4000-8000-000000000006';
 select public.test_assert((select bool_and(diet is null) from public.menu_items where id in ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002')), 'seed data has no inferred classification');
 select public.test_assert(not has_function_privilege('anon','public.require_menu_diet()','execute') and not has_function_privilege('authenticated','public.require_menu_diet()','execute'), 'trigger function is not a client API');
-select public.test_assert(not has_function_privilege('anon','public.place_order(text,jsonb,jsonb,jsonb,uuid)','execute'), 'place_order stays unavailable to guests');
+select public.test_assert(not has_function_privilege('anon','public.place_order(text,jsonb,jsonb,jsonb,uuid,jsonb)','execute'), 'place_order stays unavailable to guests');
 select public.test_assert(not has_column_privilege('authenticated','public.order_items','diet','insert') and not has_column_privilege('authenticated','public.order_items','diet','update'), 'snapshot has no direct client write privilege');
 -- A trusted unclassified fixture, unrelated to the sample flag.
 insert into public.menu_items(id,business_id,name,category,price_paise) values
@@ -66,10 +66,11 @@ end $$;
 select set_config('test.diet.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,false);
 -- Deliberately forged diet must not influence the stored snapshot.
 select set_config('test.diet.items','[{"menu_item_id":"23000000-0000-4000-8000-000000000002","quantity":1,"diet":"non_veg"},{"menu_item_id":"23000000-0000-4000-8000-000000000001","quantity":1,"diet":"veg"}]',false);
+select set_config('test.diet.pricing',jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id','23000000-0000-4000-8000-000000000002','quantity',1,'unit_price_paise',10000,'line_total_paise',10000),jsonb_build_object('menu_item_id','23000000-0000-4000-8000-000000000001','quantity',1,'unit_price_paise',10000,'line_total_paise',10000)),'subtotal_paise',20000,'delivery_fee_paise',delivery_fee_paise,'min_order_paise',min_order_paise,'total_paise',20000+delivery_fee_paise)::text,false) from public.businesses where slug='ammu-sammu';
 select set_config('test.diet.delivery','{"name":"Diet Test","phone":"123","address_line":"Synthetic test address"}',false);
 set role authenticated;
 select set_config('request.jwt.claim.sub','43000000-0000-4000-8000-000000000001',false);
-select set_config('test.diet.order',public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000043')->>'id',false);
+select set_config('test.diet.order',public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000043',current_setting('test.diet.pricing')::jsonb)->>'id',false);
 select public.test_assert((select diet='veg' from public.order_items where order_id=current_setting('test.diet.order')::uuid and menu_item_id='23000000-0000-4000-8000-000000000002'), 'snapshot comes from authoritative menu, not forged cart');
 select public.test_assert((select diet is null from public.order_items where order_id=current_setting('test.diet.order')::uuid and menu_item_id='23000000-0000-4000-8000-000000000001'), 'unknown is snapshotted as unknown');
 do $$ begin
@@ -87,10 +88,10 @@ do $$ begin
 end $$;
 select public.set_accepting_orders('ammu-sammu',false);
 select set_config('request.jwt.claim.sub','43000000-0000-4000-8000-000000000001',false);
-select public.test_assert(public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000043')->>'id'=current_setting('test.diet.order'), 'idempotent retry survives reclassification and restaurant closing');
+select public.test_assert(public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000043',current_setting('test.diet.pricing')::jsonb)->>'id'=current_setting('test.diet.order'), 'idempotent retry survives reclassification and restaurant closing');
 select public.test_assert((select count(*)=2 and count(diet)=1 from public.order_items where order_id=current_setting('test.diet.order')::uuid), 'retry does not rewrite or duplicate snapshots');
 do $$ begin
-  begin perform public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000044'); raise exception 'new closed order accepted'; exception when sqlstate 'PT409' then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000044',current_setting('test.diet.pricing')::jsonb); raise exception 'new closed order accepted'; exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 rollback;

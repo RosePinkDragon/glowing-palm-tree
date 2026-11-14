@@ -2,6 +2,7 @@ import { addCartItem, type BusinessSlug, type CartLine, type MenuItem } from '@m
 
 export interface SavedCart {
   version: 1;
+  revision: number;
   businessId: BusinessSlug;
   ownerId: string | null;
   lines: CartLine[];
@@ -42,10 +43,10 @@ export function readCart(value: string | null, businessId: BusinessSlug): SavedC
   if (value === null) return null;
   if (value.length > 120000) throw new Error('Invalid saved cart');
   const cart = JSON.parse(value) as SavedCart | null;
-  if (!cart || cart.version !== 1 || cart.businessId !== businessId ||
+  if (!cart || cart.version !== 1 || !Number.isSafeInteger(cart.revision) || cart.revision < 1 || cart.businessId !== businessId ||
       !(cart.ownerId === null || (typeof cart.ownerId === 'string' && cart.ownerId.length > 0 && cart.ownerId.length <= 128)) ||
       !validLines(cart.lines, businessId)) throw new Error('Invalid saved cart');
-  return { version: 1, businessId, ownerId: cart.ownerId, lines: cart.lines };
+  return { version: 1, revision: cart.revision, businessId, ownerId: cart.ownerId, lines: cart.lines };
 }
 
 /** Missing dishes stay visible for explicit removal; snapshots are never mutated. */
@@ -94,8 +95,14 @@ export class CustomerCartStore {
     void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => {});
     return next;
   }
-  private write(ownerId: string | null, lines: CartLine[]) {
-    const record: SavedCart = { version: 1, businessId: this.businessId, ownerId, lines };
+  private async write(ownerId: string | null, lines: CartLine[]) {
+    // Every caller holds the cart lock. A revision distinguishes a fulfilled cart
+    // from a later cart with exactly the same dishes and quantities.
+    let previous: SavedCart | null = null;
+    try { previous = readCart(await this.storage.getItem(cartKey(this.businessId)), this.businessId); } catch { /* Explicit recovery can replace a corrupt record. */ }
+    const revision = (previous?.revision ?? 0) + 1;
+    if (!Number.isSafeInteger(revision)) throw new Error('The saved cart revision is invalid.');
+    const record: SavedCart = { version: 1, revision, businessId: this.businessId, ownerId, lines };
     return this.storage.setItem(cartKey(this.businessId), JSON.stringify(record));
   }
 
