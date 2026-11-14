@@ -1,7 +1,7 @@
 -- Demonstration catalog only; no service boundary has been verified.
 insert into public.businesses (id, slug, name, is_demo) values
   ('10000000-0000-4000-8000-000000000001', 'ammu-sammu', 'Ammu Sammu', true),
-  ('10000000-0000-4000-8000-000000000002', 'konkan-fine-dine', 'Konkan Fine Dine', true)
+  ('10000000-0000-4000-8000-000000000002', 'konkan-fine-dine', 'Kokani Dine Inn', true)
 on conflict (slug) do nothing;
 insert into public.menu_items (id, business_id, name, description, category, price_paise, is_demo)
 select v.id, b.id, v.name, 'Example item for demonstration', 'Demo', v.price, true
