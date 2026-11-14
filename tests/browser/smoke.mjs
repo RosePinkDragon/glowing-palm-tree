@@ -281,10 +281,18 @@ const prepareCart = async (page, add = true) => {
     const dietContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
     try {
       const dietErrors = [], dietWrites = [];
+      const otherUser = { ...user, id: '30000000-0000-4000-8000-000000000043', email: 'other-diet-account@example.test' };
+      let activeUser = user;
+      const sessionFor = selected => {
+        const jwt = part({ alg: 'HS256', typ: 'JWT' }) + '.' + part({ sub: selected.id, aud: 'authenticated', role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture';
+        return { ...session, user: selected, access_token: jwt };
+      };
       const labels = ['Vegetarian', 'Contains egg', 'Non-vegetarian'];
       let dishes = ['veg', 'egg', 'non_veg', null].map((diet, index) => ({ ...item, id: `20000000-0000-4000-8000-00000000004${index}`, name: `Diet fixture ${index + 1}`, diet }));
       const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
       await dietContext.addInitScript(({ slug, session }) => {
+        if (localStorage.getItem('diet-fixture-initialized')) return;
+        localStorage.setItem('diet-fixture-initialized', 'yes');
         for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session));
       }, { slug, session });
       await dietContext.routeWebSocket(/.*/, socket => socket.close());
@@ -293,8 +301,9 @@ const prepareCart = async (page, add = true) => {
         if (url.hostname === '127.0.0.1') return route.fallback();
         if (url.origin !== origin) throw new Error('Unexpected diet fixture external request: ' + url.href);
         const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
-        if (url.pathname === '/auth/v1/user') return json(user);
-        if (url.pathname === '/auth/v1/token') return json(session);
+        if (url.pathname === '/auth/v1/user') return json(activeUser);
+        if (url.pathname === '/auth/v1/token') { activeUser = request.postDataJSON().email === otherUser.email ? otherUser : user; return json(sessionFor(activeUser)); }
+        if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
         if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn', accepting_orders: true });
         if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
         if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
@@ -342,11 +351,12 @@ const prepareCart = async (page, add = true) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-history-desktop.png`, fullPage: true });
       // An uncertain attempt displays its own immutable dish classification.
-      const attempt = { version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: 'Frozen vegetarian dish', description: '', category: 'Meals', pricePaise: 15000, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 1 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+      const attempt = { version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: `${slug} private pending dish`, description: '', category: 'Meals', pricePaise: 15123, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 2 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
       await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: `market:checkout:${slug}`, value: JSON.stringify(attempt) });
       await page.goto(customer.url + '/cart', { waitUntil: 'networkidle' });
       await page.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
-      await page.getByText('1 × Frozen vegetarian dish · ₹150.00', { exact: true }).filter({ visible: true }).waitFor();
+      const privateLine = `2 × ${slug} private pending dish · ₹302.46`;
+      await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
       assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1, 'only frozen attempt retains the old mark');
       assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), JSON.stringify(attempt));
       const adminPage = await dietContext.newPage(); adminPage.on('pageerror', error => dietErrors.push(error.message));
@@ -367,6 +377,42 @@ const prepareCart = async (page, add = true) => {
       assert.equal(dietWrites.at(-1).diet, 'non_veg');
       await adminPage.setViewportSize({ width: 1440, height: 900 });
       await adminPage.screenshot({ path: `dist/browser/${slug}-diet-owner-desktop.png`, fullPage: true });
+      // The business-keyed recovery blocker survives logout; its private detail
+      // is visible only to the account that submitted the immutable attempt.
+      const savedAttempt = JSON.stringify(attempt);
+      const assertPrivateHidden = async () => {
+        assert.equal(await page.getByText(privateLine, { exact: true }).filter({ visible: true }).count(), 0);
+        assert.equal(await page.getByText(`${slug} private pending dish`, { exact: false }).filter({ visible: true }).count(), 0);
+        assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 0);
+        await page.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
+        assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), savedAttempt);
+      };
+      // Cold guest restore has no auth record, while the old attempt remains.
+      await page.evaluate(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('market:https')) localStorage.removeItem(key); });
+      await page.goto(customer.url + '/account', { waitUntil: 'networkidle' });
+      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await assertPrivateHidden();
+      await page.goto(customer.url, { waitUntil: 'networkidle' });
+      assert.ok(await page.getByRole('img', { name: 'Contains egg', exact: true }).count() > 0, 'public menu marks stay visible to guests');
+      await assertPrivateHidden();
+      await page.goto(customer.url + '/account', { waitUntil: 'networkidle' });
+      await signIn(page);
+      await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await assertPrivateHidden();
+      await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(otherUser.email);
+      await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+      await assertPrivateHidden();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await signIn(page);
+      await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
+      assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1);
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), savedAttempt);
+      console.log(`PASS: ${slug} cold guest/logout/B cannot see pending order details; matching A restores unchanged name, quantity, amount and mark`);
       assert.deepEqual(dietErrors, []);
       console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
     } finally { await dietContext.close(); await customer.close(); await owner.close(); }
