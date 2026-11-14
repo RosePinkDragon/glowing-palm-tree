@@ -97,11 +97,21 @@ test('default-branch target accepts a retained older PR base snapshot', async ()
 test('non-default target is rejected and changes to base metadata are detected', async () => {
   const p = pr(); p.base.ref = 'other';
   const wrongTarget = fixture({ prs: [p] });
-  await assert.rejects(wrongTarget.runner.runBatch());
+  await wrongTarget.runner.runBatch();
+  assert.equal(wrongTarget.calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
   assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /repository default branch/);
   const changed = fixture({ changePr: value => { value.base.sha = 'new-base-during-evaluation'; } });
   await changed.runner.runBatch();
   assert.match(changed.calls.find(c => c.method === 'PATCH').payload.output.summary, /metadata changed/);
+});
+
+test('dependent PR denial does not fail a batch containing a valid main-target PR', async () => {
+  const dependent = pr(8, 'dependent-head'); dependent.base.ref = 'feature/monorepo-3-predecessor';
+  const { runner, calls } = fixture({ prs: [pr(), dependent] });
+  await runner.runBatch();
+  const results = calls.filter(c => c.method === 'PATCH');
+  assert.deepEqual(results.map(c => c.payload.conclusion), ['success', 'failure']);
+  assert.match(results[1].payload.output.summary, /Merge its predecessor and retarget/);
 });
 
 test('initial, evaluation and final metadata failures complete started check as failure', async () => {
