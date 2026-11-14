@@ -1,10 +1,11 @@
 import { webRedirectUrl } from './auth-callback.ts';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import { menuItem } from '../../../tests/fixtures/menu.ts';
 import { freezeAttempt, readAttempt } from './checkout-state.ts';
 
 test('a persisted attempt preserves the original request for retries', () => {
-  const source = { businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: { id: 'dish', businessId: 'ammu-sammu' as const, name: 'Dish', description: '', category: 'Food', pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 }, quantity: 1 }], delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } };
+  const source = { businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: menuItem(), quantity: 1 }], delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } };
   const snapshot = freezeAttempt(source);
   source.lines[0].quantity = 2; source.delivery.name = 'Changed';
   const restored = readAttempt(JSON.stringify(snapshot), 'ammu-sammu');
@@ -90,7 +91,7 @@ test('auth redirects preserve only local allowlisted navigation targets', () => 
 
 test('accepted terms stay frozen and revised quotes disappear at identity boundaries', async () => {
   const { capturePricing, revisedLines, visibleQuote } = await import('./pricing-model.ts');
-  const lines = [{ item: { id: 'dish', businessId: 'ammu-sammu' as const, name: 'Private dish', description: '', category: 'Food', pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 }, quantity: 2 }];
+  const lines = [{ item: menuItem({ name: 'Private dish' }), quantity: 2 }];
   const original = freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: 'original-key', lines, pricing: capturePricing(lines, 20, 50), delivery: { name: 'Private sender', phone: '1', addressLine: 'Private address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } });
   const accepted = JSON.stringify(original);
   lines[0].item.pricePaise = 300;

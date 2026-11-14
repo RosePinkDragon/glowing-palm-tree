@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { menuItem } from '../../../tests/fixtures/menu.ts';
 import {
   DomainValidationError,
   dietLabels,
@@ -16,10 +17,10 @@ import {
   type MenuItem,
 } from './index.ts';
 
-const soup: MenuItem = {
+const soup: MenuItem = menuItem({
   id: 'soup', businessId: 'ammu-sammu', name: 'Soup', description: '', category: 'Starter',
   pricePaise: 12550, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0,
-};
+});
 const rice: MenuItem = { ...soup, id: 'rice', name: 'Rice', pricePaise: 9900 };
 const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'kokani-dine-inn' };
 
