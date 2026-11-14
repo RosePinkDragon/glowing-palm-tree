@@ -13,6 +13,10 @@ export interface PricingTerms {
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
 }
 export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix; idempotencyKey: string }
+/** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
+export interface OrderCursor { createdAtISO: string; id: string }
+export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
+export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
 export class ServiceError extends Error {
@@ -45,6 +49,25 @@ export function validateRevisedPricing(value: unknown, lines: readonly CartLine[
 
 function fail(error: { message: string; code?: string } | null, action: string): void {
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
+}
+
+const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validOrderCursor(value: unknown): value is OrderCursor {
+  if (!value || typeof value !== 'object') return false;
+  const { createdAtISO, id } = value as OrderCursor;
+  if (typeof id !== 'string' || !orderIdPattern.test(id) || typeof createdAtISO !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.exec(createdAtISO);
+  if (!match || !Number.isFinite(Date.parse(createdAtISO))) return false;
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate() && hour <= 23 && minute <= 59 && second <= 59;
+}
+function orderPageOptions(value: OrderPageOptions): { cursor: OrderCursor | null; limit: number } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ServiceError('INVALID_ORDER_QUERY', 'Choose a valid order page.');
+  const { cursor = null, limit = 20 } = value;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ServiceError('INVALID_ORDER_QUERY', 'Order page size must be a whole number from 1 to 50.');
+  if (cursor !== null && !validOrderCursor(cursor)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order page cursor is invalid.');
+  return { cursor: cursor === null ? null : { createdAtISO: cursor.createdAtISO, id: cursor.id }, limit };
 }
 
 /** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
@@ -183,6 +206,52 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await query.order('created_at', { ascending: false });
     fail(error, 'Could not load orders');
     return (data ?? []).map(row => mapOrder(row as OrderRow, slug));
+  };
+  // These reads are explicitly customer-scoped, even when the customer also has
+  // an admin membership (whose database policy can otherwise see all orders).
+  const customerOrderScope = async () => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to view your order history.');
+    const ensureCurrent = (userId?: string) => {
+      if (disposed || generation !== started || (userId !== undefined && sessionUserId !== undefined && sessionUserId !== userId)) {
+        throw new ServiceError('SESSION_CHANGED', 'Your account changed. Reload your orders.');
+      }
+    };
+    const { data, error } = await db.auth.getUser();
+    ensureCurrent(); fail(error, 'Could not verify your account');
+    if (!data.user) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to view orders.');
+    const userId = data.user.id;
+    ensureCurrent(userId);
+    const business = await getBusiness();
+    ensureCurrent(userId);
+    return { db, businessId: business.id, userId, ensureCurrent: () => ensureCurrent(userId) };
+  };
+  const readCustomerOrderPage = async (options: OrderPageOptions, activeOnly: boolean): Promise<OrderPage> => {
+    const { cursor, limit } = orderPageOptions(options);
+    const scope = await customerOrderScope();
+    let query = scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
+    if (activeOnly) query = query.in('status', ['placed', 'accepted', 'preparing', 'out_for_delivery']);
+    // Both values have a strict grammar before entering PostgREST's raw OR filter.
+    if (cursor) query = query.or(`created_at.lt.${cursor.createdAtISO},and(created_at.eq.${cursor.createdAtISO},id.lt.${cursor.id})`);
+    const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit + 1);
+    scope.ensureCurrent(); fail(error, 'Could not load your orders');
+    const rows = (data ?? []) as OrderRow[];
+    const visible = rows.slice(0, limit), last = visible.at(-1);
+    let nextCursor: OrderCursor | null = null;
+    if (rows.length > limit && last) {
+      nextCursor = { createdAtISO: last.created_at, id: last.id };
+      if (!validOrderCursor(nextCursor)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order page.');
+    }
+    return { orders: visible.map(row => mapOrder(row, slug)), nextCursor };
+  };
+  const getOrderHistory = (options: OrderPageOptions = {}) => readCustomerOrderPage(options, false);
+  const getActiveOrders = (options: OrderPageOptions = {}) => readCustomerOrderPage(options, true);
+  const getCustomerOrder = async (id: string): Promise<Order | null> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order reference is invalid.');
+    const scope = await customerOrderScope();
+    const { data, error } = await scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
+    scope.ensureCurrent(); fail(error, 'Could not load your order');
+    return data ? mapOrder(data as OrderRow, slug) : null;
   };
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
@@ -376,7 +445,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
