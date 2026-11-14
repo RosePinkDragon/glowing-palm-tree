@@ -70,6 +70,8 @@ SQL
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114133057_accepted_checkout_pricing.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/pricing.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114140135_menu_featured_item_order.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-featured.sql
   # Exercise the accepted-pricing signature under simultaneous first requests.
   set_open true
   fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -101,5 +103,6 @@ for db in all_fresh all_existing; do
   done
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-featured.sql
 done
-echo 'Database isolation, checkout, notification, open/closed and diet tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet and featured tests passed, including all migrations before seed in both PostGIS schemas.'

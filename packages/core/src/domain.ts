@@ -41,6 +41,8 @@ export interface MenuItem {
   diet?: Diet | null;
   pricePaise: number;
   isAvailable: boolean;
+  isFeatured: boolean;
+  sortOrder: number;
   isDemo: boolean;
   imageUrl?: string;
 }

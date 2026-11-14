@@ -5,7 +5,7 @@ import { storage } from './storage';
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
 export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
-export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean }
+export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
 export interface PricingTerms {
   lines: { menu_item_id: string; quantity: number; unit_price_paise: number; line_total_paise: number }[];
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
@@ -119,10 +119,10 @@ function publicConfig(): PublicConfig {
   return { url: process.env.EXPO_PUBLIC_SUPABASE_URL, anonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY };
 }
 
-type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category: string; price_paise: number; available: boolean; is_demo: boolean; image_url: string | null };
+type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category: string; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
 type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
 export function mapMenu(row: MenuRow, slug: BusinessSlug): MenuItem {
-  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.category, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
+  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.category, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
   return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
@@ -162,9 +162,9 @@ export function createMarketServices(options: ServiceOptions) {
     return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
-    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', diet: null, pricePaise: 0, isAvailable: false, isDemo: true }];
+    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
     const business = await getBusiness();
-    const { data, error } = await client.from('menu_items').select('*').eq('business_id', business.id).order('name');
+    const { data, error } = await client.from('menu_items').select('*').eq('business_id', business.id).order('category').order('sort_order').order('name').order('id');
     fail(error, 'Could not load menu');
     return (data ?? []).map(row => mapMenu(row as MenuRow, slug));
   };
@@ -210,14 +210,15 @@ export function createMarketServices(options: ServiceOptions) {
         typeof input.description !== 'string' || input.description.length > 1000 ||
         !Number.isSafeInteger(input.pricePaise) || input.pricePaise <= 0 || input.pricePaise > 2147483647 ||
         typeof input.isAvailable !== 'boolean' || typeof input.isDemo !== 'boolean' ||
+        typeof input.isFeatured !== 'boolean' || !Number.isInteger(input.sortOrder) || input.sortOrder < -2147483648 || input.sortOrder > 2147483647 ||
         (input.id !== undefined && (typeof input.id !== 'string' || !input.id.trim()))) {
-      throw new ServiceError('INVALID_MENU_ITEM', 'Enter a name and category (up to 100 characters), a description (up to 1000 characters), a positive whole price in paise, and availability and sample status.');
+      throw new ServiceError('INVALID_MENU_ITEM', 'Enter a name and category (up to 100 characters), a description (up to 1000 characters), a positive whole price in paise, availability, sample and featured status, and a whole item order from -2,147,483,648 to 2,147,483,647.');
     }
     if ((!input.id && !isDiet(input.diet)) || (input.diet !== null && !isDiet(input.diet))) {
       throw new ServiceError('INVALID_MENU_ITEM', 'Choose Vegetarian, Contains egg or Non-vegetarian for a new dish.');
     }
     const db = requireClient(); const business = await requireAdminBusiness();
-    const values = { diet: input.diet, name: input.name.trim(), description: input.description.trim(), category: input.category.trim(), price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo };
+    const values = { diet: input.diet, name: input.name.trim(), description: input.description.trim(), category: input.category.trim(), price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo, is_featured: input.isFeatured, sort_order: input.sortOrder };
     const query = input.id === undefined
       ? db.from('menu_items').insert({ ...values, business_id: business.id })
       : db.from('menu_items').update(values).eq('id', input.id).eq('business_id', business.id);
