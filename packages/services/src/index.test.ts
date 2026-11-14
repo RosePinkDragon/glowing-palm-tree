@@ -20,7 +20,7 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
 });
 test('maps database menu and complete order into domain values', () => {
-  assert.deepEqual(mapMenu({ diet: null, id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 1200, available: true, is_demo: false, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', diet: null, pricePaise: 1200, isAvailable: true, isDemo: false });
+  assert.deepEqual(mapMenu({ diet: null, id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 1200, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', diet: null, pricePaise: 1200, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 });
   const order = mapOrder({ id: 'o', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ diet: 'egg', menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);
   assert.equal(order.lines[0].unitPricePaise, 1200);
   assert.equal(order.lines[0].diet, 'egg');
@@ -148,25 +148,35 @@ test('admin catalogue mutations use checked membership and tenant-scoped request
       const method = init?.method ?? 'GET';
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       calls.push({ url, method, body });
-      return Response.json(method === 'DELETE' ? { id: 'item1' } : { diet: 'egg', id: 'item1', name: 'Dish', description: '', category: 'Main', price_paise: 100, available: true, is_demo: true, image_url: null });
+      return Response.json(method === 'DELETE' ? { id: 'item1' } : { diet: 'egg', id: 'item1', name: 'Dish', description: '', category: 'Main', price_paise: 100, available: true, is_demo: true, is_featured: true, sort_order: -2, image_url: null });
     }
     throw new Error(`Unexpected request ${url}`);
   };
   try {
     const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
     await service.auth.signIn('admin@example.test', 'password');
-    const item = { diet: 'egg' as const, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: true };
-    await service.saveMenuItem(item); await service.saveMenuItem({ ...item, id: 'item1' }); await service.deleteMenuItem('item1');
+    const item = { diet: 'egg' as const, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: true, isFeatured: true, sortOrder: -2 };
+    const saved = await service.saveMenuItem(item);
+    assert.equal(saved.isFeatured, true); assert.equal(saved.sortOrder, -2);
+    await service.saveMenuItem({ ...item, id: 'item1' }); await service.deleteMenuItem('item1');
     assert.equal(calls[0].body.diet, 'egg');
+    assert.equal(calls[0].body.is_featured, true); assert.equal(calls[0].body.sort_order, -2);
     assert.equal(calls[0].method, 'POST'); assert.equal(calls[0].body.business_id, 'tenant-id'); assert.equal(calls[0].body.is_demo, true);
     for (const call of calls.slice(1)) { assert.equal(call.url.searchParams.get('id'), 'eq.item1'); assert.equal(call.url.searchParams.get('business_id'), 'eq.tenant-id'); }
     assert.equal(calls[1].method, 'PATCH'); assert.equal(calls[1].body.business_id, undefined); assert.equal(calls[2].method, 'DELETE');
     await assert.rejects(service.saveMenuItem({ ...item, pricePaise: 1.5 }), /positive whole price/);
-    await assert.rejects(service.saveMenuItem({ ...item, isDemo: undefined as never }), /sample status/);
+    await assert.rejects(service.saveMenuItem({ ...item, isDemo: undefined as never }), /sample and featured status/);
     for (const diet of [null, undefined, 'fish']) {
       await assert.rejects(service.saveMenuItem({ ...item, diet: diet as never }), /Choose Vegetarian/);
     }
     await service.saveMenuItem({ ...item, id: 'item1', diet: null });
+    for (const sortOrder of [1.5, NaN, Infinity, -2147483649, 2147483648, undefined, '2']) {
+      await assert.rejects(service.saveMenuItem({ ...item, sortOrder: sortOrder as never }), /whole item order/);
+    }
+    for (const isFeatured of [undefined, null, 'true', 1]) {
+      await assert.rejects(service.saveMenuItem({ ...item, isFeatured: isFeatured as never }), /featured status/);
+    }
+
     assert.equal(calls[3].body.diet, null, 'an existing unknown dish can remain unknown');
     assert.equal(calls.length, 4); service.dispose();
   } finally { globalThis.fetch = originalFetch; }
@@ -338,7 +348,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
     await assert.rejects(customer.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
     await customer.auth.signIn('customer@example.test', 'password');
-    const item = { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false };
+    const item = { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
     await assert.rejects(customer.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }
@@ -349,7 +359,7 @@ test('demo diet stays unknown and explicit menu marks map for both restaurants',
     const service = createMarketServices({ businessSlug, audience: 'customer', config: {} });
     assert.equal((await service.getMenu())[0].diet, null);
     for (const diet of ['veg', 'egg', 'non_veg', null] as const) {
-      assert.equal(mapMenu({ id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 100, available: true, is_demo: false, image_url: null, diet }, businessSlug).diet, diet);
+      assert.equal(mapMenu({ id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 100, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null, diet }, businessSlug).diet, diet);
     }
     service.dispose();
   }
@@ -357,7 +367,7 @@ test('demo diet stays unknown and explicit menu marks map for both restaurants',
 
 test('revised pricing validates every line and amount before releasing the uncertain attempt', async () => {
   const { validateRevisedPricing } = await import('./index.ts');
-  const lines = [{ item: { id: 'dish', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false }, quantity: 2 }];
+  const lines = [{ item: { id: 'dish', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 }, quantity: 2 }];
   const valid = { lines: [{ menu_item_id: 'dish', quantity: 2, unit_price_paise: 150, line_total_paise: 300 }], delivery_fee_paise: 40, min_order_paise: 500, subtotal_paise: 300, total_paise: 340 };
   assert.deepEqual(validateRevisedPricing(valid, lines), valid, 'below minimum is a valid revised quote');
   for (const value of [null, {}, { ...valid, total_paise: 1 }, { ...valid, delivery_fee_paise: -1 }, { ...valid, min_order_paise: '500' }, { ...valid, subtotal_paise: 1 }, { ...valid, lines: [] }, { ...valid, lines: [{ ...valid.lines[0], menu_item_id: 'foreign' }] }, { ...valid, lines: [{ ...valid.lines[0], quantity: 3 }] }, { ...valid, lines: [{ ...valid.lines[0], unit_price_paise: 0 }] }, { ...valid, lines: [{ ...valid.lines[0], line_total_paise: 1 }] }]) {
@@ -368,7 +378,7 @@ test('revised pricing validates every line and amount before releasing the uncer
 test('checkout passes frozen terms and treats only validated no-order responses as revised pricing', async () => {
   const { PricingChangedError } = await import('./index.ts');
   const originalFetch = globalThis.fetch;
-  const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false };
+  const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
   const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 0, subtotal_paise: 100, total_paise: 120 };
   const request = { lines: [{ item, quantity: 1 }], pricing, delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' };
   const revised = { ...pricing, delivery_fee_paise: 40, total_paise: 140 };
@@ -397,4 +407,20 @@ test('checkout passes frozen terms and treats only validated no-order responses 
     orderReply.total_paise = 120;
     assert.equal((await service.placeOrder(request)).totalPaise, 120);
   } finally { service.dispose(); globalThis.fetch = originalFetch; }
+});
+
+
+test('catalog reads scope the business and request stable item ordering', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async input => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: false, accepting_orders: false });
+    assert.equal(url.pathname, '/rest/v1/menu_items');
+    assert.equal(url.searchParams.get('business_id'), 'eq.tenant');
+    assert.equal(url.searchParams.get('order'), 'category.asc,sort_order.asc,name.asc,id.asc');
+    return Response.json([]);
+  };
+  const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' } });
+  try { assert.deepEqual(await service.getMenu(), []); }
+  finally { service.dispose(); globalThis.fetch = original; }
 });

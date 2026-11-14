@@ -18,7 +18,7 @@ import {
 
 const soup: MenuItem = {
   id: 'soup', businessId: 'ammu-sammu', name: 'Soup', description: '', category: 'Starter',
-  pricePaise: 12550, isAvailable: true, isDemo: false,
+  pricePaise: 12550, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0,
 };
 const rice: MenuItem = { ...soup, id: 'rice', name: 'Rice', pricePaise: 9900 };
 const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'kokani-dine-inn' };
@@ -92,4 +92,11 @@ test('diet values stay explicit through cart changes; unknown never becomes vege
   }
   for (const value of [null, undefined, '', 'vegetarian', 'fish', false]) assert.equal(isDiet(value), false);
   assert.equal(addCartItem([], { ...soup, diet: null, isDemo: true })[0].item.diet, null);
+});
+
+test('menu merchandising stays attached to cart items without affecting price or diet', () => {
+  const item = { ...soup, isFeatured: true, sortOrder: -2, diet: null };
+  const cart = setCartItemQuantity(addCartItem([], item), item.id, 2);
+  assert.deepEqual(cart[0].item, item);
+  assert.equal(cartSubtotalPaise(cart), 25100);
 });
