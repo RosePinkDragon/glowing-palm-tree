@@ -3,6 +3,8 @@ export type BusinessSlug = 'ammu-sammu' | 'kokani-dine-inn';
 
 export {
   DomainValidationError,
+  dietLabels,
+  isDiet,
   addCartItem,
   canTransitionOrderStatus,
   cartSubtotalPaise,
@@ -16,6 +18,7 @@ export {
 export type {
   CartLine,
   DeliveryDetails,
+  Diet,
   DomainFieldErrors,
   LocationFix,
   LocationPermissionState,

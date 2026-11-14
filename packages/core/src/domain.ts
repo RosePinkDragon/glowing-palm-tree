@@ -21,12 +21,24 @@ export function canTransitionOrderStatus(from: OrderStatus, to: OrderStatus): bo
   return orderStatusTransitions[from].includes(to);
 }
 
+export type Diet = 'veg' | 'non_veg' | 'egg';
+
+export const dietLabels: Readonly<Record<Diet, string>> = {
+  veg: 'Vegetarian', non_veg: 'Non-vegetarian', egg: 'Contains egg',
+};
+
+export function isDiet(value: unknown): value is Diet {
+  return value === 'veg' || value === 'non_veg' || value === 'egg';
+}
+
 export interface MenuItem {
   id: string;
   businessId: BusinessSlug;
   name: string;
   description: string;
   category: string;
+  /** Unclassified dishes have no mark. */
+  diet?: Diet | null;
   pricePaise: number;
   isAvailable: boolean;
   isDemo: boolean;
@@ -54,6 +66,8 @@ export interface LocationFix {
 export type LocationPermissionState = 'granted' | 'denied' | 'undetermined';
 
 export interface OrderLine {
+  /** Trusted snapshot at order placement; never read from the current menu. */
+  diet?: Diet | null;
   menuItemId: string;
   name: string;
   quantity: number;
