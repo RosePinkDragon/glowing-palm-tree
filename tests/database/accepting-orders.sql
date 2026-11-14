@@ -37,7 +37,7 @@ do $$ begin
   begin perform public.set_accepting_orders('ammu-sammu',null); raise exception 'null accepted'; exception when invalid_parameter_value then null; end;
 end $$;
 select public.test_assert((public.set_accepting_orders('ammu-sammu',true)->>'accepting_orders')::boolean, 'owner opens restaurant');
-select public.test_assert((select accepting_orders from public.businesses where slug='ammu-sammu') and not (select accepting_orders from public.businesses where slug='konkan-fine-dine'), 'only own restaurant opened');
+select public.test_assert((select accepting_orders from public.businesses where slug='ammu-sammu') and not (select accepting_orders from public.businesses where slug='kokani-dine-inn'), 'only own restaurant opened');
 select public.set_accepting_orders('ammu-sammu',true);
 select public.test_assert((select count(*)=1 from public.accepting_orders_changes where accepting_orders and changed_by='30000000-0000-4000-8000-000000000003'), 'one change logged with owner; repeat is a no-op');
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000004',false);
