@@ -43,7 +43,7 @@ function fixture(options = {}) {
 }
 
 test('branch rules and feature approval independent of prefix', () => {
-  for (const value of ['feature/kokani-dine-inn-customer-40-new-brand', 'feature/kokani-dine-inn-admin-40-new-brand', 'feature/ammu-sammu-customer-2-add-cart', 'bug/konkan-fine-dine-admin-15-fix', 'release/monorepo-1-ship']) assert.match(value, BRANCH);
+  for (const value of ['feature/kokani-dine-inn-customer-40-new-brand', 'feature/kokani-dine-inn-admin-40-new-brand', 'feature/ammu-sammu-customer-2-add-cart', 'bug/kokani-dine-inn-admin-15-fix', 'release/monorepo-1-ship']) assert.match(value, BRANCH);
   for (const value of ['Feature/monorepo-3-x', 'feature/monorepo-03-x', 'feature/other-3-x', 'feature/monorepo-3-X', 'feature/monorepo-3-x--y', 'feature/monorepo-0-x']) assert.doesNotMatch(value, BRANCH);
   assert.deepEqual(err(pr(), issue()), []);
   for (const prefix of ['feature', 'bug', 'release']) {
