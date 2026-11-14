@@ -52,6 +52,22 @@ export function CustomerNavigation({ market, render, controls, cartCount }: { ma
   useEffect(() => {
     if (market.recovery && navigation.isReady()) navigation.navigate('Login', { next: '/account' });
   }, [market.recovery, navigation]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onTap = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; path?: unknown } | null;
+      const source = event.source as ServiceWorker | null;
+      if (data?.type !== 'market:notification-tap' || typeof data.path !== 'string' || !source?.scriptURL || !navigation.isReady()) return;
+      let worker: URL;
+      try { worker = new URL(source.scriptURL); } catch { return; }
+      if (worker.origin !== window.location.origin || !worker.pathname.endsWith('/firebase-messaging-worker.js')) return;
+      if (data.path !== '/' && !(data.path.startsWith('/orders/') && uuid.test(data.path.slice(8)))) return;
+      controls.current?.go(data.path);
+      event.ports[0]?.postMessage({ accepted: true });
+    };
+    navigator.serviceWorker.addEventListener('message', onTap);
+    return () => navigator.serviceWorker.removeEventListener('message', onTap);
+  }, [navigation, controls]);
   const linking = {
     prefixes: [Linking.createURL('/')],
     config: { initialRouteName: 'Menu' as const, screens: { Menu: '', Cart: 'cart', Orders: 'orders', Order: 'orders/:id', Account: 'account', Login: 'login', NotFound: '*' } }

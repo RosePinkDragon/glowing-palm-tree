@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 container="database-isolation-${RANDOM}-$$"
-cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -fv "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 # A disposable local-only password, no published ports or persistent volumes.
 docker run -d --name "$container" -e POSTGRES_PASSWORD=local-isolation-test-only postgis/postgis:17-3.5-alpine >/dev/null
@@ -41,6 +41,8 @@ SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000002_notifications.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notifications.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261113194819_customer_order_notification_route.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notification-routing.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114000000_accepting_orders.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/accepting-orders.sql
   # An order and a closing at the same moment are serialized by the business row lock.

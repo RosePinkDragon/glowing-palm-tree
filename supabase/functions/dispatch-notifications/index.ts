@@ -1,4 +1,4 @@
-import { dispatch, message, classify, type Job, type Ports } from './dispatch.ts';
+import { dispatch, message, classify, type Delivery, type Job, type Ports } from './dispatch.ts';
 
 const secret = Deno.env.get('NOTIFICATION_DISPATCH_SECRET') ?? '';
 const supabase = Deno.env.get('SUPABASE_URL') ?? '';
@@ -38,13 +38,13 @@ Deno.serve(async (request) => {
   }
   const ports: Ports = {
     claim: async () => await rpc('claim_notification_jobs', { p_limit: 5 }) as Job[],
-    destination: async (job) => await rpc('notification_destination', { p_job_id: job.job_id, p_lease_id: job.lease_id }) as string | null,
+    destination: async (job) => await rpc('notification_delivery', { p_job_id: job.job_id, p_lease_id: job.lease_id }) as Delivery | null,
     finish: async (job, result) => { await rpc('finish_notification_job', { p_job_id: job.job_id, p_lease_id: job.lease_id, p_result: result }); },
-    send: async (token) => {
+    send: async (delivery) => {
       if (!configured || !account) throw new Error('not configured');
       access ??= oauth(account);
       const bearer = await access;
-      const res = await timedFetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, { method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(message(token)) });
+      const res = await timedFetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, { method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(message(delivery.token, delivery.order_id)) });
       let body: unknown = null;
       try { body = await res.json(); } catch { /* Classification uses status if no JSON. */ }
       return classify(res.status, body);
