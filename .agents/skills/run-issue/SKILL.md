@@ -33,8 +33,12 @@ description: Route and deliver issue-scoped implementation with appropriate appr
    A real unresolved owner decision requires the owner; do not create a design label
    or separate approval gate otherwise. No mode mandates every role.
 3. Plan criteria, risks, tests, and file ownership before editing. Limit each PR to 15
-   reviewable files using the exclusions in `AGENTS.md`; if necessary split PRs within
-   the approved issue and preserve its acceptance coverage. Never assign overlapping
+   reviewable files in the complete `origin/main...HEAD` diff using the exclusions in
+   `AGENTS.md`. Every PR targets `main`; never publish stacked/dependent PRs or
+   feature-branch merge targets. Split within the approved issue sequentially and
+   preserve acceptance coverage: wait for the preceding same-issue PR to merge, then
+   update/rebase onto fresh main before publishing the next slice. Independent issues
+   may proceed in parallel. Never assign overlapping
    files to concurrent editors. Give each role a concise handoff with phase, issue,
    approval evidence, branch, role/model/thinking, scope, files, criteria, checks,
    references, and relevant findings. The developer delivers assigned work end to end.
@@ -45,7 +49,13 @@ description: Route and deliver issue-scoped implementation with appropriate appr
    approval absent an actual scope, design, or other blocked decision. Refresh affected
    checks, reviews, and counts after changes; bind evidence to final head or reviewed
    diff. Do not claim readiness with unresolved blocking findings.
-5. The lead alone opens or updates the PR when authorized, using an existing PR if present,
+5. Before each publication or update, the lead must successfully run
+   `npm run pr:preflight -- --issue N --base main` on the committed head. It fetches
+   current `origin/main`, requires main ancestry, counts the complete main comparison,
+   and checks live open PR metadata. Resolve failures before publishing. Only the
+   exact existing head-branch PR may be updated while it is open for that issue;
+   another same-issue open PR blocks a new slice. Rerun after any head/main change.
+   The lead alone opens or updates the PR against `main` when authorized, using an existing PR if present,
    and requests owner review. After push, wait for and check CI on the delivered head
    SHA. Repair failures and obtain affected re-review; report pending or unavailable
    checks as pending, never as passed. Include issue, approval, routing, scope, checks, reviews,

@@ -51,7 +51,11 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
       if (shared) throw new Error('Multiple open PRs share this head commit; each open PR needs a distinct head commit.');
       // GitHub retains a PR's base snapshot when unrelated commits land on main.
       // Workflow checkout supplies trusted policy code; target ref supplies scope.
-      if (pr.base.ref !== event.repository.default_branch) throw new Error('PR must target the repository default branch.');
+      if (pr.base.ref !== event.repository.default_branch) {
+        // An expected policy denial is not an API/evaluation outage for the batch.
+        await finishCheck(checkId, ['PR must target the repository default branch. Merge its predecessor and retarget this PR before merging.']);
+        return true;
+      }
       const files = await pages(`/repos/${repository}/pulls/${pr.number}/files`);
       if (files.length !== pr.changed_files || files.length >= 3000) throw new Error('File list is incomplete or at the GitHub API 3000-file limit.');
       const number = linkedIssue(pr.body, repository);
