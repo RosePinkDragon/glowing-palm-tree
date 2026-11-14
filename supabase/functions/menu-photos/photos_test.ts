@@ -83,3 +83,47 @@ Deno.test('actual JPEG PNG and WebP decode to stripped display-sized static WebP
     assert(rejected,'unsupported contents accepted');
   }
 });
+
+Deno.test('real HTTP adapter accepts empty void RPC replies and continues the cleanup batch', async () => {
+  const originalFetch = globalThis.fetch, originalServe = Deno.serve, originalEnv = Deno.env.get;
+  let handler: ((request: Request) => Promise<Response>) | undefined;
+  const calls: string[] = [];
+  let emptyStatus = 204;
+  const jobs = [{id:'old-one',base:'business/dish/one',lease:'lease-one'},{id:'old-two',base:'business/dish/two',lease:'lease-two'}];
+  try {
+    // Import the deployed entrypoint while capturing its server callback. Only
+    // HTTP boundaries are mocked: the actual api/rpc/ports code runs unchanged.
+    Deno.env.get = key => key === 'SUPABASE_URL' ? 'https://adapter.test' : key === 'SUPABASE_SERVICE_ROLE_KEY' ? 'test-server-key' : undefined;
+    Deno.serve = ((callback: (request: Request) => Promise<Response>) => { handler = callback; }) as unknown as typeof Deno.serve;
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/auth/v1/user') return Response.json({id:'verified-owner'});
+      const body = JSON.parse(String(init?.body));
+      if (path === '/rest/v1/rpc/menu_photo_business') {
+        assert(body.p_actor === 'verified-owner' && body.p_slug === 'ammu-sammu','verified actor/business lost');
+        return Response.json('business');
+      }
+      if (path === '/rest/v1/rpc/remove_menu_photo') { calls.push('remove'); return new Response(null,{status:emptyStatus}); }
+      if (path === '/rest/v1/rpc/claim_menu_photo_cleanup') { calls.push('claim'); return Response.json(jobs); }
+      if (path === '/storage/v1/object/menu-images') {
+        const version = body.prefixes[0].includes('/one/') ? 'one' : 'two';
+        calls.push(`delete:${version}`); return Response.json([]);
+      }
+      if (path === '/rest/v1/rpc/finish_menu_photo_cleanup') {
+        calls.push(`finish:${body.p_job}`); return new Response(null,{status:emptyStatus});
+      }
+      throw new Error(`Unexpected adapter request: ${path}`);
+    };
+    await import('./index.ts');
+    assert(handler,'entrypoint did not register its handler');
+    // PostgREST uses 204 for RETURNS void. Accept other empty successful replies
+    // too, while continuing to parse the JSON returned by claim/authorize RPCs.
+    for (emptyStatus of [204,200]) {
+      calls.length = 0;
+      const response = await handler(request('remove'));
+      const result = await response.json();
+      assert(response.status === 200 && result.saved && result.cleanupComplete,`empty HTTP ${emptyStatus} became a false failure`);
+      assert(calls.join(',') === 'remove,claim,delete:one,finish:old-one,delete:two,finish:old-two','cleanup stopped after an empty finish reply');
+    }
+  } finally { globalThis.fetch = originalFetch; Deno.serve = originalServe; Deno.env.get = originalEnv; }
+});

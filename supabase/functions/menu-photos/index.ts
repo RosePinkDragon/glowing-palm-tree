@@ -16,7 +16,11 @@ async function api(path: string, init: RequestInit = {}, token = service) {
   return response;
 }
 async function rpc(name: string, body: object) {
-  return await (await api(`/rest/v1/rpc/${name}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
+  const response = await api(`/rest/v1/rpc/${name}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  // PostgREST returns an empty 204 for RETURNS void, including removal and
+  // cleanup acknowledgement. Those committed writes must remain successful.
+  const content = await response.text();
+  return content.trim() ? JSON.parse(content) : null;
 }
 Deno.serve(request => handlePhoto(request,{
   user: async token => {
