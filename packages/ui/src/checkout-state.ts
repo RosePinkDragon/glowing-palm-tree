@@ -24,6 +24,8 @@ export function attemptKey(businessId: BusinessSlug) { return `market:checkout:$
 
 /** Only an explicit transactional rejection from the order RPC can release a saved attempt. */
 export function isDefiniteOrderRejection(error: unknown): boolean {
+  // A closed restaurant refuses before anything is written, and a retry of an existing order is returned instead.
+  if (error instanceof Error && 'code' in error && error.code === 'NOT_ACCEPTING_ORDERS') return true;
   if (!(error instanceof Error) || !('code' in error) || error.code !== '22023') return false;
   return new Set(['delivery unavailable', 'invalid delivery details', 'invalid items', 'invalid item', 'invalid item quantity or duplicate', 'item unavailable', 'invalid order total']).has(error.message.replace(/^Could not place order: /, '')) && error.message.startsWith('Could not place order: ');
 }
