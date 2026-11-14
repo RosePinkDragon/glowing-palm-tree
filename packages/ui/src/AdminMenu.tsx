@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, Switch, Text, View } from 'react-native';
+import { Image, Pressable, Switch, Text, View } from 'react-native';
 import { dietLabels, formatINRFromPaise, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
+import { MenuPhotoEditor } from './MenuPhotoEditor';
 import { useMarketTheme } from './theme';
 import { featuredLabel, parseItemOrder, sortCategories, sortMenuItems } from './menu-model';
 import { parseRupees, rupeesInput } from './admin-model';
@@ -22,6 +23,8 @@ export function AdminMenu({ services }: { services: MarketServices }) {
   const [categoryDraft, setCategoryDraft] = useState<{ id?: string; name: string; order: string } | null>(null);
   const [removeCategory, setRemoveCategory] = useState<MenuCategory | null>(null);
   const closeCategory = () => { setCategoryDraft(null); setRemoveCategory(null); restorePanelFocus(trigger.current); };
+  const [photoItem, setPhotoItem] = useState<MenuItem | null>(null);
+  const closePhoto = () => { setPhotoItem(null); restorePanelFocus(trigger.current); };
   const [items, setItems] = useState<MenuItem[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [remove, setRemove] = useState<MenuItem | null>(null);
@@ -90,8 +93,11 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     </AccessiblePanel> : null}
     {removeCategory ? <AccessiblePanel title={`Delete category ${removeCategory.name}?`} onClose={() => { if (!busy) closeCategory(); }}><MarketText>This removes the empty category from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete category" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete category'} disabled={busy} onPress={() => void deleteCategory()} /><MarketButton label="Keep category" variant="secondary" disabled={busy} onPress={closeCategory} /></AccessiblePanel> : null}
     <Text accessibilityRole="header" style={{ fontSize: 22, fontWeight: '700', color: colors.ink }}>Dishes</Text>
+    <MarketButton label="Retry photo cleanup" variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { setBusy(true); setSuccess(''); void services.retryMenuPhotoCleanup().then(result => setSuccess(result.cleanupComplete ? 'Unused photo cleanup completed.' : 'Some photos are still queued. Please retry in a few minutes.')).catch(e => setError(message(e))).finally(() => setBusy(false)); }} />
+    {photoItem ? <MenuPhotoEditor item={photoItem} services={services} onClose={closePhoto} onSaved={async note => { if (!await load()) throw new Error('Could not reload the menu. Retry loading before changing the photo.'); setSuccess(note); }} /> : null}
     {draft ? <AccessiblePanel title={draft.id ? 'Edit item' : 'Add item'} onClose={() => { if (!busy) closeDraft(); }}>
       {operationError ? <MarketStatus kind="error" title="Could not save item" message={operationError} action={<MarketButton label="Reload categories" variant="secondary" disabled={busy || loading} onPress={() => void load()} />} /> : null}
+      <MarketText variant="muted">{draft.id ? 'Save your changes, then use Manage photo for this dish to upload, replace or remove its photo.' : 'Save this dish before adding a photo. Then choose Manage photo from its menu card.'}</MarketText>
       <MarketField label="Name" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} error={validation && !draft.name.trim() ? 'Enter a name.' : undefined} />
       <View style={{ gap: 8 }}><MarketText>Category</MarketText><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {categories.map(category => <Pressable key={category.id} accessibilityRole="button" accessibilityLabel={`Category: ${category.name}`} aria-pressed={draft.categoryId === category.id} accessibilityState={{ selected: draft.categoryId === category.id, disabled: busy }} disabled={busy} onPress={() => setDraft({ ...draft, categoryId: category.id })} style={{ minHeight: 48, padding: 12, borderWidth: draft.categoryId === category.id ? 2 : 1, borderRadius: 10, borderColor: colors.inputBorder, backgroundColor: draft.categoryId === category.id ? colors.tint : colors.surface }}><MarketText>{category.name}</MarketText></Pressable>)}
@@ -117,6 +123,6 @@ export function AdminMenu({ services }: { services: MarketServices }) {
     </AccessiblePanel> : <MarketButton label="Add item" onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft(blank()); }} disabled={services.mode === 'demo' || loading || !!error || !categories.length || busy} />}
     {remove ? <AccessiblePanel title={`Delete ${remove.name}?`} onClose={() => { if (!busy) closeRemove(); }}><MarketText>This removes the item from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete item" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete'} onPress={() => void deleteItem()} disabled={busy} /><MarketButton label="Keep item" variant="secondary" onPress={closeRemove} disabled={busy} /></AccessiblePanel> : null}
     {!loading && !items.length && !error ? <MarketStatus kind="empty" title="No menu items yet" message="Add an item to get started." /> : null}
-    {sortMenuItems(items).map(item => <MarketCard key={item.id}><MarketText variant="heading">{item.name}</MarketText><DietMark diet={item.diet} /><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}{item.isFeatured ? ` · ${featureLabel}` : ''}{` · Order ${item.sortOrder}`}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, diet: item.diet ?? null, price: rupeesInput(item.pricePaise), order: String(item.sortOrder) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
+    {sortMenuItems(items).map(item => <MarketCard key={item.id}>{item.imageUrl ? <Image accessibilityLabel={item.name} source={{ uri: item.imageUrl }} style={{ width: 120, height: 90, borderRadius: 12 }} resizeMode="cover" /> : <MarketText variant="muted">No photo</MarketText>}<MarketText variant="heading">{item.name}</MarketText><DietMark diet={item.diet} /><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}{item.isFeatured ? ` · ${featureLabel}` : ''}{` · Order ${item.sortOrder}`}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Manage photo for ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setPhotoItem(item); }} /><MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, diet: item.diet ?? null, price: rupeesInput(item.pricePaise), order: String(item.sortOrder) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
   </View>;
 }

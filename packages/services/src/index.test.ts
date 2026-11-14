@@ -19,6 +19,48 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   await assert.rejects(service.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: '', phone: '', addressLine: '' }, location: { latitude: 0, longitude: 0, accuracy: 0, capturedAtISO: '' }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
 });
+
+test('photo service binds business and expected pointer, sends bytes, and surfaces server validation', async () => {
+  const original = globalThis.fetch;
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:'owner',role:'authenticated',exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')}.signature`;
+  const row = { diet:'veg' as const,id:'20000000-0000-4000-8000-000000000001',name:'Dish',description:'',category_id:'category',menu_categories:{name:'Meals',sort_order:0},price_paise:100,available:true,is_demo:false,is_featured:false,sort_order:0,image_url:'business/dish/version/card.webp' };
+  const photoBase = 'https://example.test/storage/v1/object/public/menu-images/';
+  const item = mapMenu(row,slug,photoBase);
+  assert.equal(item.imageUrl,photoBase+row.image_url);
+  let action = ''; let refuse = false;
+  globalThis.fetch = async (input,init) => {
+    if (String(input).includes('/auth/v1/token')) return Response.json({access_token:token,refresh_token:'refresh',expires_in:3600,token_type:'bearer',user:{id:'owner',aud:'authenticated'}});
+    assert.equal(String(input),'https://example.test/functions/v1/menu-photos');
+    const headers = new Headers(init?.headers); action = headers.get('x-photo-action')!;
+    assert.equal(headers.get('x-business-slug'),slug);
+    assert.equal(headers.get('authorization'),`Bearer ${token}`);
+    if (action !== 'cleanup') { assert.equal(headers.get('x-menu-item'),item.id); assert.equal(headers.get('x-photo-expected'),row.image_url); }
+    if (action === 'upload') assert.deepEqual([...new Uint8Array(init!.body as ArrayBuffer)],[1,2,3]);
+    return Response.json(refuse ? {message:'This photo is damaged. Choose another JPEG, PNG or WebP.'} : {saved:true,cleanupComplete:false},{status:refuse ? 400 : 200});
+  };
+  const service = createMarketServices({businessSlug:slug,audience:'admin',config:{url:'https://example.test',anonKey:'sb_publishable_test'}});
+  try {
+    await service.auth.signIn('owner@example.test','password');
+    assert.equal((await service.uploadMenuPhoto(item,new Uint8Array([1,2,3]).buffer)).cleanupComplete,false);
+    await service.removeMenuPhoto(item); assert.equal(action,'remove');
+    await service.retryMenuPhotoCleanup(); assert.equal(action,'cleanup');
+    await assert.rejects(service.uploadMenuPhoto({...item,businessId:'kokani-dine-inn'},new ArrayBuffer(1)),/Reload this restaurant/);
+    await assert.rejects(service.uploadMenuPhoto({...item,imageUrl:'https://untrusted.test/photo'},new ArrayBuffer(1)),/Reload this restaurant/);
+    await assert.rejects(service.uploadMenuPhoto(item,new ArrayBuffer(5*1024*1024+1)),/up to 5 MB/);
+    refuse = true;
+    await assert.rejects(service.uploadMenuPhoto(item,new Uint8Array([1,2,3]).buffer),/photo is damaged/);
+  } finally { service.dispose(); globalThis.fetch = original; }
+});
+test('photo service refuses customer and demo writes before making upload requests', async () => {
+  const row = {diet:null,id:'dish',name:'Dish',description:'',category_id:'category',menu_categories:{name:'Meals',sort_order:0},price_paise:100,available:true,is_demo:false,is_featured:false,sort_order:0,image_url:null};
+  const demo = createMarketServices({businessSlug:slug,audience:'admin',config:{}});
+  const customer = createMarketServices({businessSlug:slug,audience:'customer',config:{url:'https://example.test',anonKey:'sb_publishable_test'}});
+  try {
+    await assert.rejects(demo.uploadMenuPhoto(mapMenu(row,slug),new ArrayBuffer(1)),(e:unknown) => e instanceof ServiceError && e.code==='DEMO_MODE');
+    await assert.rejects(customer.uploadMenuPhoto(mapMenu(row,slug),new ArrayBuffer(1)),/admin account/);
+    await assert.rejects(customer.retryMenuPhotoCleanup(),/admin account/);
+  } finally { demo.dispose(); customer.dispose(); }
+});
 test('maps database menu and complete order into domain values', () => {
   assert.deepEqual(mapMenu({ diet: null, id: 'm', name: 'Dish', description: null, category_id: 'category-main', menu_categories: { name: 'Main', sort_order: 0 }, price_paise: 1200, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, diet: null, pricePaise: 1200, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 });
   const order = mapOrder({ id: 'o', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ diet: 'egg', menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);

@@ -1,2 +1,8 @@
 [functions.dispatch-notifications]
 verify_jwt = false
+
+[functions.menu-photos]
+# The handler verifies the bearer with Auth.getUser before any privileged action.
+verify_jwt = false
+# Run `deno install --frozen` in the function directory before CLI bundling.
+static_files = ["./functions/menu-photos/node_modules/@imagemagick/magick-wasm/dist/x86/magick.wasm"]
