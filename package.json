@@ -15,6 +15,7 @@
     "build:web": "node scripts/workspaces.mjs build:web",
     "export:native": "node scripts/workspaces.mjs export:native",
     "typecheck": "tsc --noEmit",
+    "pr:preflight": "node .github/scripts/pr-preflight.mjs",
     "check:codex": "node .github/scripts/validate-codex.mjs",
     "test:codex": "node --test --test-isolation=none .github/scripts/validate-codex.test.mjs",
     "test:core": "node scripts/workspaces.mjs test:core",
