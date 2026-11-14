@@ -23,6 +23,7 @@ jobs:
       - run: npm run build:web --workspace ammu-sammu-customer
       - run: npm run build:web --workspace kokani-dine-inn-customer
       - run: npm run build:web --workspace ammu-sammu-admin
+      - run: npm run build:web --workspace kokani-dine-inn-admin
       - run: npm run test:browser
       - run: node tests/browser/cart.mjs
       - uses: actions/upload-artifact@v4

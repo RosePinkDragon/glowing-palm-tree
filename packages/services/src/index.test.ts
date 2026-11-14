@@ -20,9 +20,10 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
 });
 test('maps database menu and complete order into domain values', () => {
-  assert.deepEqual(mapMenu({ id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 1200, available: true, is_demo: false, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 1200, isAvailable: true, isDemo: false });
-  const order = mapOrder({ id: 'o', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);
+  assert.deepEqual(mapMenu({ diet: null, id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 1200, available: true, is_demo: false, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', diet: null, pricePaise: 1200, isAvailable: true, isDemo: false });
+  const order = mapOrder({ id: 'o', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ diet: 'egg', menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);
   assert.equal(order.lines[0].unitPricePaise, 1200);
+  assert.equal(order.lines[0].diet, 'egg');
   assert.equal(order.delivery.addressLine, 'Address');
   assert.deepEqual(order.history?.map(entry => entry.status), ['placed', 'accepted']);
 });
@@ -147,21 +148,27 @@ test('admin catalogue mutations use checked membership and tenant-scoped request
       const method = init?.method ?? 'GET';
       const body = init?.body ? JSON.parse(String(init.body)) : {};
       calls.push({ url, method, body });
-      return Response.json(method === 'DELETE' ? { id: 'item1' } : { id: 'item1', name: 'Dish', description: '', category: 'Main', price_paise: 100, available: true, is_demo: true, image_url: null });
+      return Response.json(method === 'DELETE' ? { id: 'item1' } : { diet: 'egg', id: 'item1', name: 'Dish', description: '', category: 'Main', price_paise: 100, available: true, is_demo: true, image_url: null });
     }
     throw new Error(`Unexpected request ${url}`);
   };
   try {
     const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
     await service.auth.signIn('admin@example.test', 'password');
-    const item = { name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: true };
+    const item = { diet: 'egg' as const, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: true };
     await service.saveMenuItem(item); await service.saveMenuItem({ ...item, id: 'item1' }); await service.deleteMenuItem('item1');
+    assert.equal(calls[0].body.diet, 'egg');
     assert.equal(calls[0].method, 'POST'); assert.equal(calls[0].body.business_id, 'tenant-id'); assert.equal(calls[0].body.is_demo, true);
     for (const call of calls.slice(1)) { assert.equal(call.url.searchParams.get('id'), 'eq.item1'); assert.equal(call.url.searchParams.get('business_id'), 'eq.tenant-id'); }
     assert.equal(calls[1].method, 'PATCH'); assert.equal(calls[1].body.business_id, undefined); assert.equal(calls[2].method, 'DELETE');
     await assert.rejects(service.saveMenuItem({ ...item, pricePaise: 1.5 }), /positive whole price/);
     await assert.rejects(service.saveMenuItem({ ...item, isDemo: undefined as never }), /sample status/);
-    assert.equal(calls.length, 3); service.dispose();
+    for (const diet of [null, undefined, 'fish']) {
+      await assert.rejects(service.saveMenuItem({ ...item, diet: diet as never }), /Choose Vegetarian/);
+    }
+    await service.saveMenuItem({ ...item, id: 'item1', diet: null });
+    assert.equal(calls[3].body.diet, null, 'an existing unknown dish can remain unknown');
+    assert.equal(calls.length, 4); service.dispose();
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -335,4 +342,15 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     await assert.rejects(customer.placeOrder({ lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('demo diet stays unknown and explicit menu marks map for both restaurants', async () => {
+  for (const businessSlug of ['ammu-sammu', 'kokani-dine-inn'] as const) {
+    const service = createMarketServices({ businessSlug, audience: 'customer', config: {} });
+    assert.equal((await service.getMenu())[0].diet, null);
+    for (const diet of ['veg', 'egg', 'non_veg', null] as const) {
+      assert.equal(mapMenu({ id: 'm', name: 'Dish', description: null, category: 'Main', price_paise: 100, available: true, is_demo: false, image_url: null, diet }, businessSlug).diet, diet);
+    }
+    service.dispose();
+  }
 });

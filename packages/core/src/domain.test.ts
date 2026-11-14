@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DomainValidationError,
+  dietLabels,
+  isDiet,
   addCartItem,
   canTransitionOrderStatus,
   cartSubtotalPaise,
@@ -79,4 +81,15 @@ test('INR formatting uses paise and rejects unsafe amounts', () => {
   assert.equal(formatINRFromPaise(0), '₹0.00');
   assert.equal(formatINRFromPaise(Number.MAX_SAFE_INTEGER), '₹9,00,71,99,25,47,409.91');
   errorCode(() => formatINRFromPaise(Number.MAX_SAFE_INTEGER + 1), 'INVALID_AMOUNT');
+});
+
+// Classification is owner supplied, including for sample dishes.
+test('diet values stay explicit through cart changes; unknown never becomes vegetarian', () => {
+  for (const diet of ['veg', 'egg', 'non_veg'] as const) {
+    assert.ok(isDiet(diet));
+    assert.ok(dietLabels[diet]);
+    assert.equal(setCartItemQuantity(addCartItem([], { ...soup, diet }), soup.id, 2)[0].item.diet, diet);
+  }
+  for (const value of [null, undefined, '', 'vegetarian', 'fish', false]) assert.equal(isDiet(value), false);
+  assert.equal(addCartItem([], { ...soup, diet: null, isDemo: true })[0].item.diet, null);
 });

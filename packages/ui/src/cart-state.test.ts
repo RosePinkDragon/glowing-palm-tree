@@ -5,7 +5,7 @@ import { cartKey, CustomerCartStore, importCart, readCart, reconcileCart, type C
 import { attemptKey, freezeAttempt } from './checkout-state.ts';
 
 const business: BusinessSlug = 'ammu-sammu';
-const item: MenuItem = { id: 'dish', businessId: business, name: 'Dish', description: 'Fresh', category: 'Meals', pricePaise: 10000, isAvailable: true, isDemo: false };
+const item: MenuItem = { id: 'dish', businessId: business, name: 'Dish', description: 'Fresh', category: 'Meals', pricePaise: 10000, isAvailable: true, isDemo: false, diet: 'veg' };
 const line = { item, quantity: 1 };
 function memory() {
   const values = new Map<string, string>();
@@ -125,11 +125,13 @@ test('failed saves retain the last persisted cart and permit retry without accep
 test('reconciliation refreshes all catalog metadata, marks missing dishes and leaves uncertain snapshots immutable', () => {
   const attempt = freezeAttempt({ businessId: business, userId: 'a', idempotencyKey: 'uncertain', lines: [line], delivery: { name: 'Private', phone: '1', addressLine: 'Private address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-11-14T00:00:00Z' } });
   const before = JSON.stringify(attempt);
-  const updated = { ...item, name: 'New dish name', description: 'New description', pricePaise: 15000, isAvailable: false, imageUrl: 'https://image.test/dish.jpg' };
+  const updated = { ...item, name: 'New dish name', description: 'New description', diet: 'egg' as const, pricePaise: 15000, isAvailable: false, imageUrl: 'https://image.test/dish.jpg' };
   const cart = reconcileCart(attempt.lines, [updated], business);
   assert.deepEqual(cart[0].item, updated); assert.equal(cart[0].quantity, 1);
   const removed = reconcileCart(attempt.lines, [], business);
   assert.equal(removed[0].item.isAvailable, false); assert.equal(removed[0].item.name, 'Dish');
+  assert.equal(cart[0].item.diet, 'egg');
+  assert.equal(attempt.lines[0].item.diet, 'veg');
   assert.equal(JSON.stringify(attempt), before);
 });
 
