@@ -20,12 +20,25 @@ let browser, context;
 const servers = [];
 const pageBrands = new Map();
 const errors = [], external = [], recovered = [];
+let pricingMode = null, pricingReply = null, orderLoadFails = false, pricingOrder = null;
+const pricingRequests = [];
 try {
   for (const slug of slugs) servers.push(await serveWeb(`apps/${slug}-customer/dist/web`));
   await mkdir('dist/browser', { recursive: true });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
   await context.addInitScript(() => {
+    const add = window.addEventListener.bind(window), remove = window.removeEventListener.bind(window);
+    const listeners = new WeakMap();
+    window.addEventListener = function(type, listener, options) {
+      if (type !== 'storage' || !listener) return add(type, listener, options);
+      const wrapped = event => {
+        if (window.__delayCartEvents && event.key?.startsWith('market:cart:')) return;
+        if (typeof listener === 'function') listener.call(window, event); else listener.handleEvent(event);
+      };
+      listeners.set(listener, wrapped); return add(type, wrapped, options);
+    };
+    window.removeEventListener = function(type, listener, options) { return remove(type, type === 'storage' && listener ? listeners.get(listener) ?? listener : listener, options); };
     const set = Storage.prototype.setItem;
     Storage.prototype.setItem = function(key, value) {
       if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError');
@@ -64,8 +77,20 @@ try {
     if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
     if (url.pathname === '/rest/v1/businesses') return json(businesses.find(b => url.searchParams.get('slug') === `eq.${b.slug}`));
     if (url.pathname === '/rest/v1/menu_items') return json(menus[ids.indexOf(url.searchParams.get('business_id')?.replace('eq.', ''))]);
-    if (url.pathname === '/rest/v1/orders') return json([]);
-    if (url.pathname === '/rest/v1/rpc/place_order') { recovered.push(request.postDataJSON()); return route.abort('failed'); }
+    if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
+    if (url.pathname === '/rest/v1/orders') {
+      if (url.searchParams.has('id') && orderLoadFails) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Synthetic saved-order load failure' }) });
+      return json(url.searchParams.has('id') ? pricingOrder : pricingOrder ? [pricingOrder] : []);
+    }
+    if (url.pathname === '/rest/v1/rpc/place_order') {
+      const body = request.postDataJSON();
+      if (!pricingMode) { recovered.push(body); return route.abort('failed'); }
+      pricingRequests.push(body);
+      if (pricingMode === 'quote') return json({ outcome: 'pricing_changed', pricing: pricingReply });
+      if (pricingMode === 'invalid') return json({ outcome: 'pricing_changed', pricing: { ...pricingReply, total_paise: 1 } });
+      if (pricingMode === 'lost') return route.abort('failed');
+      return json({ outcome: 'placed', id: pricingOrder.id });
+    }
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });
   const open = async (index, path = '/') => {
@@ -165,7 +190,7 @@ try {
   console.log('PASS: failed cart cleanup does not block logout or expose A’s cart to guest/B; retry clears the old record');
 
   // A corrupt draft can be reset without removing or repricing an uncertain request.
-  const uncertain = { version: 1, businessId: slugs[0], userId: users[0].id, idempotencyKey: '60000000-0000-4000-8000-000000000001', lines: [{ item: { id: itemIds[0], businessId: slugs[0], name: 'Original sent dish', description: '', category: 'Meals', pricePaise: 15000, isAvailable: true, isDemo: false }, quantity: 2 }], delivery: { name: 'Original sender', phone: '123', addressLine: 'Original address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+  const uncertain = { pricing: { lines: [{ menu_item_id: itemIds[0], quantity: 2, unit_price_paise: 15000, line_total_paise: 30000 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30000, total_paise: 32000 }, version: 1, businessId: slugs[0], userId: users[0].id, idempotencyKey: '60000000-0000-4000-8000-000000000001', lines: [{ item: { id: itemIds[0], businessId: slugs[0], name: 'Original sent dish', description: '', category: 'Meals', pricePaise: 15000, isAvailable: true, isDemo: false }, quantity: 2 }], delivery: { name: 'Original sender', phone: '123', addressLine: 'Original address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
   await pages[0].evaluate(({ draftKey, attemptKey, value }) => { localStorage.setItem(draftKey, '{corrupt'); localStorage.setItem(attemptKey, value); }, { draftKey: `market:cart:${slugs[0]}`, attemptKey: `market:checkout:${slugs[0]}`, value: JSON.stringify(uncertain) });
   await pages[0].reload({ waitUntil: 'networkidle' });
   await pages[0].getByRole('button', { name: 'Start new cart', exact: true }).click();
@@ -178,6 +203,90 @@ try {
   assert.equal(recovered[0].p_idempotency_key, uncertain.idempotencyKey);
   assert.equal(await pages[0].evaluate(key => localStorage.getItem(key), `market:checkout:${slugs[0]}`), JSON.stringify(uncertain));
   console.log('PASS: corrupt draft reset and refreshed catalog leave uncertain request immutable; recovery resends original payload');
+  // Atomic repricing uses the real UI and the explicit acceptance button.
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 0.5, longitude: 0.5, accuracy: 10 });
+  await pages[0].evaluate(slug => { localStorage.removeItem(`market:checkout:${slug}`); localStorage.removeItem(`market:cart:${slug}`); }, slugs[0]);
+  menus = structuredClone(originalMenus);
+  await pages[0].goto(servers[0].url, { waitUntil: 'networkidle' }); await add(pages[0]); await goCart(pages[0]);
+  const customer = pages[0];
+  const fillCheckout = async (page = customer) => {
+    await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Quote sender');
+    await page.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).fill('9876543210');
+    await page.getByLabel('Delivery address', { exact: true }).filter({ visible: true }).fill('Quote private address');
+    await page.getByRole('button', { name: 'Check my delivery location', exact: true }).click();
+    await page.getByText('Delivery location confirmed. Refresh if your location changes.', { exact: true }).filter({ visible: true }).waitFor();
+  };
+  const quoteTab = await open(0, '/cart');
+  await fillCheckout(); await fillCheckout(quoteTab);
+  pricingMode = 'quote';
+  pricingReply = { lines: [{ menu_item_id: itemIds[0], quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], delivery_fee_paise: 2500, min_order_paise: 0, subtotal_paise: 15000, total_paise: 17500 };
+  await customer.getByRole('button', { name: 'Place order', exact: true }).click();
+  await customer.getByText('Review revised order', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.waitForFunction(() => document.activeElement?.textContent === 'Review revised order');
+  const quoteHeadingBox = await customer.getByRole('heading', { name: 'Review revised order', exact: true }).boundingBox();
+  assert.ok(quoteHeadingBox.y >= 0 && quoteHeadingBox.y < 844, 'revised quote scrolls into the viewport');
+  await customer.getByText('Delivery fee: ₹20.00 → ₹25.00', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('Total: ₹170.00 → ₹175.00', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(pricingRequests.length, 1, 'no second request before explicit acceptance');
+  assert.equal(await customer.evaluate(slug => localStorage.getItem(`market:checkout:${slug}`), slugs[0]), null);
+  assert.equal(await customer.getByRole('button', { name: 'Place order', exact: true }).isDisabled(), true);
+  await customer.screenshot({ path: 'dist/browser/revised-pricing-mobile.png', fullPage: true });
+  await quoteTab.getByRole('button', { name: 'Place order', exact: true }).click();
+  await quoteTab.getByText('Review revised order', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(pricingRequests.length, 2);
+  // Simulate a delayed cart-storage event: the stale acceptance callback must
+  // still re-read the persisted revision while holding the checkout guard.
+  await quoteTab.evaluate(() => { window.__delayCartEvents = true; });
+  pricingMode = 'lost';
+  await customer.getByRole('button', { name: 'Accept revised total and place order', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await customer.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
+  await assertEventually(() => pricingRequests.length === 3);
+  assert.notEqual(pricingRequests[2].p_idempotency_key, pricingRequests[0].p_idempotency_key);
+  assert.deepEqual(pricingRequests[2].p_accepted_pricing, pricingReply);
+  const acceptedSnapshot = await customer.evaluate(slug => localStorage.getItem(`market:checkout:${slug}`), slugs[0]);
+  pricingMode = 'invalid';
+  await customer.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
+  await assertEventually(() => pricingRequests.length === 4);
+  await customer.getByText(/invalid revised quote/).filter({ visible: true }).waitFor();
+  assert.equal(await customer.evaluate(slug => localStorage.getItem(`market:checkout:${slug}`), slugs[0]), acceptedSnapshot);
+  pricingOrder = { id: '44000000-0000-4000-8000-000000000001', business_id: ids[0], customer_id: users[0].id, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2500, total_paise: 17500, customer_name: 'Quote sender', customer_phone: '123', delivery_address_line: 'Quote private address', created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemIds[0], name: 'Ammu meal', quantity: 1, unit_price_paise: 15000, line_total_paise: 15000, diet: null }], order_status_history: [] };
+  pricingMode = 'placed'; orderLoadFails = true;
+  await customer.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
+  await customer.getByText(/Synthetic saved-order load failure/).filter({ visible: true }).waitFor();
+  assert.equal(await customer.evaluate(slug => localStorage.getItem(`market:checkout:${slug}`), slugs[0]), acceptedSnapshot);
+  orderLoadFails = false; businesses[0].delivery_fee_paise = 9900; menus[0][0].price_paise = 99000;
+  await customer.reload({ waitUntil: 'networkidle' });
+  await customer.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
+  await customer.getByText('Delivery: ₹25.00 · Total: ₹175.00', { exact: true }).filter({ visible: true }).waitFor();
+  for (const request of pricingRequests.slice(3)) assert.deepEqual(request, pricingRequests[2], 'all uncertain retries retain the accepted snapshot after catalog changes');
+  assert.equal(pricingRequests.length, 6);
+  await enabled(quoteTab.getByRole('button', { name: 'Accept revised total and place order', exact: true }));
+  await quoteTab.getByRole('button', { name: 'Accept revised total and place order', exact: true }).click();
+  await quoteTab.getByText('Your cart changed in another window. Review it before ordering.', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await quoteTab.getByText('Review revised order', { exact: true }).count(), 0, 'confirmation in another tab invalidates the old quote');
+  assert.equal(pricingRequests.length, 6, 'the stale second quote never allocates another key');
+  await quoteTab.close();
+  console.log('PASS: fee revision requires explicit acceptance; double click makes one new key; lost/invalid/load-failed responses preserve accepted terms through recovery');
+
+  // A minimum-only change can block ordering and its private quote vanishes on logout.
+  businesses[0].delivery_fee_paise = 2000; menus = structuredClone(originalMenus);
+  await customer.goto(servers[0].url, { waitUntil: 'networkidle' }); await add(customer); await goCart(customer); await fillCheckout();
+  pricingMode = 'quote'; pricingReply = { ...pricingReply, delivery_fee_paise: 2000, min_order_paise: 20000, total_paise: 17000 };
+  await customer.getByRole('button', { name: 'Place order', exact: true }).click();
+  await customer.getByText('Minimum order: ₹0.00 → ₹200.00', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await customer.getByRole('button', { name: 'Accept revised total and place order', exact: true }).isDisabled(), true);
+  await customer.getByText('The revised subtotal is below the minimum order. Edit your cart before ordering.', { exact: true }).filter({ visible: true }).waitFor();
+  await account(customer); await customer.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await customer.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  assert.equal(await customer.getByText('Review revised order', { exact: true }).count(), 0);
+  await customer.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(users[1].email);
+  await customer.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
+  await customer.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await customer.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+  assert.equal(await customer.getByText('Review revised order', { exact: true }).count(), 0);
+  assert.equal(await customer.getByText(/Unit price:|Minimum order: ₹0.00 →/).count(), 0);
+  console.log('PASS: minimum-only revision below minimum blocks acceptance; quote details disappear for guest and switched account');
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
 } finally {
   await context?.close(); await browser?.close();

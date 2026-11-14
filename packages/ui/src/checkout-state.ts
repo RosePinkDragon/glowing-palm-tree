@@ -1,3 +1,4 @@
+import type { PricingTerms } from '@market/services';
 import type { BusinessSlug, CartLine, DeliveryDetails, LocationFix } from '@market/core';
 
 export interface CheckoutAttempt {
@@ -6,6 +7,7 @@ export interface CheckoutAttempt {
   userId: string;
   idempotencyKey: string;
   lines: CartLine[];
+  pricing: PricingTerms;
   delivery: DeliveryDetails;
   location: LocationFix;
 }
@@ -17,7 +19,7 @@ export function freezeAttempt(input: Omit<CheckoutAttempt, 'version'>): Checkout
 export function readAttempt(value: string | null, businessId: BusinessSlug): CheckoutAttempt | null {
   if (!value) return null;
   const attempt = JSON.parse(value) as CheckoutAttempt;
-  if (attempt.version !== 1 || attempt.businessId !== businessId || !attempt.userId || !attempt.idempotencyKey || !Array.isArray(attempt.lines) || !attempt.delivery || !attempt.location) throw new Error('The saved order attempt could not be read. Contact the restaurant before placing another order.');
+  if (attempt.version !== 1 || attempt.businessId !== businessId || !attempt.userId || !attempt.idempotencyKey || !Array.isArray(attempt.lines) || !attempt.delivery || !attempt.location || !attempt.pricing) throw new Error('The saved order attempt could not be read. Contact the restaurant before placing another order.');
   return attempt;
 }
 export function attemptKey(businessId: BusinessSlug) { return `market:checkout:${businessId}`; }

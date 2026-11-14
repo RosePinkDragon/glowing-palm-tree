@@ -71,7 +71,7 @@ await context.route(origin + '/**', async route => {
       savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line, created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemId, name: item.name, quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: new Date().toISOString() }] };
       return route.abort('failed'); // Server committed; response was lost.
     }
-    return json({ id: orderId });
+    return json({ outcome: 'placed', id: orderId });
   }
   if (url.pathname === '/rest/v1/rpc/transition_order') { const body = req.postDataJSON(); mutations.push(body); savedOrder = { ...savedOrder, status: body.p_status, version: savedOrder.version + 1 }; return json({ id: orderId }); }
   if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { releaseOrders = resolve; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? savedOrder : savedOrder ? [savedOrder] : []); }
@@ -351,7 +351,7 @@ const prepareCart = async (page, add = true) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-history-desktop.png`, fullPage: true });
       // An uncertain attempt displays its own immutable dish classification.
-      const attempt = { version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: `${slug} private pending dish`, description: '', category: 'Meals', pricePaise: 15123, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 2 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+      const attempt = { pricing: { lines: [{ menu_item_id: itemId, quantity: 2, unit_price_paise: 15123, line_total_paise: 30246 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30246, total_paise: 32246 }, version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: `${slug} private pending dish`, description: '', category: 'Meals', pricePaise: 15123, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 2 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
       await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: `market:checkout:${slug}`, value: JSON.stringify(attempt) });
       await page.goto(customer.url + '/cart', { waitUntil: 'networkidle' });
       await page.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();

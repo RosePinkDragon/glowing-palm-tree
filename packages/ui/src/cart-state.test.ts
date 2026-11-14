@@ -41,7 +41,7 @@ test('logout and direct account switches clear one active record rather than ret
 
 test('a delayed hydration cannot publish an old account after a switch or a quick A → guest → A', async () => {
   const storage = memory();
-  await storage.setItem(cartKey(business), JSON.stringify({ version: 1, businessId: business, ownerId: 'a', lines: [line] }));
+  await storage.setItem(cartKey(business), JSON.stringify({ version: 1, revision: 1, businessId: business, ownerId: 'a', lines: [line] }));
   const held = deferred<void>(); let first = true;
   const slow: CartStorage = { ...storage, async getItem(key) { const value = await storage.getItem(key); if (first) { first = false; await held.promise; } return value; } };
   const store = new CustomerCartStore(business, slow);
@@ -100,7 +100,7 @@ test('a batched return to the same account still clears a previous identity gene
 });
 
 test('malformed, oversized, duplicate, cross-business and out-of-range carts fail closed; reset is isolated', async () => {
-  const record = { version: 1, businessId: business, ownerId: null, lines: [line] };
+  const record = { version: 1, revision: 1, businessId: business, ownerId: null, lines: [line] };
   for (const value of ['{broken', 'null', JSON.stringify({ ...record, version: 0 }), JSON.stringify({ ...record, ownerId: undefined }), JSON.stringify({ ...record, lines: [line, line] }), JSON.stringify({ ...record, lines: [{ ...line, quantity: 11 }] }), JSON.stringify({ ...record, lines: [{ item: { ...item, pricePaise: -1 }, quantity: 1 }] }), JSON.stringify({ ...record, lines: [{ item: { ...item, businessId: 'kokani-dine-inn' }, quantity: 1 }] }), ' '.repeat(120001)]) {
     assert.throws(() => readCart(value, business));
   }
@@ -123,7 +123,7 @@ test('failed saves retain the last persisted cart and permit retry without accep
 });
 
 test('reconciliation refreshes all catalog metadata, marks missing dishes and leaves uncertain snapshots immutable', () => {
-  const attempt = freezeAttempt({ businessId: business, userId: 'a', idempotencyKey: 'uncertain', lines: [line], delivery: { name: 'Private', phone: '1', addressLine: 'Private address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-11-14T00:00:00Z' } });
+  const attempt = freezeAttempt({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, businessId: business, userId: 'a', idempotencyKey: 'uncertain', lines: [line], delivery: { name: 'Private', phone: '1', addressLine: 'Private address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-11-14T00:00:00Z' } });
   const before = JSON.stringify(attempt);
   const updated = { ...item, name: 'New dish name', description: 'New description', diet: 'egg' as const, pricePaise: 15000, isAvailable: false, imageUrl: 'https://image.test/dish.jpg' };
   const cart = reconcileCart(attempt.lines, [updated], business);
@@ -179,4 +179,15 @@ test('an earlier slow cross-tab refresh cannot clear the saving marker of an adm
   await assert.rejects(store.change(lines => addCartItem(lines, item)), /finish saving/);
   write.resolve(); await Promise.all([refreshing, saving]);
   assert.equal(store.getSnapshot().saving, false); assert.equal(store.getSnapshot().lines[0].quantity, 1);
+});
+
+test('cart revisions distinguish a fulfilled cart from an identical later draft', async () => {
+  const storage = memory();
+  const store = new CustomerCartStore(business, storage);
+  await store.setIdentity('a'); await store.change(() => [line]);
+  const first = readCart(await storage.getItem(cartKey(business)), business)!;
+  await store.reset(); await store.change(() => [line]);
+  const second = readCart(await storage.getItem(cartKey(business)), business)!;
+  assert.deepEqual(second.lines, first.lines);
+  assert.ok(second.revision > first.revision);
 });
