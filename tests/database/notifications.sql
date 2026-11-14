@@ -22,7 +22,7 @@ select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-0
 select public.register_device_token('ammu-sammu','admin','admin-a-test');
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000004',false);
 select set_config('request.jwt.claims','{"session_id":"80000000-0000-4000-8000-000000000004"}',false);
-select public.register_device_token('konkan-fine-dine','admin','admin-b-test');
+select public.register_device_token('kokani-dine-inn','admin','admin-b-test');
 select public.unregister_device_token('ammu-sammu','admin','admin-a-test');
 reset role;
 select public.test_assert((select count(*)=1 from public.device_tokens where token='admin-a-test'),'cannot unregister another user token');

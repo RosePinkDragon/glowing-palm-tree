@@ -1,5 +1,5 @@
 import { MarketApp } from '@market/ui';
 
 export default function App() {
-  return <MarketApp businessId="konkan-fine-dine" audience="customer" />;
+  return <MarketApp businessId="kokani-dine-inn" audience="customer" />;
 }

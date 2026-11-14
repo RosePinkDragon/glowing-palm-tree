@@ -32,7 +32,7 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
     const adapters = preferenceAdapters();
     const tokenSessions = new Map<string, string>();
     return {
-      analytics: createAnalytics(adapters.analytics, { brand: business.replace(/-/g, '_') as 'ammu_sammu' | 'konkan_fine_dine', audience }),
+      analytics: createAnalytics(adapters.analytics, { brand: business.replace(/-/g, '_') as 'ammu_sammu' | 'kokani_dine_inn', audience }),
       messaging: createMessaging(adapters.messaging, {
         async register(userId, token) {
           const s = currentSession.current;
