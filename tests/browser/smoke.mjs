@@ -26,6 +26,7 @@ let holdOrders = false, orderHeld = false, releaseOrders;
 let adminAllowed = false;
 let failSave = true, failDelete = true;
 let menuItems = [item];
+let failCatalog = false;
 const mutations = [];
 let externalRequests = [];
 const externalSockets = [];
@@ -57,7 +58,7 @@ await context.route(origin + '/**', async route => {
   if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
   if (url.pathname === '/rest/v1/businesses') return json(business);
   if (url.pathname === '/rest/v1/menu_items') {
-    if (req.method() === 'GET') return json(menuItems);
+    if (req.method() === 'GET') return failCatalog ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture catalog failure' }) }) : json(menuItems);
     if (req.method() === 'POST') { if (failSave) { failSave = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture save failure' }) }); } const row = { ...req.postDataJSON(), id: '20000000-0000-4000-8000-000000000002' }; mutations.push(row); menuItems.push(row); return json(row); }
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
@@ -81,10 +82,10 @@ const open = async () => { const page = await context.newPage(); page.on('pageer
 const focused = (page, text) => page.waitForFunction(expected => document.activeElement?.textContent === expected, text);
 const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click(); else await page.getByRole('button', { name: 'Sign in', exact: true }).click(); };
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
-const prepareCart = async page => {
+const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByRole('button', { name: 'Browse menu', exact: true }).click();
-  await page.getByRole('button', { name: 'Add to cart', exact: true }).click();
+  if (add) await page.getByRole('button', { name: 'Add to cart', exact: true }).click();
   await page.getByRole('button', { name: /^Cart \(/ }).click();
   await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Test Customer');
   await page.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).fill('9876543210');
@@ -119,19 +120,24 @@ const prepareCart = async page => {
   assert.equal(await first.getByLabel('Email', { exact: true }).filter({ visible: true }).inputValue(), '');
   console.log('PASS: sign-in/sign-out clears credentials in mounted account panel');
   await signIn(first); await prepareCart(first);
-  const second = await open(); await prepareCart(second);
+  const second = await open(); await prepareCart(second, false);
   await first.getByRole('button', { name: 'Place order', exact: true }).click();
   await first.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
   await second.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await second.getByRole('button', { name: 'Place order', exact: true }).isDisabled(), true);
+  failCatalog = true;
+  await second.reload({ waitUntil: 'networkidle' });
+  await second.getByText(/Fixture catalog failure/).filter({ visible: true }).waitFor();
   await second.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
   await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
+  failCatalog = false;
+  await second.getByRole('button', { name: 'Retry loading', exact: true }).click();
   await second.getByText('Delivery: ₹20.00 · Total: ₹170.00', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await second.getByText('Delivery: ₹20.00 · Total: ₹170.00', { exact: true }).filter({ visible: true }).count(), 1);
   await second.screenshot({ path: 'dist/browser/customer-confirmed-mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: cross-tab lost-response recovery reuses exact key/payload and confirms one server order');
+  console.log('PASS: cross-tab lost-response recovery reuses exact key/payload, survives catalog failure and confirms one server order');
 
   // Real paths survive reload and back; missing orders are distinct from loading.
   assert.equal(new URL(second.url()).pathname, '/orders/' + orderId);
