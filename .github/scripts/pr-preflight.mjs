@@ -48,9 +48,15 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
   const issue = json(run, ['api', `repos/${repository}/issues/${issueNumber}`]);
   const result = evaluate({ head: { ref: branch }, body: `Issue: #${issueNumber}` }, issue, files, repository);
   if (result.errors.length) throw new Error(result.errors.join('\n'));
-  const pages = json(run, ['api', '--paginate', '--slurp', `repos/${repository}/pulls?state=open&per_page=100`]);
-  if (!Array.isArray(pages) || !pages.length || pages.some(page => !Array.isArray(page))) throw new Error('Incomplete open PR metadata.');
-  for (const pr of pages.flat()) {
+  const pulls = [];
+  for (let page = 1; ; page++) {
+    if (page > 100) throw new Error('Open PR pagination exceeds the safety limit; metadata may be incomplete.');
+    const entries = json(run, ['api', `repos/${repository}/pulls?state=open&per_page=100&page=${page}`]);
+    if (!Array.isArray(entries) || entries.length > 100) throw new Error('Incomplete open PR metadata.');
+    pulls.push(...entries);
+    if (entries.length < 100) break;
+  }
+  for (const pr of pulls) {
     if (!Number.isSafeInteger(pr.number) || pr.state !== 'open' || typeof pr.body !== 'string' && pr.body !== null ||
         typeof pr.head?.ref !== 'string' || typeof pr.head?.repo?.full_name !== 'string' || typeof pr.base?.ref !== 'string') {
       throw new Error('Incomplete open PR metadata.');

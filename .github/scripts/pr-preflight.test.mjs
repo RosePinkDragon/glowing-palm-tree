@@ -36,7 +36,9 @@ function fixture(t) {
     }
     if (args[1] === `repos/${repository}`) return JSON.stringify(state.metadata ?? { full_name: repository });
     if (args.includes(`repos/${repository}/issues/77`)) return JSON.stringify(state.issue);
-    return typeof state.prs === 'string' ? state.prs : JSON.stringify(state.prs);
+    const page = Number(args[1].match(/&page=([0-9]+)$/)?.[1]);
+    const entries = Array.isArray(state.prs) ? state.prs[page - 1] : state.prs;
+    return typeof entries === 'string' ? entries : JSON.stringify(entries);
   };
   const commit = (paths, where = cwd) => {
     for (const path of paths) { mkdirSync(join(where, path, '..'), { recursive: true }); writeFileSync(join(where, path), `${path}\n`); }
@@ -79,7 +81,7 @@ test('open predecessor blocks; same head update and unrelated issue are allowed'
   assert.throws(() => f.run(), /merge the predecessor/);
   f.state.prs = [[pr({ body: 'Issue: #78' })]]; // Branch still identifies issue 77.
   assert.throws(() => f.run(), /merge the predecessor/);
-  f.state.prs = [[], [pr({ head: { ref: branch, repo: { full_name: repository } } })]];
+  f.state.prs = [[pr({ head: { ref: branch, repo: { full_name: repository } } })]];
   assert.equal(f.run().count, 0);
   f.state.prs = [[pr({ body: 'Issue: #78', head: { ref: 'feature/monorepo-78-other', repo: { full_name: repository } } })]];
   assert.equal(f.run().count, 0);
@@ -126,4 +128,27 @@ test('remote, fetch and GitHub failures, invalid metadata, issue approval and di
   f.state.issue.labels = [{ name: 'approved' }];
   writeFileSync(join(f.cwd, 'uncommitted.txt'), 'pending');
   assert.throws(() => f.run(), /working tree/);
+});
+
+test('pagination checks later-page predecessors and fails on incomplete later pages', t => {
+  const f = fixture(t);
+  const first = Array.from({ length: 100 }, (_, n) => pr({
+    number: n + 100, body: 'Issue: #78',
+    head: { ref: `feature/monorepo-78-independent-${n}`, repo: { full_name: repository } },
+  }));
+  f.state.prs = [first, [pr()]];
+  assert.throws(() => f.run(), /merge the predecessor/);
+  f.state.prs = [first, []];
+  assert.equal(f.run().count, 0);
+  assert.ok(f.calls.some(call => call[2]?.endsWith('&page=2')));
+  for (const invalid of ['invalid json', {}, null]) {
+    f.state.prs = [first, invalid];
+    assert.throws(() => f.run(), /metadata/);
+  }
+  f.state.prs = [first, []];
+  f.state.failure = (name, args) => name === 'gh' && args[1]?.endsWith('&page=2');
+  assert.throws(() => f.run(), /metadata unavailable/);
+  f.state.failure = null;
+  f.state.prs = Array.from({ length: 100 }, () => first);
+  assert.throws(() => f.run(), /pagination exceeds/);
 });
