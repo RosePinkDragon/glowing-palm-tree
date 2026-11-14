@@ -7,7 +7,7 @@ export const appKeys = [
   'ammu-sammu-customer',
   'ammu-sammu-admin',
   'kokani-dine-inn-customer',
-  'konkan-fine-dine-admin',
+  'kokani-dine-inn-admin',
 ];
 
 const defaultRoot = resolve(import.meta.dirname, '..');

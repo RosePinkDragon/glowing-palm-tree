@@ -11,7 +11,7 @@ on:
           - ammu-sammu-customer
           - ammu-sammu-admin
           - kokani-dine-inn-customer
-          - konkan-fine-dine-admin
+          - kokani-dine-inn-admin
       platform:
         description: Build platform
         required: true
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           case "$APP" in
-            ammu-sammu-customer|ammu-sammu-admin|kokani-dine-inn-customer|konkan-fine-dine-admin) ;;
+            ammu-sammu-customer|ammu-sammu-admin|kokani-dine-inn-customer|kokani-dine-inn-admin) ;;
             *) echo "Unknown app target." >&2; exit 1 ;;
           esac
           if [[ ! -f "apps/$APP/package.json" ]]; then echo "The selected app workspace is not present on this branch." >&2; exit 1; fi
