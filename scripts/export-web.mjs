@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 export const appKeys = [
   'ammu-sammu-customer',
   'ammu-sammu-admin',
-  'konkan-fine-dine-customer',
+  'kokani-dine-inn-customer',
   'konkan-fine-dine-admin',
 ];
 

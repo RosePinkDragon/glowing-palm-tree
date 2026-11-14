@@ -1,6 +1,6 @@
 {
   "ammu-sammu-customer": { "name": "Ammu Sammu", "businessId": "ammu-sammu", "audience": "customer", "identifier": "com.rosepinkdragon.ammusammu.customer" },
   "ammu-sammu-admin": { "name": "Ammu Sammu Admin", "businessId": "ammu-sammu", "audience": "admin", "identifier": "com.rosepinkdragon.ammusammu.admin" },
-  "konkan-fine-dine-customer": { "name": "Kokani Dine Inn", "businessId": "konkan-fine-dine", "audience": "customer", "identifier": "com.rosepinkdragon.konkanfinedine.customer" },
+  "kokani-dine-inn-customer": { "name": "Kokani Dine Inn", "businessId": "konkan-fine-dine", "audience": "customer", "identifier": "com.rosepinkdragon.kokanidineinn.customer" },
   "konkan-fine-dine-admin": { "name": "Kokani Dine Inn Admin", "businessId": "konkan-fine-dine", "audience": "admin", "identifier": "com.rosepinkdragon.konkanfinedine.admin" }
 }
