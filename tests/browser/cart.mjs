@@ -14,7 +14,7 @@ function session(user) {
   return { access_token: token, refresh_token: user.id, expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user };
 }
 const businesses = slugs.map((slug, index) => ({ id: ids[index], slug, name: index ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true }));
-const originalMenus = slugs.map((slug, index) => [{ id: itemIds[index], business_id: ids[index], name: `${index ? 'Kokani' : 'Ammu'} meal`, description: 'Synthetic cart fixture', category: 'Meals', price_paise: 15000, available: true, is_demo: false, image_url: null }]);
+const originalMenus = slugs.map((slug, index) => [{ id: itemIds[index], business_id: ids[index], name: `${index ? 'Kokani' : 'Ammu'} meal`, description: 'Synthetic cart fixture', category_id: `14300000-0000-4000-8000-00000000000${index + 1}`, menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 15000, available: true, is_demo: false, image_url: null }]);
 let menus = structuredClone(originalMenus);
 let browser, context;
 const servers = [];
@@ -190,7 +190,7 @@ try {
   console.log('PASS: failed cart cleanup does not block logout or expose A’s cart to guest/B; retry clears the old record');
 
   // A corrupt draft can be reset without removing or repricing an uncertain request.
-  const uncertain = { pricing: { lines: [{ menu_item_id: itemIds[0], quantity: 2, unit_price_paise: 15000, line_total_paise: 30000 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30000, total_paise: 32000 }, version: 1, businessId: slugs[0], userId: users[0].id, idempotencyKey: '60000000-0000-4000-8000-000000000001', lines: [{ item: { id: itemIds[0], businessId: slugs[0], name: 'Original sent dish', description: '', category: 'Meals', pricePaise: 15000, isAvailable: true, isDemo: false }, quantity: 2 }], delivery: { name: 'Original sender', phone: '123', addressLine: 'Original address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+  const uncertain = { pricing: { lines: [{ menu_item_id: itemIds[0], quantity: 2, unit_price_paise: 15000, line_total_paise: 30000 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30000, total_paise: 32000 }, version: 1, businessId: slugs[0], userId: users[0].id, idempotencyKey: '60000000-0000-4000-8000-000000000001', lines: [{ item: { id: itemIds[0], businessId: slugs[0], name: 'Original sent dish', description: '', category: 'Meals', categoryId: '14300000-0000-4000-8000-000000000001', categorySortOrder: 0, pricePaise: 15000, isAvailable: true, isDemo: false }, quantity: 2 }], delivery: { name: 'Original sender', phone: '123', addressLine: 'Original address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
   await pages[0].evaluate(({ draftKey, attemptKey, value }) => { localStorage.setItem(draftKey, '{corrupt'); localStorage.setItem(attemptKey, value); }, { draftKey: `market:cart:${slugs[0]}`, attemptKey: `market:checkout:${slugs[0]}`, value: JSON.stringify(uncertain) });
   await pages[0].reload({ waitUntil: 'networkidle' });
   await pages[0].getByRole('button', { name: 'Start new cart', exact: true }).click();

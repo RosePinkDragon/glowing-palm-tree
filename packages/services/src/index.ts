@@ -5,7 +5,9 @@ import { storage } from './storage';
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
 export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
-export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
+export interface MenuCategory { id: string; businessId: BusinessSlug; name: string; sortOrder: number }
+export interface SaveCategoryInput { id?: string; name: string; sortOrder: number }
+export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
 export interface PricingTerms {
   lines: { menu_item_id: string; quantity: number; unit_price_paise: number; line_total_paise: number }[];
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
@@ -119,14 +121,15 @@ function publicConfig(): PublicConfig {
   return { url: process.env.EXPO_PUBLIC_SUPABASE_URL, anonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY };
 }
 
-type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category: string; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
+type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
 type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
 export function mapMenu(row: MenuRow, slug: BusinessSlug): MenuItem {
-  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.category, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
+  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
   return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
+const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
 const orderSelect = '*, order_items(*), order_status_history(*)';
 
 export function createMarketServices(options: ServiceOptions) {
@@ -162,9 +165,9 @@ export function createMarketServices(options: ServiceOptions) {
     return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
-    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
+    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', categoryId: `sample-category-${slug}`, categorySortOrder: 0, diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
     const business = await getBusiness();
-    const { data, error } = await client.from('menu_items').select('*').eq('business_id', business.id).order('category').order('sort_order').order('name').order('id');
+    const { data, error } = await client.from('menu_items').select(menuSelect).eq('business_id', business.id).order('sort_order').order('name').order('id');
     fail(error, 'Could not load menu');
     return (data ?? []).map(row => mapMenu(row as MenuRow, slug));
   };
@@ -204,9 +207,42 @@ export function createMarketServices(options: ServiceOptions) {
     if (!await isAdmin()) throw new ServiceError('ADMIN_REQUIRED', 'Admin membership is required to manage the menu.');
     return business;
   };
+  const getCategories = async (): Promise<MenuCategory[]> => {
+    if (!client) return [{ id: `sample-category-${slug}`, businessId: slug, name: 'Samples', sortOrder: 0 }];
+    const business = await getBusiness();
+    const { data, error } = await client.from('menu_categories').select('id, name, sort_order').eq('business_id', business.id).order('sort_order').order('name').order('id');
+    fail(error, 'Could not load categories');
+    return (data ?? []).map(row => ({ id: row.id, businessId: slug, name: row.name, sortOrder: row.sort_order }));
+  };
+  const saveCategory = async (input: SaveCategoryInput): Promise<MenuCategory> => {
+    if (typeof input.name !== 'string' || !input.name.trim() || [...input.name.trim()].length > 100 ||
+        !Number.isInteger(input.sortOrder) || input.sortOrder < -2147483648 || input.sortOrder > 2147483647 ||
+        (input.id !== undefined && (typeof input.id !== 'string' || !input.id.trim()))) {
+      throw new ServiceError('INVALID_CATEGORY', 'Enter a category name from 1 to 100 characters and a whole order from -2,147,483,648 to 2,147,483,647.');
+    }
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const values = { name: input.name.trim(), sort_order: input.sortOrder };
+    const query = input.id === undefined ? db.from('menu_categories').insert({ ...values, business_id: business.id })
+      : db.from('menu_categories').update(values).eq('id', input.id).eq('business_id', business.id);
+    const { data, error } = await query.select('id, name, sort_order').maybeSingle();
+    if (error?.code === '23505') throw new ServiceError('CATEGORY_DUPLICATE', 'A category with this name already exists. Choose another name.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
+    fail(error, 'Could not save category');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
+    return { id: data.id, businessId: slug, name: data.name, sortOrder: data.sort_order };
+  };
+  const deleteCategory = async (id: string): Promise<void> => {
+    if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_CATEGORY', 'Choose a category to delete.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_categories').delete().eq('id', id).eq('business_id', business.id).select('id').maybeSingle();
+    if (error?.code === '23503') throw new ServiceError('CATEGORY_IN_USE', 'Move all dishes to another category before deleting this category.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
+    fail(error, 'Could not delete category');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
+  };
   const saveMenuItem = async (input: SaveMenuItemInput): Promise<MenuItem> => {
     if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 100 ||
-        typeof input.category !== 'string' || !input.category.trim() || input.category.trim().length > 100 ||
+        typeof input.categoryId !== 'string' || !input.categoryId.trim() ||
         typeof input.description !== 'string' || input.description.length > 1000 ||
         !Number.isSafeInteger(input.pricePaise) || input.pricePaise <= 0 || input.pricePaise > 2147483647 ||
         typeof input.isAvailable !== 'boolean' || typeof input.isDemo !== 'boolean' ||
@@ -218,11 +254,12 @@ export function createMarketServices(options: ServiceOptions) {
       throw new ServiceError('INVALID_MENU_ITEM', 'Choose Vegetarian, Contains egg or Non-vegetarian for a new dish.');
     }
     const db = requireClient(); const business = await requireAdminBusiness();
-    const values = { diet: input.diet, name: input.name.trim(), description: input.description.trim(), category: input.category.trim(), price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo, is_featured: input.isFeatured, sort_order: input.sortOrder };
+    const values = { diet: input.diet, name: input.name.trim(), description: input.description.trim(), category_id: input.categoryId, price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo, is_featured: input.isFeatured, sort_order: input.sortOrder };
     const query = input.id === undefined
       ? db.from('menu_items').insert({ ...values, business_id: business.id })
       : db.from('menu_items').update(values).eq('id', input.id).eq('business_id', business.id);
-    const { data, error } = await query.select('*').single();
+    const { data, error } = await query.select(menuSelect).single();
+    if (error?.code === '23503') throw new ServiceError('CATEGORY_MISSING', 'This category is no longer available. Reload the menu and choose a category.', error);
     fail(error, 'Could not save menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
     return mapMenu(data as MenuRow, slug);
@@ -319,7 +356,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

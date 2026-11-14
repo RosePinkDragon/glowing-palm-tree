@@ -19,7 +19,7 @@ const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const token = part({ alg: 'HS256', typ: 'JWT' }) + '.' + part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.' + Buffer.from('synthetic-fixture-signature').toString('base64url');
 const session = { access_token: token, refresh_token: 'fixture-refresh', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
 const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true };
-const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category: 'Meals', price_paise: 15000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
+const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 15000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
 let savedOrder;
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
@@ -57,9 +57,10 @@ await context.route(origin + '/**', async route => {
   if (url.pathname === '/auth/v1/user') return json(user);
   if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
   if (url.pathname === '/rest/v1/businesses') return json(business);
+  if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
   if (url.pathname === '/rest/v1/menu_items') {
     if (req.method() === 'GET') return failCatalog ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture catalog failure' }) }) : json(menuItems);
-    if (req.method() === 'POST') { if (failSave) { failSave = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture save failure' }) }); } const row = { ...req.postDataJSON(), id: '20000000-0000-4000-8000-000000000002' }; mutations.push(row); menuItems.push(row); return json(row); }
+    if (req.method() === 'POST') { if (failSave) { failSave = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture save failure' }) }); } const row = { ...req.postDataJSON(), menu_categories: { name: 'Meals', sort_order: 0 }, id: '20000000-0000-4000-8000-000000000002' }; mutations.push(row); menuItems.push(row); return json(row); }
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
@@ -228,7 +229,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByRole('button', { name: 'Menu', exact: true }).click();
   await admin.getByRole('button', { name: 'Add item', exact: true }).click();
   await admin.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Test dish');
-  await admin.getByLabel('Category', { exact: true }).filter({ visible: true }).fill('Meals');
+  await admin.getByRole('button', { name: 'Category: Meals', exact: true }).click();
   await admin.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).fill('123.45');
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   await admin.getByText('Choose a diet classification.', { exact: true }).waitFor();
@@ -237,7 +238,7 @@ const prepareCart = async (page, add = true) => {
   const addDialog = admin.getByRole('dialog');
   await addDialog.getByRole('alert').getByText(/Fixture save failure/).waitFor();
   assert.equal(await addDialog.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Test dish');
-  assert.equal(await addDialog.getByLabel('Category', { exact: true }).filter({ visible: true }).inputValue(), 'Meals');
+  assert.equal(await addDialog.getByRole('button', { name: 'Category: Meals', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await addDialog.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).inputValue(), '123.45');
   await admin.getByRole('button', { name: 'Save item', exact: true }).click();
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).waitFor();
@@ -289,6 +290,10 @@ const prepareCart = async (page, add = true) => {
       };
       const labels = ['Vegetarian', 'Contains egg', 'Non-vegetarian'];
       let dishes = ['veg', 'egg', 'non_veg', null].map((diet, index) => ({ ...item, id: `20000000-0000-4000-8000-00000000004${index}`, name: `Diet fixture ${index + 1}`, diet }));
+      let groups = [{ id: item.category_id, name: 'Meals', sort_order: 0 }];
+      let failCategorySave = true, categoryDeleteRace = true;
+      const categoryWrites = [];
+      const joined = dish => ({ ...dish, menu_categories: groups.find(group => group.id === dish.category_id) });
       const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
       await dietContext.addInitScript(({ slug, session }) => {
         if (localStorage.getItem('diet-fixture-initialized')) return;
@@ -307,12 +312,29 @@ const prepareCart = async (page, add = true) => {
         if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn', accepting_orders: true });
         if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
         if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
+        if (url.pathname === '/rest/v1/menu_categories') {
+          const method = request.method(), id = url.searchParams.get('id')?.replace('eq.', '');
+          if (method === 'GET') return json([...groups].sort((a,b) => a.sort_order-b.sort_order || a.name.localeCompare(b.name)));
+          assert.equal(url.searchParams.get('business_id'), method === 'POST' ? null : `eq.${businessId}`);
+          const values = method === 'DELETE' ? {} : request.postDataJSON();
+          categoryWrites.push({ method, values, id });
+          const fail = (code, message, status = 409) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ code, message }) });
+          if (method === 'DELETE') {
+            if (categoryDeleteRace || dishes.some(dish => dish.category_id === id)) { categoryDeleteRace = false; return fail('23503', 'In use'); }
+            groups = groups.filter(group => group.id !== id); return json({ id });
+          }
+          if (failCategorySave) { failCategorySave = false; return fail('SYNTHETIC', 'Category save failed. Retry.', 500); }
+          if (groups.some(group => group.id !== id && group.name === values.name)) return fail('23505', 'Duplicate name');
+          const row = { ...values, id: id ?? `14300000-0000-4000-8000-00000000000${groups.length + 1}` };
+          groups = method === 'POST' ? [...groups,row] : groups.map(group => group.id === id ? row : group);
+          return json(row);
+        }
         if (url.pathname === '/rest/v1/menu_items') {
-          if (request.method() === 'GET') return json(dishes);
+          if (request.method() === 'GET') return json(dishes.map(joined));
           const values = request.postDataJSON(); dietWrites.push(values);
           const id = url.searchParams.get('id')?.replace('eq.', '');
           dishes = dishes.map(dish => dish.id === id ? { ...dish, ...values } : dish);
-          return json(dishes.find(dish => dish.id === id));
+          return json(joined(dishes.find(dish => dish.id === id)));
         }
         throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
       });
@@ -351,7 +373,7 @@ const prepareCart = async (page, add = true) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-history-desktop.png`, fullPage: true });
       // An uncertain attempt displays its own immutable dish classification.
-      const attempt = { pricing: { lines: [{ menu_item_id: itemId, quantity: 2, unit_price_paise: 15123, line_total_paise: 30246 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30246, total_paise: 32246 }, version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: `${slug} private pending dish`, description: '', category: 'Meals', pricePaise: 15123, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 2 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
+      const attempt = { pricing: { lines: [{ menu_item_id: itemId, quantity: 2, unit_price_paise: 15123, line_total_paise: 30246 }], delivery_fee_paise: 2000, min_order_paise: 0, subtotal_paise: 30246, total_paise: 32246 }, version: 1, businessId: slug, userId, idempotencyKey: '63000000-0000-4000-8000-000000000043', lines: [{ item: { id: itemId, businessId: slug, name: `${slug} private pending dish`, description: '', category: 'Meals', categoryId: '14300000-0000-4000-8000-000000000001', categorySortOrder: 0, pricePaise: 15123, isAvailable: true, isDemo: false, diet: 'veg' }, quantity: 2 }], delivery: { name: 'Synthetic', phone: '123', addressLine: 'Synthetic address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } };
       await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: `market:checkout:${slug}`, value: JSON.stringify(attempt) });
       await page.goto(customer.url + '/cart', { waitUntil: 'networkidle' });
       await page.getByText('Order awaiting confirmation', { exact: true }).filter({ visible: true }).waitFor();
@@ -462,6 +484,60 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await page.locator('#featured-menu').count(), 0);
       assert.equal(await page.getByRole('heading', { name: featureHeading, exact: true }).count(), 0);
       console.log(`PASS: ${slug} owner featured/order validation and persistence, stable public order, unavailable exclusion and empty section hiding`);
+      // Categories use independent IDs, with a real category named All.
+      await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
+      await focused(adminPage, 'Add category');
+      await dialog.getByLabel('Category name', { exact: true }).fill('Z First');
+      await dialog.getByLabel('Category order', { exact: true }).fill('1.5');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await dialog.getByText('Enter a whole number from -2,147,483,648 to 2,147,483,647.', { exact: true }).waitFor();
+      await dialog.getByLabel('Category order', { exact: true }).fill('-20');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await dialog.getByText(/Category save failed/).waitFor();
+      assert.equal(await dialog.getByLabel('Category name', { exact: true }).inputValue(), 'Z First');
+      assert.equal(await dialog.getByLabel('Category order', { exact: true }).inputValue(), '-20');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await adminPage.getByText('Category saved.', { exact: true }).waitFor();
+      await focused(adminPage, 'Add category');
+      await adminPage.getByRole('button', { name: 'Edit category Z First', exact: true }).click();
+      await dialog.getByLabel('Category name', { exact: true }).fill('Meals');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await dialog.getByText('A category with this name already exists. Choose another name.', { exact: true }).waitFor();
+      await dialog.getByLabel('Category name', { exact: true }).fill('All');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Edit category All', exact: true }).waitFor();
+      await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Category: All', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
+      await adminPage.getByText('Item saved.', { exact: true }).waitFor();
+      assert.equal(dietWrites.at(-1).category_id, groups.find(group => group.name === 'All').id);
+      assert.equal(dietWrites.at(-1).category, undefined, 'dish saves contain only category ID');
+      assert.equal(await adminPage.getByRole('button', { name: 'Delete category All', exact: true }).isDisabled(), true);
+      await adminPage.setViewportSize({ width: 390, height: 1500 });
+      await adminPage.screenshot({ path: `dist/browser/${slug}-categories-owner-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 390, height: 1100 });
+      await page.reload({ waitUntil: 'networkidle' });
+      const allDishes = page.getByRole('button', { name: 'All dishes', exact: true });
+      const realAll = page.getByRole('button', { name: 'All', exact: true });
+      await realAll.waitFor();
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
+      await realAll.click();
+      assert.equal(await realAll.getAttribute('aria-pressed'), 'true');
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), ['Diet fixture 4']);
+      await page.screenshot({ path: `dist/browser/${slug}-category-all-mobile.png`, fullPage: true });
+      await allDishes.click();
+      assert.equal(await page.locator('#regular-menu').getByRole('heading').count(), 4);
+      await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
+      await dialog.getByLabel('Category name', { exact: true }).fill('Temporary');
+      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Delete category Temporary', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Confirm delete category', exact: true }).click();
+      await dialog.getByText('Move all dishes to another category before deleting this category.', { exact: true }).waitFor();
+      await dialog.getByRole('button', { name: 'Confirm delete category', exact: true }).click();
+      await adminPage.getByText('Category deleted.', { exact: true }).waitFor();
+      assert.equal(await adminPage.getByRole('button', { name: 'Edit category Temporary', exact: true }).count(), 0);
+      assert.ok(categoryWrites.every(write => write.method !== 'PATCH' || write.values.business_id === undefined));
+      console.log(`PASS: ${slug} category create/rename/order/picker, duplicate and retry errors, in-use restriction/race, keyboard focus and real All filter`);
       assert.deepEqual(dietErrors, []);
       console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
     } finally { await dietContext.close(); await customer.close(); await owner.close(); }

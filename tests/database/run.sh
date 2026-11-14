@@ -19,7 +19,14 @@ for db in fresh existing; do
     docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
   fi
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000000_database_isolation.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" <<'SQL'
+insert into public.businesses(id,slug,name,is_demo) values
+('10000000-0000-4000-8000-000000000001','ammu-sammu','Ammu Sammu',true),
+('10000000-0000-4000-8000-000000000002','kokani-dine-inn','Kokani Dine Inn',true);
+insert into public.menu_items(id,business_id,name,category,price_paise,is_demo) values
+('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Demo meal','Demo',15000,true),
+('20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','Demo meal','Demo',18000,true);
+SQL
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/isolation.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000001_checkout.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/checkout.sql
@@ -89,6 +96,12 @@ SQL
   wait "$second" || failed=1
   if (( failed )); then echo 'Concurrent accepted-pricing requests failed' >&2; exit 1; fi
   [[ "$(count_orders 64000000-0000-4000-8000-000000000099)" == 1 ]] || { echo 'Accepted-pricing race did not create exactly one order' >&2; exit 1; }
+  # Backfill trims and merges only names within the same business.
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into public.menu_items(id,business_id,name,category,price_paise,diet) values ('24300000-0000-4000-8000-000000000099','10000000-0000-4000-8000-000000000001','Backfill',' Demo ',100,'egg')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114142756_menu_categories.sql
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
@@ -102,7 +115,6 @@ for db in all_fresh all_existing; do
     docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$migration"
   done
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-featured.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
 done
-echo 'Database isolation, checkout, notification, open/closed diet and featured tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'
