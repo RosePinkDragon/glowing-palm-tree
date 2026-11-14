@@ -36,7 +36,10 @@ export interface MenuItem {
   businessId: BusinessSlug;
   name: string;
   description: string;
+  /** Display name read from the assigned category. */
   category: string;
+  categoryId: string;
+  categorySortOrder: number;
   /** Unclassified dishes have no mark. */
   diet?: Diet | null;
   pricePaise: number;

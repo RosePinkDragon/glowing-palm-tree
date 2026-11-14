@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MenuItem } from '@market/core';
-import { featuredLabel, featuredMenuItems, parseItemOrder, sortMenuItems } from './menu-model.ts';
+import { featuredLabel, featuredMenuItems, parseItemOrder, sortCategories, sortMenuItems } from './menu-model.ts';
+import { readCart } from './cart-state.ts';
 
-const dish: MenuItem = { id: 'b', businessId: 'ammu-sammu', name: 'Rice', category: 'Meals', description: '', pricePaise: 100, diet: null, isAvailable: true, isDemo: false, isFeatured: true, sortOrder: 0 };
+const dish: MenuItem = { id: 'b', businessId: 'ammu-sammu', name: 'Rice', category: 'Meals', categoryId: 'meals', categorySortOrder: 0, description: '', pricePaise: 100, diet: null, isAvailable: true, isDemo: false, isFeatured: true, sortOrder: 0 };
+
+test('saved category names use the same 100 Unicode code-point limit as category writes', () => {
+  const saved = (category: string) => JSON.stringify({ version: 1, revision: 1, businessId: dish.businessId, ownerId: null, lines: [{ item: { ...dish, category }, quantity: 1 }] });
+  // Composed and decomposed names are not normalized: PostgreSQL counts code points,
+  // not UTF-16 units or grapheme clusters.
+  for (const category of ['a'.repeat(100), '🍛'.repeat(100), 'é'.repeat(100), 'e\u0301'.repeat(50)]) {
+    assert.equal(readCart(saved(category), dish.businessId)?.lines[0].item.category, category);
+  }
+  for (const category of ['a'.repeat(101), '🍛'.repeat(101), 'é'.repeat(101), 'e\u0301'.repeat(50) + 'e']) {
+    assert.throws(() => readCart(saved(category), dish.businessId), /Invalid saved cart/);
+  }
+});
 
 test('item ordering is stable by category, integer order, name, then id and preserves input', () => {
   const items = [dish, { ...dish, id: 'a' }, { ...dish, id: 'first', sortOrder: -1, name: 'Z' }, { ...dish, id: 'name', name: 'Dal' }, { ...dish, id: 'category', category: 'Drinks', sortOrder: 9 }];
@@ -31,4 +44,17 @@ test('brand labels match owner switch and customer heading', () => {
 test('item order accepts the PostgreSQL integer range without fractional or exponent coercion', () => {
   for (const value of ['0', ' -1 ', '-2147483648', '2147483647']) assert.equal(parseItemOrder(value), Number(value));
   for (const value of ['', ' ', '1.1', '1e2', 'NaN', 'Infinity', '2147483648', '-2147483649']) assert.equal(parseItemOrder(value), null);
+});
+
+
+test('category rank precedes name; category and item ties remain deterministic', () => {
+  const items = [dish, { ...dish, id: 'first-category', categoryId: 'all', category: 'All', categorySortOrder: -1, sortOrder: 100 }, { ...dish, id: 'second-category', categoryId: 'z', category: 'Z', categorySortOrder: -1, sortOrder: -100 }];
+  assert.deepEqual(sortMenuItems(items).map(item => item.id), ['first-category', 'second-category', 'b']);
+  assert.deepEqual(featuredMenuItems([...items].reverse()), sortMenuItems(items));
+});
+
+test('owner category controls share stable rank/name/id ordering', () => {
+  const groups = [{ id: 'b', name: 'All', sortOrder: 0 }, { id: 'a', name: 'All', sortOrder: 0 }, { id: 'z', name: 'Z', sortOrder: -1 }];
+  assert.deepEqual(sortCategories(groups).map(group => group.id), ['z', 'a', 'b']);
+  assert.equal(groups[0].id, 'b');
 });
