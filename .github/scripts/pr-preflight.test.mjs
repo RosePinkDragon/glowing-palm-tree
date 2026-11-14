@@ -152,3 +152,21 @@ test('pagination checks later-page predecessors and fails on incomplete later pa
   f.state.prs = Array.from({ length: 100 }, () => first);
   assert.throws(() => f.run(), /pagination exceeds/);
 });
+
+test('every metadata request explicitly uses the validated github.com origin host', t => {
+  const f = fixture(t);
+  const previousHost = process.env.GH_HOST;
+  process.env.GH_HOST = 'other.example.com';
+  try {
+    assert.equal(f.run().repository, repository);
+    const requests = f.calls.filter(call => call[0] === 'gh');
+    assert.equal(requests.length, 3); // Repository, issue, and PR metadata.
+    for (const request of requests) {
+      assert.equal(request[1], 'api');
+      assert.equal(request[request.indexOf('--hostname') + 1], 'github.com');
+    }
+  } finally {
+    if (previousHost === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = previousHost;
+  }
+});

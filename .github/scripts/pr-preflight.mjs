@@ -8,7 +8,7 @@ function execute(command, args, cwd) {
   catch { throw new Error(`${command} ${args[0]} failed; verify repository access and retry.`); }
 }
 function json(run, args) {
-  try { return JSON.parse(run('gh', args)); }
+  try { return JSON.parse(run('gh', [...args, '--hostname', 'github.com'])); }
   catch { throw new Error('GitHub metadata unavailable or invalid; preflight cannot proceed.'); }
 }
 export function preflight(args, { cwd = process.cwd(), execute: command = execute } = {}) {

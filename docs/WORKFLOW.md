@@ -36,7 +36,7 @@ this JSON at GitHub **Settings → Rules → Rulesets → New ruleset → Import
 review and save it, or run:
 
 ```sh
-gh api --method POST repos/RosePinkDragon/glowing-palm-tree/rulesets --input docs/policy/main-delivery-ruleset.json
+gh api --hostname github.com --method POST repos/RosePinkDragon/glowing-palm-tree/rulesets --input docs/policy/main-delivery-ruleset.json
 ```
 
 Create this as an additional ruleset and preserve existing protections. The payload
