@@ -14,6 +14,7 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: {} });
   assert.equal(service.mode, 'demo');
   assert.equal((await service.getBusiness()).orderingEnabled, false);
+  assert.equal((await service.getBusiness()).acceptingOrders, false);
   assert.equal((await service.getMenu())[0].isDemo, true);
   await assert.rejects(service.placeOrder({ lines: [], delivery: { name: '', phone: '', addressLine: '' }, location: { latitude: 0, longitude: 0, accuracy: 0, capturedAtISO: '' }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
@@ -267,4 +268,71 @@ test('device token RPCs accept refreshed credentials only for the initiating use
     assert.equal(requests[1].auth, `Bearer ${refreshed}`);
     assert.deepEqual(requests[0].body, { p_business_slug: slug, p_audience: 'admin', p_token: 'device' });
   } finally { service.dispose(); globalThis.fetch = original; }
+});
+
+test('business state realtime follows open/closed and dish changes, reconnects and cleans up', async () => {
+  const { subscribeToBusinessState } = await import('./index.ts');
+  const listeners: { table: string; event: string; filter?: string; callback: () => void }[] = [];
+  let status: ((value: string) => void) | undefined;
+  let removed = false, refreshes = 0, errors = 0;
+  const channel = {
+    on(_kind: string, spec: { table: string; event: string; filter?: string }, callback: () => void) { listeners.push({ ...spec, callback }); return this; },
+    subscribe(callback: (value: string) => void) { status = callback; return this; },
+  };
+  const client = { channel: () => channel, removeChannel: async (value: unknown) => { assert.equal(value, channel); removed = true; } };
+  const cleanup = subscribeToBusinessState(client as never, 'tenant-id', slug, 'customer', () => { refreshes++; }, () => { errors++; });
+  assert.deepEqual(listeners.map(({ table, event, filter }) => ({ table, event, filter })), [
+    { table: 'businesses', event: 'UPDATE', filter: 'id=eq.tenant-id' },
+    { table: 'menu_items', event: 'INSERT', filter: 'business_id=eq.tenant-id' },
+    { table: 'menu_items', event: 'UPDATE', filter: 'business_id=eq.tenant-id' },
+    { table: 'menu_items', event: 'DELETE', filter: undefined },
+  ]);
+  status?.('SUBSCRIBED'); for (const listener of listeners) listener.callback(); status?.('CHANNEL_ERROR'); status?.('SUBSCRIBED');
+  assert.equal(refreshes, 6); assert.equal(errors, 1);
+  cleanup(); listeners[0].callback(); status?.('SUBSCRIBED');
+  assert.equal(removed, true); assert.equal(refreshes, 6);
+});
+
+test('open/closed is read, changed only by owners, and a closed refusal has its own error', async () => {
+  const originalFetch = globalThis.fetch;
+  const memory = new Map<string, string>();
+  const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  let business: Record<string, unknown> = { id: 'tenant-id', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
+  let admin = true;
+  const rpcs: { name: string; body: Record<string, unknown> }[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'user1', aud: 'authenticated' });
+    if (url.pathname.endsWith('/businesses')) { assert.match(url.searchParams.get('select') ?? '', /accepting_orders/); return Response.json(business); }
+    if (url.pathname.endsWith('/business_memberships')) return Response.json(admin ? { role: 'admin' } : null);
+    if (url.pathname.includes('/rpc/')) {
+      const name = url.pathname.split('/').pop()!;
+      rpcs.push({ name, body: JSON.parse(String(init?.body)) });
+      if (name === 'set_accepting_orders') return Response.json({ business_id: 'tenant-id', accepting_orders: false });
+      if (name === 'place_order') return Response.json({ code: 'PT409', message: 'restaurant is not accepting orders', details: null, hint: null }, { status: 409 });
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+  try {
+    const owner = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage });
+    await owner.auth.signIn('owner@example.test', 'password');
+    assert.equal((await owner.getBusiness()).acceptingOrders, true);
+    business = { ...business, accepting_orders: undefined };
+    assert.equal((await owner.getBusiness()).acceptingOrders, false, 'missing value fails closed');
+    assert.equal(await owner.setAcceptingOrders(false), false);
+    assert.deepEqual(rpcs[0], { name: 'set_accepting_orders', body: { p_business_slug: slug, p_accepting: false } });
+    await assert.rejects(owner.setAcceptingOrders('no' as never), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_VALUE');
+    admin = false;
+    await assert.rejects(owner.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
+    assert.equal(rpcs.length, 1); owner.dispose();
+
+    const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+    await assert.rejects(customer.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
+    await customer.auth.signIn('customer@example.test', 'password');
+    const item = { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', pricePaise: 100, isAvailable: true, isDemo: false };
+    await assert.rejects(customer.placeOrder({ lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
+    customer.dispose();
+  } finally { globalThis.fetch = originalFetch; }
 });
