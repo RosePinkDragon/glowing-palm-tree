@@ -17,12 +17,11 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
   const [attemptReady, setAttemptReady] = useState(false);
   const [storageError, setStorageError] = useState('');
   const auth = useMarketAuth(services, identity, setError);
-  const catalog = useMarketCatalog(services, setError);
+  const catalog = useMarketCatalog(services, audience === 'customer');
   const orders = useMarketOrders(services, auth.session, identity, auth.identityVersion, audience === 'customer');
   const preferences = useNotificationPreferences(businessId, audience, auth.session, services, orders.refreshOrders);
   useEffect(() => {
     let active = true;
-    void catalog.load();
     const onStorage = (event: StorageEvent) => {
       if (event.key === null) { setStorageError('Saved checkout state was cleared in another window. Check your orders before placing another order.'); return; }
       if (event.key !== attemptKey(businessId)) return;
@@ -33,6 +32,6 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
     void AsyncStorage.getItem(attemptKey(businessId)).then(value => { if (active) setAttempt(readAttempt(value, businessId)); }).catch(e => { if (active) setStorageError(messageOf(e)); }).finally(() => { if (active) setAttemptReady(true); });
 
     return () => { active = false; stopStorage(); };
-  }, [businessId, catalog.load]);
-  return { services, preferences, identity, error: error || orders.ordersError, setError, attempt, setAttempt, attemptReady, storageError, ...auth, ...catalog, ...orders };
+  }, [businessId]);
+  return { services, preferences, identity, error: error || catalog.catalogError || orders.ordersError, setError, attempt, setAttempt, attemptReady, storageError, ...auth, ...catalog, ...orders };
 }

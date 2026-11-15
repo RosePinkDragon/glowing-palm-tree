@@ -30,12 +30,13 @@ export function ReorderNotice({ message }: { message: string }) {
 }
 
 type Review = ReturnType<typeof prepareReorder> & { menu: MenuItem[]; revision: number; existing: boolean };
-export function ReorderPanel({ businessId, order, market, draft, paused, onClose, onSaved }: {
+export function ReorderPanel({ businessId, order, market, draft, paused, onClose, onSaved, orderingAllowed, orderingMessage }: {
   businessId: BusinessSlug; order: Order; market: ReturnType<typeof useMarket>; draft: ReturnType<typeof useCustomerCart>;
-  paused: boolean; onClose: () => void; onSaved: (message: string) => void;
+  paused: boolean; onClose: () => void; onSaved: (message: string) => void; orderingAllowed: boolean; orderingMessage: string;
 }) {
+  const { colors } = useMarketTheme();
   const identity = useRef(market.identity.current);
-  const live = useRef({ market, draft, paused }); live.current = { market, draft, paused };
+  const live = useRef({ market, draft, paused, orderingAllowed, orderingMessage }); live.current = { market, draft, paused, orderingAllowed, orderingMessage };
   const active = useRef(true), operation = useRef(0), saving = useRef(false);
   const [review, setReview] = useState<Review | null>(null);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [stale, setStale] = useState(false), [error, setError] = useState('');
@@ -45,6 +46,7 @@ export function ReorderPanel({ businessId, order, market, draft, paused, onClose
     if (now.market.attempt || !now.market.attemptReady || now.market.storageError) throw new Error('Recover your order awaiting confirmation before reordering. Your saved order has not been changed.');
     if (now.paused || !now.draft.ready || now.draft.cartError || (!ownSave && now.draft.saving)) throw new Error('Wait for your saved cart to be ready, or retry it before reordering.');
     if (now.market.services.mode === 'demo' || now.market.business?.isDemo) throw new Error('Reordering is unavailable for sample menus.');
+    if (!now.orderingAllowed) throw new Error(now.orderingMessage);
   };
   // This guard also covers the locked cart mutation, so checkout cannot freeze a
   // submitted snapshot between the persisted-attempt check and the draft write.
@@ -103,9 +105,11 @@ export function ReorderPanel({ businessId, order, market, draft, paused, onClose
     return () => { active.current = false; operation.current++; if (Platform.OS === 'web') { window.removeEventListener('storage', changed); window.removeEventListener('popstate', back); } };
   }, [businessId, order.id]);
   const cancel = () => { if (!saving.current) { active.current = false; operation.current++; onClose(); } };
+  useEffect(() => { if (!orderingAllowed) { operation.current++; setReview(null); setLoading(false); } }, [orderingAllowed]);
   return <AccessiblePanel title="Reorder" onClose={cancel}>
-    {loading ? <MarketStatus kind="loading" title="Checking the current menu" message="Checking today’s prices and availability before changing your cart." /> : null}
-    {review && !stale ? <>
+    {!orderingAllowed ? <Text role="status" accessibilityLiveRegion="polite" style={{ color: colors.ink }}>{orderingMessage}</Text> : null}
+    {loading && orderingAllowed ? <MarketStatus kind="loading" title="Checking the current menu" message="Checking today’s prices and availability before changing your cart." /> : null}
+    {review && !stale && orderingAllowed ? <>
       {review.skipped.length ? <MarketText>Skipped unavailable dishes: {review.skipped.join(', ')}.</MarketText> : null}
       {!review.lines.length ? <MarketStatus kind="empty" title="No dishes available to reorder" message="These dishes are missing from the current menu or unavailable. Your cart has not been changed." /> : <>
         <MarketText variant="muted">Current menu prices · Original quantities</MarketText>
@@ -117,8 +121,8 @@ export function ReorderPanel({ businessId, order, market, draft, paused, onClose
         </View>
       </>}
     </> : null}
-    {error ? <MarketStatus kind="error" title="Reorder not saved" message={error} /> : null}
-    {!loading && !busy && (stale || !review) ? <MarketButton label={stale ? 'Review current cart' : 'Retry reorder'} variant="secondary" onPress={() => void load()} /> : null}
+    {error && orderingAllowed ? <MarketStatus kind="error" title="Reorder not saved" message={error} /> : null}
+    {orderingAllowed && !loading && !busy && (stale || !review) ? <MarketButton label={stale ? 'Review current cart' : 'Retry reorder'} variant="secondary" onPress={() => void load()} /> : null}
     {live.current.market.attempt ? <MarketButton label="Go to order recovery" variant="secondary" disabled={busy} onPress={() => { cancel(); onSaved('Recover your earlier order before reordering.'); }} /> : null}
     <MarketButton label="Cancel" variant="secondary" disabled={busy} onPress={cancel} />
   </AccessiblePanel>;

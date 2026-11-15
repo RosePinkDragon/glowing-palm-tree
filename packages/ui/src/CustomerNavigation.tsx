@@ -56,7 +56,7 @@ function AccountControl({ onPress }: { onPress: (node: ComponentRef<typeof Press
   return <Pressable ref={button} accessibilityRole="button" accessibilityLabel="Account" onPress={() => onPress(button.current)} style={{ minHeight: 48, paddingHorizontal: 18, justifyContent: 'center' }}><Text style={{ color: colors.primary, fontWeight: '700' }}>Account</Text></Pressable>;
 }
 
-export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean }) {
+export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen, orderingAllowed }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean; orderingAllowed: boolean }) {
   const navigation = useNavigationContainerRef<Routes>();
   const { colors, name } = useMarketTheme();
   const nativeOpener = useRef<ComponentRef<typeof Pressable> | null>(null);
@@ -97,7 +97,7 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
         {(['Menu', 'Cart', 'Orders', 'Order', 'Account', 'Login', 'Help', 'Privacy', 'Terms', 'Profile', 'Addresses', 'Notifications', 'NotFound'] as const).map(screen => <Stack.Screen key={screen} name={screen} component={CustomerRoute} />)}
       </Stack.Navigator>
     </NavigationContainer>
-    {cartCount ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
+    {cartCount && orderingAllowed ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
     </View>
     <AccountDrawer open={drawer} close={closeDrawer} market={market} go={path => controls.current?.go(path)} signOut={signOut} onReorder={onReorder} covered={reorderOpen} />
   </Content.Provider></SafeAreaProvider>;

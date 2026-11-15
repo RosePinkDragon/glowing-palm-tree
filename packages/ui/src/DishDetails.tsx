@@ -8,8 +8,8 @@ import { MarketButton, MarketStatus, MarketText } from './components';
 import { featuredLabel } from './menu-model';
 import { useMarketTheme } from './theme';
 
-export function DishDetails({ item, inCart, locked, onAdd, onClose }: {
-  item: MenuItem; inCart: number; locked: boolean; onAdd: (quantity: number) => Promise<void>; onClose: () => void;
+export function DishDetails({ item, inCart, locked, onAdd, onClose, orderingAllowed, orderingMessage }: {
+  item: MenuItem; inCart: number; locked: boolean; onAdd: (quantity: number) => Promise<void>; onClose: () => void; orderingAllowed: boolean; orderingMessage: string;
 }) {
   const { colors, businessId } = useMarketTheme();
   const [quantity, setQuantity] = useState(1);
@@ -18,7 +18,7 @@ export function DishDetails({ item, inCart, locked, onAdd, onClose }: {
   const adding = useRef(false);
   const remaining = 10 - inCart;
   const add = async () => {
-    if (adding.current || locked || !item.isAvailable || quantity > remaining) return;
+    if (adding.current || locked || !orderingAllowed || !item.isAvailable || quantity > remaining) return;
     adding.current = true; setBusy(true); setError('');
     try { await onAdd(quantity); onClose(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Your cart could not be saved. Please try again.'); }
@@ -35,7 +35,7 @@ export function DishDetails({ item, inCart, locked, onAdd, onClose }: {
     <MarketText variant="eyebrow">{item.category}{item.isDemo ? ' · Example' : ''}</MarketText>
     <MarketText variant="heading">{formatINRFromPaise(item.pricePaise)}</MarketText>
     <MarketText>{item.description || 'No description provided.'}</MarketText>
-    {item.isAvailable ? <>
+    {!orderingAllowed ? <Text role="status" accessibilityLiveRegion="polite" style={{ color: colors.ink }}>{orderingMessage}</Text> : item.isAvailable ? <>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>{step(-1)}<Text accessibilityLabel={`Quantity: ${quantity}`} accessibilityLiveRegion="polite" style={{ fontSize: 18, color: colors.ink, fontWeight: '700' }}>{quantity}</Text>{step(1)}</View>
       {inCart ? <MarketText variant="muted">{inCart} already in your cart. {remaining > 0 ? `You can add up to ${remaining} more.` : 'You have reached the limit of 10 for this dish.'}</MarketText> : null}
       {quantity > remaining && remaining > 0 ? <MarketText>Your cart changed. Reduce the quantity before adding.</MarketText> : null}

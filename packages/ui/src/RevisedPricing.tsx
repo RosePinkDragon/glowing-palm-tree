@@ -5,7 +5,7 @@ import { MarketButton, MarketCard, MarketText } from './components';
 import type { RevisedQuote } from './pricing-model';
 import { useMarketTheme } from './theme';
 
-export function RevisedPricing({ quote, busy, accept, edit }: { quote: RevisedQuote; busy: boolean; accept: () => void; edit: () => void }) {
+export function RevisedPricing({ quote, busy, accept, edit, orderingAllowed }: { quote: RevisedQuote; busy: boolean; accept: () => void; edit: () => void; orderingAllowed: boolean }) {
   const heading = useRef<ComponentRef<typeof Text>>(null);
   const { colors } = useMarketTheme();
   useEffect(() => {
@@ -18,6 +18,6 @@ export function RevisedPricing({ quote, busy, accept, edit }: { quote: RevisedQu
     {quote.original.lines.map((line, i) => <View key={line.item.id}><MarketText>{line.quantity} × {line.item.name}</MarketText><MarketText>Unit price: {money(old.lines[i].unit_price_paise)} → {money(next.lines[i].unit_price_paise)}</MarketText><MarketText>Line total: {money(old.lines[i].line_total_paise)} → {money(next.lines[i].line_total_paise)}</MarketText></View>)}
     <MarketText>Delivery fee: {money(old.delivery_fee_paise)} → {money(next.delivery_fee_paise)}</MarketText><MarketText>Minimum order: {money(old.min_order_paise)} → {money(next.min_order_paise)}</MarketText><MarketText>Subtotal: {money(old.subtotal_paise)} → {money(next.subtotal_paise)}</MarketText><MarketText>Total: {money(old.total_paise)} → {money(next.total_paise)}</MarketText>
     {belowMinimum ? <MarketText>The revised subtotal is below the minimum order. Edit your cart before ordering.</MarketText> : null}
-    <MarketButton label="Accept revised total and place order" disabled={busy || belowMinimum} onPress={accept} /><MarketButton label="Edit cart" variant="secondary" disabled={busy} onPress={edit} />
+    {orderingAllowed ? <MarketButton label="Accept revised total and place order" disabled={busy || belowMinimum} onPress={accept} /> : null}<MarketButton label="Edit cart" variant="secondary" disabled={busy} onPress={edit} />
   </MarketCard>;
 }

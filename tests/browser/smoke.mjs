@@ -20,7 +20,7 @@ const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: '
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const token = part({ alg: 'HS256', typ: 'JWT' }) + '.' + part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.' + Buffer.from('synthetic-fixture-signature').toString('base64url');
 const session = { access_token: token, refresh_token: 'fixture-refresh', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
-const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true };
+const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
 const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 15000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
 let savedOrder;
 if (categoriesOnly) savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Synthetic', customer_phone: '123', delivery_address_line: 'Synthetic address', created_at: new Date().toISOString(), order_items: [], order_status_history: [] };
@@ -326,7 +326,15 @@ const prepareCart = async (page, add = true) => {
         localStorage.setItem('diet-fixture-initialized', 'yes');
         for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session));
       }, { slug, session });
-      await dietContext.routeWebSocket(/.*/, socket => socket.close());
+      await dietContext.routeWebSocket(/.*/, socket => {
+        if (new URL(socket.url()).origin !== 'wss://market-fixture.supabase.co') throw new Error('Unexpected diet fixture socket: ' + socket.url());
+        socket.onMessage(message => {
+          const data = JSON.parse(String(message)), array = Array.isArray(data);
+          const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
+          const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+          if (['phx_join', 'heartbeat', 'phx_leave'].includes(event)) socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
+        });
+      });
       await dietContext.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url());
         if (url.hostname === '127.0.0.1') return route.fallback();
@@ -607,3 +615,4 @@ const prepareCart = async (page, add = true) => {
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
 
 if (!categoriesOnly) await import('./account.mjs');
+if (!categoriesOnly) await import('./closed58.mjs');
