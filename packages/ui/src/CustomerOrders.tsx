@@ -1,0 +1,63 @@
+import { useEffect, useRef, useState } from 'react';
+import { Text, View } from 'react-native';
+import { formatINRFromPaise, type Order } from '@market/core';
+import type { useMarket } from './useMarket';
+import { sameIdentity, type Identity } from './checkout-state';
+import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
+import { DietMark } from './DietMark';
+import { useMarketTheme } from './theme';
+
+type Market = ReturnType<typeof useMarket>;
+export const activeOrder = (order: Order) => order.status !== 'delivered' && order.status !== 'cancelled';
+const label = (order: Order) => order.status.replaceAll('_', ' ');
+export function OrderCard({ order, details = false, onTrack }: { order: Order; details?: boolean; onTrack?: () => void }) {
+  return <MarketCard>
+    <MarketText variant="heading">Order {order.id.slice(0, 8)}</MarketText>
+    <MarketText>Status: {label(order)}</MarketText>
+    <MarketText variant="muted">{new Date(order.createdAtISO).toLocaleString()}</MarketText>
+    {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText><DietMark diet={line.diet} /></View>)}
+    <MarketText>Delivery: {formatINRFromPaise(order.deliveryFeePaise)} · Total: {formatINRFromPaise(order.totalPaise)}</MarketText>
+    {details ? <><MarketText variant="muted">{order.delivery.name} · {order.delivery.addressLine}</MarketText>{order.history?.map((event, i) => <MarketText key={`${event.createdAtISO}-${i}`} variant="muted">{event.status.replaceAll('_', ' ')} · {new Date(event.createdAtISO).toLocaleString()}</MarketText>)}</> : null}
+    {onTrack ? <MarketButton label={`${activeOrder(order) ? 'Track order' : 'View order'} ${order.id.slice(-6)}`} variant={activeOrder(order) ? 'primary' : 'secondary'} onPress={onTrack} /> : null}
+  </MarketCard>;
+}
+export function CustomerHistory({ market, go }: { market: Market; go: (path: string) => void }) {
+  const { name, colors } = useMarketTheme();
+  return <View style={{ gap: 16 }}>
+    <MarketText variant="eyebrow">Past orders</MarketText>
+    <MarketButton label="Refresh orders" variant="secondary" onPress={() => void market.refreshOrders()} />
+    {market.ordersLoading || (!market.ordersReady && !market.ordersError) ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
+    {market.ordersError ? <MarketStatus kind="error" title="Could not load your orders" message={market.ordersError} action={<MarketButton label="Retry orders" onPress={() => void market.refreshOrders()} />} /> : null}
+    {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} />)}
+    {market.ordersReady && !market.orders.length ? <MarketStatus kind="empty" title="No orders yet" message={`Your orders from ${name} will appear here.`} action={<MarketButton label="Browse the menu" onPress={() => go('/')} />} /> : null}
+    {market.olderOrdersError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{market.olderOrdersError}</Text> : null}
+    {market.hasOlderOrders ? <MarketButton label={market.olderOrdersLoading ? 'Loading older orders…' : market.olderOrdersError ? 'Retry older orders' : 'Load older orders'} variant="secondary" disabled={market.olderOrdersLoading || market.ordersLoading} onPress={() => void market.loadOlderOrders()} /> : null}
+    <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{market.ordersReady ? `${market.orders.length} orders loaded` : ''}</MarketText></View>
+  </View>;
+}
+export function CustomerOrderDetail({ market, id, receipt }: { market: Market; id: string; receipt: Order | null }) {
+  const request = useRef(0);
+  const [retry, setRetry] = useState(0);
+  const [snapshot, setSnapshot] = useState<{ identity: Identity; id: string; order: Order | null; loading: boolean; resolved: boolean; error: string } | null>(null);
+  useEffect(() => {
+    const started = market.identity.current, current = ++request.current;
+    setSnapshot(previous => previous?.id === id && sameIdentity(previous.identity, started) ? { ...previous, loading: true, error: '' } : { identity: started, id, order: null, loading: true, resolved: false, error: '' });
+    if (!started.userId) return;
+    void market.services.getCustomerOrder(id).then(order => {
+      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot(previous => ({ identity: started, id, order: previous?.id === id && sameIdentity(previous.identity, started) && previous.order && order && previous.order.version > order.version ? previous.order : order, loading: false, resolved: true, error: '' }));
+    }).catch(error => {
+      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot(previous => ({ identity: started, id, order: previous?.id === id && sameIdentity(previous.identity, started) ? previous.order : null, loading: false, resolved: previous?.id === id && sameIdentity(previous.identity, started) ? previous.resolved : false, error: error instanceof Error ? error.message : 'Could not load this order.' }));
+    });
+    return () => { request.current++; };
+  }, [id, market.services, market.identity, market.identityVersion, market.ordersRevision, retry]);
+  const current = snapshot?.id === id && sameIdentity(snapshot.identity, market.identity.current) ? snapshot : null;
+  const saved = receipt?.id === id ? receipt : null;
+  const shown = current?.order ?? (!current?.resolved ? saved : null);
+  return <View style={{ gap: 16 }}><MarketText variant="heading">Order status</MarketText><MarketButton label="Refresh orders" variant="secondary" onPress={() => { setRetry(n => n + 1); void market.refreshOrders(); }} />
+    {shown ? <OrderCard order={shown} details /> : null}
+    {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}
+    {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
+    {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}
+    {current?.resolved && !shown && !current.error ? <MarketStatus kind="empty" title="We can't show this order" message="It may belong to another account or restaurant, or no longer be available." /> : null}
+  </View>;
+}

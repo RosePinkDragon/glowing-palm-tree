@@ -26,6 +26,7 @@ let savedOrder;
 if (categoriesOnly) savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Synthetic', customer_phone: '123', delivery_address_line: 'Synthetic address', created_at: new Date().toISOString(), order_items: [], order_status_history: [] };
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
+let heldOrderResponses = [];
 let adminAllowed = false;
 let failSave = true, failDelete = true;
 let menuItems = [item];
@@ -78,13 +79,13 @@ await context.route(origin + '/**', async route => {
     return json({ outcome: 'placed', id: orderId });
   }
   if (url.pathname === '/rest/v1/rpc/transition_order') { const body = req.postDataJSON(); mutations.push(body); savedOrder = { ...savedOrder, status: body.p_status, version: savedOrder.version + 1 }; return json({ id: orderId }); }
-  if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { releaseOrders = resolve; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? savedOrder : savedOrder ? [savedOrder] : []); }
+  if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { heldOrderResponses.push(resolve); releaseOrders = () => { const pending = heldOrderResponses; heldOrderResponses = []; pending.forEach(done => done()); }; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? (savedOrder?.id === url.searchParams.get('id')?.slice(3) ? savedOrder : null) : savedOrder ? [savedOrder] : []); }
   throw new Error('Unhandled fixture request: ' + req.method() + ' ' + url.pathname);
 });
 const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Add to cart', exact: true }).waitFor(); return page; };
 const focused = (page, text) => page.waitForFunction(expected => document.activeElement?.textContent === expected, text);
-const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click(); else await page.getByRole('button', { name: 'Sign in', exact: true }).click(); };
+const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
@@ -144,6 +145,23 @@ const prepareCart = async (page, add = true) => {
   assert.deepEqual(errors, []);
   console.log('PASS: cross-tab lost-response recovery reuses exact key/payload, survives catalog failure and confirms one server order');
 
+  // A real receipt remains placed, but a newer successful detail must not regress
+  // to that receipt while a subsequent server refresh is delayed.
+  savedOrder = { ...savedOrder, version: savedOrder.version + 1, status: 'accepted' };
+  await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+  await second.getByText('Status: accepted', { exact: true }).filter({ visible: true }).waitFor();
+  holdOrders = true; orderHeld = false;
+  await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+  for (let i = 0; i < 50 && !orderHeld; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(orderHeld, true);
+  assert.equal(await second.getByText('Status: accepted', { exact: true }).filter({ visible: true }).count(), 1);
+  assert.equal(await second.getByText('Status: placed', { exact: true }).filter({ visible: true }).count(), 0);
+  holdOrders = false; releaseOrders();
+  await second.getByText('Refreshing order…', { exact: true }).filter({ visible: true }).waitFor({ state: 'hidden' });
+  // Restore the shared fixture for later independent owner transition assertions.
+  savedOrder = { ...savedOrder, version: 1, status: 'placed' };
+  console.log('PASS: refreshing a newer successful detail never falls back to its original placed receipt');
+
   // Real paths survive reload and back; missing orders are distinct from loading.
   assert.equal(new URL(second.url()).pathname, '/orders/' + orderId);
   await second.reload({ waitUntil: 'networkidle' });
@@ -162,7 +180,7 @@ const prepareCart = async (page, add = true) => {
   await second.waitForTimeout(250);
   await second.screenshot({ path: 'dist/browser/customer-drawer-mobile.png', fullPage: true });
   await second.keyboard.press('Shift+Tab'); await focused(second, 'Browse menu');
-  await second.keyboard.press('Tab'); await focused(second, 'Close');
+  await second.keyboard.press('Tab'); await focused(second, '×');
   await second.keyboard.press('Escape'); await focused(second, 'Account');
   await second.getByRole('button', { name: 'Account', exact: true }).click();
   await second.getByRole('button', { name: 'Browse menu', exact: true }).click();
@@ -192,6 +210,7 @@ const prepareCart = async (page, add = true) => {
   holdOrders = true;
   await second.getByRole('button', { name: 'Account', exact: true }).click();
   await second.getByRole('button', { name: 'Your orders', exact: true }).click();
+  await second.getByRole('dialog').waitFor({ state: 'hidden' });
   await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
   for (let i = 0; i < 50 && !orderHeld; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(orderHeld, true);
@@ -318,7 +337,7 @@ const prepareCart = async (page, add = true) => {
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
         if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn', accepting_orders: true });
         if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
-        if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
+        if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? (historical.id === url.searchParams.get('id')?.slice(3) ? historical : null) : historical.customer_id === activeUser.id ? [historical] : []);
         if (url.pathname === '/rest/v1/menu_categories') {
           const method = request.method(), id = url.searchParams.get('id')?.replace('eq.', '');
           if (method === 'GET') {
@@ -586,3 +605,5 @@ const prepareCart = async (page, add = true) => {
   }
 
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
+
+if (!categoriesOnly) await import('./account.mjs');

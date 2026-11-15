@@ -103,7 +103,7 @@ try {
   const account = async page => {
     await page.getByRole('button', { name: 'Account', exact: true }).click();
     const settings = page.getByRole('button', { name: 'Account settings', exact: true });
-    if (await settings.count()) await settings.click(); else await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    if (await settings.count()) await settings.click();
   };
   const login = async (page, index = 0) => {
     await account(page);
