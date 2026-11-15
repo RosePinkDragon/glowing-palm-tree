@@ -100,6 +100,20 @@ try {
       await page.getByText('Phone not added', { exact: true }).waitFor();
       await settledDrawer(page);
       await page.screenshot({ path: `dist/browser/${slug}-account-mobile.png`, fullPage: true });
+      // With a next cursor still present, background refresh owns the window:
+      // paging stays disabled and cannot cancel it or remove already visible cards.
+      const backgroundHeld = new Promise(resolve => { held = resolve; }); holdOrders = true;
+      await page.getByRole('button', { name: 'Refresh orders', exact: true }).click(); await backgroundHeld;
+      await page.getByText('20 orders loaded', { exact: true }).waitFor();
+      const paging = page.getByRole('button', { name: /^(Load|Retry) older orders$/ });
+      assert.equal(await paging.isDisabled(), true);
+      const heldCount = queries.length;
+      await paging.evaluate(node => node.click());
+      await page.waitForTimeout(50);
+      assert.equal(queries.length, heldCount, 'disabled paging cannot supersede an in-flight refresh');
+      assert.equal(await page.getByText('1 × History meal 25 · ₹100.00', { exact: true }).count(), 1);
+      release?.();
+      await page.waitForFunction(() => { const button = Array.from(document.querySelectorAll('[role="button"]')).find(node => /^(Load|Retry) older orders$/.test(node.textContent)); return button && button.getAttribute('aria-disabled') !== 'true'; });
       await page.getByRole('button', { name: /^(Load|Retry) older orders$/ }).scrollIntoViewIfNeeded();
       await page.getByRole('button', { name: 'Retry older orders', exact: true }).waitFor();
       await page.getByText('History meal 25', { exact: false }).waitFor();
@@ -114,6 +128,7 @@ try {
       failDetail = true;
       await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
       await page.getByText('Detail fixture unavailable', { exact: false }).waitFor();
+      await page.waitForLoadState('networkidle');
       failDetail = false;
       await page.getByRole('button', { name: 'Retry orders', exact: true }).click();
       await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
