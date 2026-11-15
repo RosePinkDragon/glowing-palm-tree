@@ -126,9 +126,8 @@ try {
       await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
       assert.ok(queries.some(url => url.searchParams.get('id') === 'eq.' + orderId(1)));
       failDetail = true;
-      await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+      await page.reload({ waitUntil: 'networkidle' });
       await page.getByText('Detail fixture unavailable', { exact: false }).waitFor();
-      await page.waitForLoadState('networkidle');
       failDetail = false;
       await page.getByRole('button', { name: 'Retry orders', exact: true }).click();
       await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
