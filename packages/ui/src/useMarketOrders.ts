@@ -18,7 +18,7 @@ export function useMarketOrders(services: Services, session: Session, identity: 
     if (!started.userId) return;
     const request = ++requestId.current;
     const previous = sameIdentity(latest.current.identity, started) ? latest.current : empty(started);
-    publish({ ...previous, loading: !previous.ready, error: '', moreError: '', moreLoading: false });
+    publish({ ...previous, loading: true, error: '', moreError: '', moreLoading: false });
     try {
       const result = customer ? await readHistoryPages(services.getOrderHistory, previous.pages, previous.orders.at(-1)) : { orders: await services.getOrders(), nextCursor: null, pages: 1 };
       if (request !== requestId.current || !sameIdentity(started, identity.current)) return;

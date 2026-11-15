@@ -24,7 +24,14 @@ try {
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
     let failOlder = true, failDetail = false, holdOrders = false, held, release;
-    await context.routeWebSocket(/.*/, socket => socket.close());
+    await context.routeWebSocket(/.*/, socket => {
+      socket.onMessage(message => {
+        const data = JSON.parse(String(message)), array = Array.isArray(data);
+        const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
+        const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+        if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
+      });
+    });
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.hostname === '127.0.0.1') return route.fallback();
@@ -78,7 +85,7 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
       await page.screenshot({ path: `dist/browser/${slug}-account-mobile.png`, fullPage: true });
-      await page.getByRole('button', { name: 'Load older orders', exact: true }).scrollIntoViewIfNeeded();
+      await page.getByRole('button', { name: /^(Load|Retry) older orders$/ }).scrollIntoViewIfNeeded();
       await page.getByRole('button', { name: 'Retry older orders', exact: true }).waitFor();
       await page.getByText('History meal 25', { exact: false }).waitFor();
       failOlder = false;

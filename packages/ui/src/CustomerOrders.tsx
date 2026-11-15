@@ -31,7 +31,7 @@ export function CustomerHistory({ market, go }: { market: Market; go: (path: str
     {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} />)}
     {market.ordersReady && !market.orders.length ? <MarketStatus kind="empty" title="No orders yet" message={`Your orders from ${name} will appear here.`} action={<MarketButton label="Browse the menu" onPress={() => go('/')} />} /> : null}
     {market.olderOrdersError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{market.olderOrdersError}</Text> : null}
-    {market.hasOlderOrders ? <MarketButton label={market.olderOrdersLoading ? 'Loading older orders…' : market.olderOrdersError ? 'Retry older orders' : 'Load older orders'} variant="secondary" disabled={market.olderOrdersLoading} onPress={() => void market.loadOlderOrders()} /> : null}
+    {market.hasOlderOrders ? <MarketButton label={market.olderOrdersLoading ? 'Loading older orders…' : market.olderOrdersError ? 'Retry older orders' : 'Load older orders'} variant="secondary" disabled={market.olderOrdersLoading || market.ordersLoading} onPress={() => void market.loadOlderOrders()} /> : null}
     <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{market.ordersReady ? `${market.orders.length} orders loaded` : ''}</MarketText></View>
   </View>;
 }
