@@ -89,7 +89,8 @@ export interface Order {
   totalPaise: number;
   delivery: DeliveryDetails;
   createdAtISO: string;
-  history?: { status: OrderStatus; createdAtISO: string }[];
+  /** actorName is the owner's display name snapshot; present only on owner reads (#98). */
+  history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }
 
 export type DomainFieldErrors = Record<string, string>;

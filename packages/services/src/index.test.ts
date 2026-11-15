@@ -514,3 +514,37 @@ test('category reads and owner CRUD use current business and report actionable c
     await assert.rejects(service.deleteCategory('category-1'), (error: unknown) => error instanceof ServiceError && error.code === 'CATEGORY_IN_USE');
   } finally { service.dispose(); globalThis.fetch = original; }
 });
+
+test('owner reads carry history name snapshots; customer reads request status and time only', async () => {
+  const original = globalThis.fetch;
+  const selects: Record<string, string> = {};
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'history-customer', role: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.signature`;
+  const row = { id: '49800000-0000-4000-8000-0000000000a1', status: 'preparing', version: 3, subtotal_paise: 100, delivery_fee_paise: 0, total_paise: 100, customer_name: 'Name', customer_phone: '123', delivery_address_line: 'Khed', created_at: '2026-11-16T10:00:00Z', order_items: [] };
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const audience = String(url.host).startsWith('owner') ? 'admin' : 'customer';
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'history-customer', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'history-customer' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-history', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+    assert.equal(url.pathname, '/rest/v1/orders');
+    assert.equal(init?.method ?? 'GET', 'GET');
+    selects[audience] = url.searchParams.get('select') ?? '';
+    return Response.json(audience === 'admin'
+      ? [{ ...row, order_status_history: [{ status: 'preparing', created_at: '2026-11-16T10:02:00Z', order_status_actors: [{ actor_name: 'Ravi' }] }, { status: 'placed', created_at: '2026-11-16T10:00:00Z', order_status_actors: null }, { status: 'accepted', created_at: '2026-11-16T10:01:00Z', order_status_actors: { actor_name: 'Asha Kadam' } }] }]
+      : [{ ...row, order_status_history: [{ status: 'placed', created_at: '2026-11-16T10:00:00Z' }, { status: 'accepted', created_at: '2026-11-16T10:01:00Z' }] }]);
+  };
+  const memory = new Map<string, string>();
+  const storage = { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => { memory.set(key, value); }, removeItem: (key: string) => { memory.delete(key); } };
+  const owner = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://owner.example.test', anonKey: 'sb_publishable_test' }, storage });
+  const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://customer.example.test', anonKey: 'sb_publishable_test' }, storage });
+  try {
+    const [order] = await owner.getOrders();
+    assert.deepEqual(order.history, [{ status: 'placed', createdAtISO: '2026-11-16T10:00:00Z' }, { status: 'accepted', createdAtISO: '2026-11-16T10:01:00Z', actorName: 'Asha Kadam' }, { status: 'preparing', createdAtISO: '2026-11-16T10:02:00Z', actorName: 'Ravi' }]);
+    assert.match(selects.admin, /order_status_history\(status,created_at,order_status_actors\(actor_name\)\)/);
+    await customer.auth.signIn('customer@example.test', 'password');
+    const [own] = await customer.getOrders();
+    assert.equal(own.history?.length, 2);
+    assert.match(selects.customer, /order_status_history\(status,created_at\)/);
+    assert.doesNotMatch(selects.customer, /order_status_actors|changed_by|order_status_history\(\*\)/);
+  } finally { owner.dispose(); customer.dispose(); globalThis.fetch = original; }
+});
