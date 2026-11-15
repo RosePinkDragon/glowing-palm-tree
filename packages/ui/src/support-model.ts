@@ -9,7 +9,7 @@ const draft = (restaurant: string): SupportConfig => ({
   phone: '', whatsapp: '',
   notice: 'Support information is a draft. Restaurant contact details will be added before launch.',
   questions: [
-    { id: 'delivery', question: 'Where do you deliver?', answer: `${restaurant} checks your delivery location at checkout. Use “Check my delivery location” in your cart to see whether your address is within the current delivery area.` },
+    { id: 'delivery', question: 'Where do you deliver?', answer: `${restaurant} checks your device’s current location against its delivery area at checkout. Use “Check my delivery location” in your cart to run this check. Enter your delivery address separately in the cart.` },
     { id: 'payment', question: 'How can I pay?', answer: 'Current orders use cash on delivery. Check the total, including the delivery fee, in your cart before placing your order.' },
     { id: 'cancel', question: 'Can I cancel or change my order?', answer: 'Contact the restaurant as soon as possible to ask about a cancellation or change. This app does not currently offer customer cancellation or editing after an order is placed. A change is not confirmed until the restaurant agrees.' },
     { id: 'unavailable', question: 'What if a dish is unavailable?', answer: 'Unavailable dishes cannot be ordered. Remove them from your cart and choose another dish. Reorder skips dishes that are no longer available and shows what was skipped before you place a new order.' },

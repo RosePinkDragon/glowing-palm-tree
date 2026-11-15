@@ -6,6 +6,8 @@ import { indianPhone, selectedSupportOrder, supportConfig, supportLinks } from '
 test('Indian mobile and landline formats produce normalized dialer links', () => {
   for (const phone of ['98765 43210', '+91 98765-43210', '919876543210', '09876543210']) assert.equal(supportLinks({ phone, whatsapp: phone }).call, 'tel:+919876543210');
   for (const phone of ['02356 222333', '+91 (2356) 222333', '2356222333']) assert.equal(supportLinks({ phone, whatsapp: '' }).call, 'tel:+912356222333');
+  assert.equal(supportLinks({ phone: '011 23456789', whatsapp: '' }).call, 'tel:+911123456789');
+  assert.equal(supportLinks({ phone: '0124 2345678', whatsapp: '' }).call, 'tel:+911242345678');
   assert.equal(supportLinks({ phone: '', whatsapp: '+91 98765 43210' }).whatsapp, 'https://wa.me/919876543210');
 });
 test('invalid or absent contacts cannot open a dialer/chat; WhatsApp requires mobile format', () => {
