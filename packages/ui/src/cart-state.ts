@@ -1,4 +1,4 @@
-import { addCartItem, type BusinessSlug, type CartLine, type MenuItem } from '@market/core';
+import { addCartItem, type BusinessSlug, type CartLine, type MenuItem, type Order } from '@market/core';
 
 export interface SavedCart {
   version: 1;
@@ -65,6 +65,24 @@ export function importCart(current: readonly CartLine[], incoming: readonly Cart
   return incoming.reduce((lines, line) => addCartItem(lines, line.item, line.quantity), [...current]);
 }
 
+export class CartReviewRequiredError extends Error {
+  constructor() { super('Your cart changed in another window. Review it again before choosing Add or Replace.'); }
+}
+
+/** Order snapshots supply quantities only; the fresh restaurant menu supplies dishes and prices. */
+export function prepareReorder(order: Order, menu: readonly MenuItem[], businessId: BusinessSlug) {
+  if (order.businessId !== businessId || (order.status !== 'delivered' && order.status !== 'cancelled')) throw new Error('Only delivered or cancelled orders from this restaurant can be reordered.');
+  const current = new Map(menu.filter(item => item.businessId === businessId).map(item => [item.id, item]));
+  let lines: CartLine[] = [];
+  const skipped: string[] = [];
+  for (const original of order.lines) {
+    const item = current.get(original.menuItemId);
+    if (!item || !item.isAvailable || item.isDemo) { skipped.push(original.name); continue; }
+    lines = addCartItem(lines, item, original.quantity);
+  }
+  return { lines: importCart([], lines, 'replace', businessId), skipped };
+}
+
 /** One active record per business. Every mutation reads the latest record under a lock. */
 export class CustomerCartStore {
   private owner: string | null | undefined;
@@ -97,7 +115,7 @@ export class CustomerCartStore {
     void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => {});
     return next;
   }
-  private async write(ownerId: string | null, lines: CartLine[]) {
+  private async write(ownerId: string | null, lines: CartLine[], validate?: () => void) {
     // Every caller holds the cart lock. A revision distinguishes a fulfilled cart
     // from a later cart with exactly the same dishes and quantities.
     let previous: SavedCart | null = null;
@@ -105,6 +123,7 @@ export class CustomerCartStore {
     const revision = (previous?.revision ?? 0) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error('The saved cart revision is invalid.');
     const record: SavedCart = { version: 1, revision, businessId: this.businessId, ownerId, lines };
+    validate?.();
     return this.storage.setItem(cartKey(this.businessId), JSON.stringify(record));
   }
 
@@ -159,31 +178,33 @@ export class CustomerCartStore {
     });
   };
 
-  change = (update: (lines: CartLine[]) => CartLine[]) => {
+  change = (update: (lines: CartLine[]) => CartLine[], expectedRevision?: number) => {
     const generation = this.generation, ownerId = this.owner;
     if (ownerId === undefined || !this.state.ready || this.state.error) return Promise.reject(new Error('Wait for your saved cart to load.'));
     if (this.state.saving) return Promise.reject(new Error('Wait for your cart to finish saving.'));
     this.pendingChanges++;
     this.publish({ ...this.state, saving: true });
     return this.exclusive(async () => {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation) return false;
       try {
         const saved = readCart(await this.storage.getItem(cartKey(this.businessId)), this.businessId);
-        if (generation !== this.generation) return;
+        if (generation !== this.generation) return false;
         if (saved && saved.ownerId !== ownerId) {
           this.publish({ ownerId, lines: [], ready: false, saving: false, error: 'Your account changed in another window. Refresh this page before changing the cart.' });
-          return;
+          return false;
         }
         let lines: CartLine[];
         try {
+          if (expectedRevision !== undefined && (saved?.revision ?? 0) !== expectedRevision) throw new CartReviewRequiredError();
           lines = update(saved?.lines ?? []);
           if (!validLines(lines, this.businessId)) throw new Error('These dishes could not be saved to the cart.');
         } catch (error) {
           this.publish({ ...this.state, saving: false });
           return Promise.reject(error);
         }
-        await this.write(ownerId, lines);
+        await this.write(ownerId, lines, () => { if (generation !== this.generation) throw new Error('Your account changed. Nothing was added by this reorder.'); });
         if (generation === this.generation) this.publish({ ownerId, lines, ready: true, saving: false, error: '' });
+        return generation === this.generation;
       } catch (error) {
         if (generation === this.generation) this.publish({ ...this.state, saving: false, error: 'We couldn’t save your cart. Retry before making more changes.' });
         throw error;
