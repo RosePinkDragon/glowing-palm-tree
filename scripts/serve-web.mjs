@@ -17,7 +17,7 @@ export async function serveWeb(directory) {
       res.writeHead(200, { 'Content-Type': mime[extname(file).toLowerCase()] ?? 'application/octet-stream' }).end(data);
     } catch {
       const path = new URL(req.url, 'http://localhost').pathname;
-      if (/^\/(?:cart|orders(?:\/[^/.]+)?|account|login)\/?$/.test(path)) {
+      if (/^\/(?:cart|orders(?:\/[^/.]+)?|account|login|help|privacy|terms)\/?$/.test(path)) {
         try { return res.writeHead(200, { 'Content-Type': mime['.html'] }).end(await readFile(resolve(root, 'index.html'))); } catch { /* No export. */ }
       }
       res.writeHead(404).end('Not found');
