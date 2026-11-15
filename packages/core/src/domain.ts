@@ -89,7 +89,7 @@ export interface Order {
   totalPaise: number;
   delivery: DeliveryDetails;
   createdAtISO: string;
-  history?: { status: OrderStatus; createdAtISO: string }[];
+  history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }
 
 export type DomainFieldErrors = Record<string, string>;

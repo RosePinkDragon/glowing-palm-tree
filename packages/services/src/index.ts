@@ -145,18 +145,20 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
+type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string; order_history_actors?: { actor_name: string } | null }[] };
 export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): MenuItem {
   return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
-export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+export function mapOrder(row: OrderRow, slug: BusinessSlug, audience: AppAudience = 'customer'): Order {
+  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...(audience === 'admin' && item.order_history_actors ? { actorName: item.order_history_actors.actor_name } : {}) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
-const orderSelect = '*, order_items(*), order_status_history(*)';
+const customerOrderSelect = '*, order_items(*), order_status_history(status, created_at)';
+const ownerOrderSelect = '*, order_items(*), order_status_history(status, created_at, order_history_actors(actor_name))';
 
 export function createMarketServices(options: ServiceOptions) {
   const { businessSlug: slug, audience } = options;
+  const orderSelect = audience === 'admin' ? ownerOrderSelect : customerOrderSelect;
   const config = options.config ?? publicConfig();
   const url = config.url?.trim();
   const key = config.anonKey?.trim();
@@ -205,7 +207,7 @@ export function createMarketServices(options: ServiceOptions) {
     }
     const { data, error } = await query.order('created_at', { ascending: false });
     fail(error, 'Could not load orders');
-    return (data ?? []).map(row => mapOrder(row as OrderRow, slug));
+    return (data ?? []).map(row => mapOrder(row as OrderRow, slug, audience));
   };
   // These reads are explicitly customer-scoped, even when the customer also has
   // an admin membership (whose database policy can otherwise see all orders).
@@ -229,7 +231,7 @@ export function createMarketServices(options: ServiceOptions) {
   const readCustomerOrderPage = async (options: OrderPageOptions, activeOnly: boolean): Promise<OrderPage> => {
     const { cursor, limit } = orderPageOptions(options);
     const scope = await customerOrderScope();
-    let query = scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
+    let query = scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
     if (activeOnly) query = query.in('status', ['placed', 'accepted', 'preparing', 'out_for_delivery']);
     // Both values have a strict grammar before entering PostgREST's raw OR filter.
     if (cursor) query = query.or(`created_at.lt.${cursor.createdAtISO},and(created_at.eq.${cursor.createdAtISO},id.lt.${cursor.id})`);
@@ -249,9 +251,9 @@ export function createMarketServices(options: ServiceOptions) {
   const getCustomerOrder = async (id: string): Promise<Order | null> => {
     if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order reference is invalid.');
     const scope = await customerOrderScope();
-    const { data, error } = await scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
+    const { data, error } = await scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
     scope.ensureCurrent(); fail(error, 'Could not load your order');
-    return data ? mapOrder(data as OrderRow, slug) : null;
+    return data ? mapOrder(data as OrderRow, slug, audience) : null;
   };
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
@@ -365,7 +367,7 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await db.from('orders').select(orderSelect).eq('business_id', business.id).eq('id', id).single();
     fail(error, 'Order was saved, but its details could not be loaded');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'Order was saved, but its details could not be loaded.');
-    return mapOrder(data as OrderRow, slug);
+    return mapOrder(data as OrderRow, slug, audience);
   };
   const checkDeliveryEligibility = async (location: LocationFix): Promise<boolean> => {
     const { data, error } = await requireClient().rpc('check_delivery_eligibility', { p_business_slug: slug, p_location: { latitude: location.latitude, longitude: location.longitude, accuracy: location.accuracy, captured_at: location.capturedAtISO } });

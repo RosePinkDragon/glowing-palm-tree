@@ -102,6 +102,9 @@ SQL
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261115191726_owner_history.sql
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select bool_and(display_name='Owner') from public.business_memberships),'legacy memberships receive safe trusted default')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
@@ -117,5 +120,6 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Owner history, database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'
