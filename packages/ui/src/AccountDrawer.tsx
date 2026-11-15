@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, Animated, findNodeHandle, Modal, Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import type { useMarket } from './useMarket';
 import { MarketButton, MarketText } from './components';
-import { CustomerHistory } from './CustomerOrders';
+import { CustomerHistory, type ReorderAction } from './CustomerOrders';
 import { useMarketTheme } from './theme';
 
 type Market = ReturnType<typeof useMarket>;
-export function AccountDrawer({ open, close, market, go, signOut }: { open: boolean; close: (restore?: boolean) => void; market: Market; go: (path: string) => void; signOut: () => Promise<void> }) {
+export function AccountDrawer({ open, close, market, go, signOut, onReorder, covered }: { open: boolean; close: (restore?: boolean) => void; market: Market; go: (path: string) => void; signOut: () => Promise<void>; onReorder: ReorderAction; covered: boolean }) {
   const { colors, name, businessId } = useMarketTheme(); const { width } = useWindowDimensions();
   const translate = useRef(new Animated.Value(width)).current;
   const panel = useRef<ComponentRef<typeof ScrollView>>(null), title = useRef<ComponentRef<typeof Text>>(null);
@@ -17,7 +17,7 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
   const navigate = (path: string) => { setOptions(false); close(false); go(path); };
   useEffect(() => { if (!open) { setOptions(false); setError(''); } }, [open]);
   useEffect(() => {
-    if (!open || Platform.OS !== 'web') return;
+    if (!open || covered || Platform.OS !== 'web') return;
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Tab') return;
       const element = panel.current?.getScrollableNode() as unknown as HTMLElement | null;
@@ -29,7 +29,7 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
     const back = () => close(false);
     document.addEventListener('keydown', keydown); window.addEventListener('popstate', back);
     return () => { document.removeEventListener('keydown', keydown); window.removeEventListener('popstate', back); };
-  }, [open, options, close]);
+  }, [open, options, close, covered]);
   const dismiss = () => {
     if (!options) { close(); return; }
     setOptions(false);
@@ -50,7 +50,7 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
     <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}>
       <Pressable accessible={false} importantForAccessibility="no" onPress={() => close()} style={{ position: 'absolute', inset: 0 }} />
       <Animated.View style={{ width: Math.min(width - 20, 430), height: '100%', backgroundColor: colors.background, transform: [{ translateX: translate }] }}>
-        <ScrollView ref={panel} accessibilityViewIsModal keyboardShouldPersistTaps="handled" scrollEventThrottle={150} onScroll={({ nativeEvent: { contentOffset, layoutMeasurement, contentSize } }) => { if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 180 && !market.olderOrdersError) void market.loadOlderOrders(); }} contentContainerStyle={{ paddingBottom: 30, gap: 24 }}>
+        <ScrollView ref={panel} accessibilityViewIsModal={!covered} accessibilityElementsHidden={covered} importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'} keyboardShouldPersistTaps="handled" scrollEventThrottle={150} onScroll={({ nativeEvent: { contentOffset, layoutMeasurement, contentSize } }) => { if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 180 && !market.olderOrdersError) void market.loadOlderOrders(); }} contentContainerStyle={{ paddingBottom: 30, gap: 24 }}>
           <View style={{ padding: 24, gap: 18, backgroundColor: colors.primary }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => close()} style={{ minHeight: 48, minWidth: 48, justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>×</Text></Pressable>
@@ -68,7 +68,7 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
             <MarketButton label="Account settings" variant="secondary" onPress={() => navigate('/account')} />
             <MarketButton label="Your orders" variant="secondary" onPress={() => navigate('/orders')} />
             {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
-            <CustomerHistory market={market} go={navigate} />
+            <CustomerHistory market={market} go={navigate} onReorder={onReorder} />
             <MarketButton label={busy ? 'Logging out…' : 'Log out'} variant="secondary" disabled={busy} onPress={() => void logout()} />
             <MarketText variant="muted">{name}</MarketText>
             <MarketButton label="Browse menu" variant="secondary" onPress={() => navigate('/')} />

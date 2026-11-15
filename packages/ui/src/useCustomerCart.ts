@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { BusinessSlug, CartLine, DeliveryDetails, LocationFix, MenuItem, Order } from '@market/core';
-import { cartKey, CustomerCartStore, importCart, reconcileCart, type CartLock } from './cart-state';
+import { cartKey, CartReviewRequiredError, CustomerCartStore, importCart, reconcileCart, type CartLock } from './cart-state';
 
 const emptyDetails = { name: '', phone: '', addressLine: '' };
 
@@ -14,6 +14,12 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     return new CustomerCartStore(businessId, AsyncStorage, lock);
   }, [businessId]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const currentIdentity = useRef({ userId, identityVersion, authReady });
+  currentIdentity.current = { userId, identityVersion, authReady };
+  const [freshCatalog, setFreshCatalog] = useState<{ base: MenuItem[]; menu: MenuItem[]; identityVersion: number; userId: string | null } | null>(null);
+  // Adopt the menu used for a persisted reorder until the ordinary catalog is reloaded.
+  // Reading or cancelling a reorder must not reconcile an existing draft as a side effect.
+  const activeMenu = freshCatalog?.base === menu && freshCatalog.identityVersion === identityVersion && freshCatalog.userId === userId ? freshCatalog.menu : menu;
   const previousIdentity = useRef({ userId, identityVersion });
   const leavingIdentity = previousIdentity.current.userId !== null && (previousIdentity.current.userId !== userId || previousIdentity.current.identityVersion !== identityVersion);
   const [details, setDetails] = useState<DeliveryDetails>(emptyDetails);
@@ -37,31 +43,47 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
   }, [store, businessId]);
 
   const ready = authReady && catalogReady && !leavingIdentity && snapshot.ready && snapshot.ownerId === userId;
-  const cart = useMemo(() => ready ? reconcileCart(snapshot.lines, menu, businessId) : [], [ready, snapshot.lines, menu, businessId]);
+  const cart = useMemo(() => ready ? reconcileCart(snapshot.lines, activeMenu, businessId) : [], [ready, snapshot.lines, activeMenu, businessId]);
   const reconciled = useRef<{ store: CustomerCartStore; menu: MenuItem[] } | null>(null);
   useEffect(() => {
-    if (ready && !snapshot.saving && !snapshot.error && (reconciled.current?.store !== store || reconciled.current.menu !== menu)) {
+    if (ready && !snapshot.saving && !snapshot.error && (reconciled.current?.store !== store || reconciled.current.menu !== activeMenu)) {
       // Reconcile once per loaded catalog, not on every other tab's storage event:
       // an older tab must not continually write its cached menu over a newer tab.
-      reconciled.current = { store, menu };
+      reconciled.current = { store, menu: activeMenu };
       if (JSON.stringify(cart) === JSON.stringify(snapshot.lines)) return;
-      void store.change(lines => reconcileCart(lines, menu, businessId)).catch(() => {});
+      void store.change(lines => reconcileCart(lines, activeMenu, businessId)).catch(() => {});
     }
-  }, [ready, snapshot, cart, menu, businessId, store]);
+  }, [ready, snapshot, cart, activeMenu, businessId, store]);
 
   const changeCart = useCallback((update: (lines: CartLine[]) => CartLine[]) => {
     if (!authReady || !catalogReady || snapshot.ownerId !== userId) return Promise.reject(new Error('Wait for your cart and menu to load.'));
-    return store.change(lines => update(reconcileCart(lines, menu, businessId)));
-  }, [store, menu, businessId, authReady, catalogReady, snapshot.ownerId, userId]);
+    return store.change(lines => update(reconcileCart(lines, activeMenu, businessId)));
+  }, [store, activeMenu, businessId, authReady, catalogReady, snapshot.ownerId, userId]);
   const setCart = useCallback((lines: CartLine[]) => changeCart(() => lines), [changeCart]);
-  const importLines = useCallback((lines: CartLine[], mode: 'add' | 'replace') => changeCart(current => reconcileCart(importCart(current, lines, mode, businessId), menu, businessId)), [changeCart, menu, businessId]);
+  const importLines = useCallback(async (lines: CartLine[], mode: 'add' | 'replace', options: { menu: MenuItem[]; expectedRevision: number; onlyIfEmpty?: boolean; validate: () => void }) => {
+    const started = currentIdentity.current;
+    const validate = () => {
+      const now = currentIdentity.current;
+      if (!now.authReady || now.userId !== started.userId || now.identityVersion !== started.identityVersion || !started.userId) throw new Error('Your account changed. Nothing was added by this reorder.');
+      options.validate();
+    };
+    validate();
+    const applied = await store.change(current => {
+      validate();
+      if (options.onlyIfEmpty && current.length) throw new CartReviewRequiredError();
+      return importCart(reconcileCart(current, options.menu, businessId), lines, mode, businessId);
+    }, options.expectedRevision);
+    validate();
+    if (!applied) throw new Error('Your cart or account changed. Review it before reordering.');
+    setFreshCatalog({ base: menu, menu: options.menu, identityVersion: started.identityVersion, userId: started.userId });
+  }, [store, menu, businessId]);
   const clearForSignOut = () => {
     setReceiptState({ userId: null, order: null }); setDetails(emptyDetails); setLocation(null); setEligible(false);
     // Do not hold signing out hostage to storage or a lock in another window.
     void store.reset().catch(() => {});
   };
   return {
-    cart, setCart, changeCart, importLines, ready, saving: snapshot.saving, cartError: snapshot.error,
+    cart, menu: activeMenu, setCart, changeCart, importLines, ready, saving: snapshot.saving, cartError: snapshot.error,
     retryCart: store.refresh, resetCart: store.reset, clearForSignOut,
     details: leavingIdentity ? emptyDetails : details, setDetails,
     location: leavingIdentity ? null : location, setLocation, eligible: !leavingIdentity && eligible, setEligible,

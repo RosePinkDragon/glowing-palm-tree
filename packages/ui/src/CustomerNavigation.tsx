@@ -9,6 +9,7 @@ import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { AccountDrawer } from './AccountDrawer';
 import { useMarketTheme } from './theme';
 import type { useMarket } from './useMarket';
+import type { ReorderAction } from './CustomerOrders';
 
 export type CustomerScreen = 'Menu' | 'Cart' | 'Orders' | 'Order' | 'Account' | 'Login' | 'Help' | 'Profile' | 'Addresses' | 'Notifications';
 type Routes = { Menu: undefined; Cart: undefined; Orders: undefined; Order: { id: string }; Account: undefined; Help: undefined; Profile: undefined; Addresses: undefined; Notifications: undefined; Login: { next?: string } | undefined; NotFound: undefined };
@@ -50,7 +51,7 @@ function AccountControl({ onPress }: { onPress: (node: ComponentRef<typeof Press
   return <Pressable ref={button} accessibilityRole="button" accessibilityLabel="Account" onPress={() => onPress(button.current)} style={{ minHeight: 48, paddingHorizontal: 18, justifyContent: 'center' }}><Text style={{ color: colors.primary, fontWeight: '700' }}>Account</Text></Pressable>;
 }
 
-export function CustomerNavigation({ market, render, controls, cartCount, signOut }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void> }) {
+export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean }) {
   const navigation = useNavigationContainerRef<Routes>();
   const { colors, name } = useMarketTheme();
   const nativeOpener = useRef<ComponentRef<typeof Pressable> | null>(null);
@@ -59,7 +60,7 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
   const closeDrawer = (restore = true) => { setDrawer(false); if (!restore) return; if (Platform.OS === 'web') restorePanelFocus(opener.current); else setTimeout(() => { const handle = findNodeHandle(nativeOpener.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }, 0); };
   useEffect(() => { setDrawer(false); }, [market.identityVersion]);
   controls.current = {
-    go(path) { if (navigation.isReady()) { const next = destination(path); const existing = navigation.getRootState()?.routes.some(route => route.name === next.name && (next.name !== 'Order' || (route.params as { id?: string } | undefined)?.id === next.params?.id)); navigation.dispatch(existing ? StackActions.popTo(next.name, next.params) : CommonActions.navigate(next.name, next.params)); } },
+    go(path) { setDrawer(false); if (navigation.isReady()) { const next = destination(path); const existing = navigation.getRootState()?.routes.some(route => route.name === next.name && (next.name !== 'Order' || (route.params as { id?: string } | undefined)?.id === next.params?.id)); navigation.dispatch(existing ? StackActions.popTo(next.name, next.params) : CommonActions.navigate(next.name, next.params)); } },
     login(next) { if (navigation.isReady()) navigation.navigate('Login', { next }); }
   };
   useEffect(() => {
@@ -93,6 +94,6 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
     </NavigationContainer>
     {cartCount ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
     </View>
-    <AccountDrawer open={drawer} close={closeDrawer} market={market} go={path => controls.current?.go(path)} signOut={signOut} />
+    <AccountDrawer open={drawer} close={closeDrawer} market={market} go={path => controls.current?.go(path)} signOut={signOut} onReorder={onReorder} covered={reorderOpen} />
   </Content.Provider></SafeAreaProvider>;
 }

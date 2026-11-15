@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { menuItem } from '../../../tests/fixtures/menu.ts';
-import { addCartItem, type BusinessSlug, type MenuItem } from '@market/core';
-import { cartKey, CustomerCartStore, importCart, readCart, reconcileCart, type CartStorage } from './cart-state.ts';
+import { addCartItem, type BusinessSlug, type MenuItem, type Order } from '@market/core';
+import { cartKey, CartReviewRequiredError, CustomerCartStore, importCart, prepareReorder, readCart, reconcileCart, type CartStorage } from './cart-state.ts';
 import { attemptKey, freezeAttempt } from './checkout-state.ts';
 
 const business: BusinessSlug = 'ammu-sammu';
@@ -191,4 +191,78 @@ test('cart revisions distinguish a fulfilled cart from an identical later draft'
   const second = readCart(await storage.getItem(cartKey(business)), business)!;
   assert.deepEqual(second.lines, first.lines);
   assert.ok(second.revision > first.revision);
+});
+
+const pastOrder = (overrides: Partial<Order> = {}): Order => ({ id: 'past', businessId: business, version: 1, status: 'delivered', createdAtISO: '2026-11-15T00:00:00Z', delivery: { name: 'Synthetic', phone: '9000000000', addressLine: 'Synthetic address' }, subtotalPaise: 20000, deliveryFeePaise: 0, totalPaise: 20000, lines: [{ menuItemId: item.id, name: 'Old name', quantity: 2, unitPricePaise: 10000, lineTotalPaise: 20000 }], ...overrides });
+
+test('reorder uses fresh same-restaurant dishes and original quantities, names skipped dishes and never edits the receipt', () => {
+  const order = pastOrder();
+  order.lines.push({ ...order.lines[0], menuItemId: 'missing', name: 'Removed dish' }, { ...order.lines[0], menuItemId: 'sold-out', name: 'Sold out dish' }, { ...order.lines[0], menuItemId: 'foreign', name: 'Other restaurant' });
+  const frozen = JSON.stringify(order);
+  const fresh = { ...item, name: 'Fresh name', pricePaise: 17500 };
+  const result = prepareReorder(order, [fresh, { ...item, id: 'sold-out', isAvailable: false }, { ...item, id: 'foreign', businessId: 'kokani-dine-inn' }], business);
+  assert.deepEqual(result.lines, [{ item: fresh, quantity: 2 }]);
+  assert.deepEqual(result.skipped, ['Removed dish', 'Sold out dish', 'Other restaurant']);
+  assert.equal(JSON.stringify(order), frozen);
+  assert.deepEqual(prepareReorder(pastOrder({ status: 'cancelled' }), [], business).lines, []);
+  assert.throws(() => prepareReorder(pastOrder({ status: 'preparing' }), [fresh], business), /delivered or cancelled/);
+  assert.throws(() => prepareReorder(pastOrder({ businessId: 'kokani-dine-inn' }), [fresh], business), /this restaurant/);
+});
+
+test('a reorder choice binds the latest locked cart revision, including an initially empty cart changed in another tab', async () => {
+  const storage = memory(), a = new CustomerCartStore(business, storage), b = new CustomerCartStore(business, storage);
+  await a.setIdentity('a'); await b.setIdentity('a');
+  const empty = readCart(await storage.getItem(cartKey(business)), business)!;
+  await b.change(() => [line]);
+  const before = await storage.getItem(cartKey(business));
+  await assert.rejects(a.change(current => importCart(current, [line], 'replace', business), empty.revision), CartReviewRequiredError);
+  assert.equal(await storage.getItem(cartKey(business)), before);
+  assert.equal(a.getSnapshot().error, '', 'a changed choice does not poison storage');
+  const current = readCart(before, business)!;
+  await a.change(lines => importCart(lines, [{ ...line, quantity: 2 }], 'add', business), current.revision);
+  assert.equal(readCart(await storage.getItem(cartKey(business)), business)?.lines[0].quantity, 3);
+  const chosen = readCart(await storage.getItem(cartKey(business)), business)!;
+  await b.change(lines => lines);
+  await assert.rejects(a.change(() => [line], chosen.revision), CartReviewRequiredError, 'an identical later draft still requires fresh review');
+});
+
+test('reorder add limits reject the entire mutation while replace remains available', async () => {
+  const storage = memory(), store = new CustomerCartStore(business, storage);
+  await store.setIdentity('a'); await store.change(() => [{ ...line, quantity: 9 }]);
+  let before = await storage.getItem(cartKey(business));
+  await assert.rejects(store.change(current => importCart(current, [{ ...line, quantity: 2 }], 'add', business)), /1 to 10/);
+  assert.equal(await storage.getItem(cartKey(business)), before);
+  assert.equal(store.getSnapshot().error, '');
+  await store.change(current => importCart(current, [{ ...line, quantity: 2 }], 'replace', business));
+  assert.equal(store.getSnapshot().lines[0].quantity, 2);
+  const full = Array.from({ length: 20 }, (_, n) => ({ item: { ...item, id: `dish-${n}` }, quantity: 1 }));
+  await store.change(() => full); before = await storage.getItem(cartKey(business));
+  await assert.rejects(store.change(current => importCart(current, [line], 'add', business)), /20 distinct/);
+  assert.equal(await storage.getItem(cartKey(business)), before);
+  await store.change(current => importCart(current, [line], 'replace', business));
+  assert.deepEqual(store.getSnapshot().lines, [line]);
+});
+
+test('reorder storage failure preserves both the draft and the frozen checkout record', async () => {
+  const storage = memory(); let fail = false;
+  const store = new CustomerCartStore(business, { ...storage, async setItem(key, value) { if (fail) throw new Error('quota'); await storage.setItem(key, value); } });
+  await store.setIdentity('a'); await store.change(() => [line]);
+  await storage.setItem(attemptKey(business), 'unchanged submitted snapshot and key');
+  const before = await storage.getItem(cartKey(business)); fail = true;
+  await assert.rejects(store.change(current => importCart(current, [{ ...line, quantity: 3 }], 'replace', business)), /quota/);
+  assert.equal(await storage.getItem(cartKey(business)), before);
+  assert.equal(await storage.getItem(attemptKey(business)), 'unchanged submitted snapshot and key');
+  assert.deepEqual(store.getSnapshot().lines, [line]);
+});
+
+test('an identity switch queued before reorder acquires the lock never applies its old choice', async () => {
+  const storage = memory(), held = deferred<void>(); let hold = false;
+  const store = new CustomerCartStore(business, storage, async (_key, work) => { if (hold) { hold = false; await held.promise; } return work(); });
+  await store.setIdentity('a');
+  hold = true; let applied = false;
+  const saving = store.change(() => { applied = true; return [line]; }); await tick();
+  const switched = store.setIdentity('b'); held.resolve();
+  assert.equal(await saving, false); await switched;
+  assert.equal(applied, false); assert.deepEqual(store.getSnapshot().lines, []);
+  assert.equal(store.getSnapshot().ownerId, 'b');
 });
