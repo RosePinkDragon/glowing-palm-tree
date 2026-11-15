@@ -148,6 +148,7 @@ try {
       failPatch = true; await toggle('Veg thali').click();
       await page.getByText(/Could not switch off Veg thali: .*Fixture availability failure/).waitFor();
       await eventually(async () => await toggle('Veg thali').isChecked());
+      await text('Not saved. Veg thali is still available.').waitFor(); // beside the switch, not only at the top
       assert.deepEqual(patches[1].values, { available: false }); assert.equal(dishes.find(row => row.name === 'Veg thali').available, true);
       await toggle('Fish thali').click(); await text('Fish thali is available to order.').waitFor();
       assert.deepEqual(patches[2].values, { available: true });
@@ -239,6 +240,7 @@ try {
       await add.getByLabel('Dish name', { exact: true }).fill('Prawn thali'); await add.getByLabel('Price in rupees', { exact: true }).fill('410');
       await add.getByRole('button', { name: 'Category: not chosen', exact: true }).click(); await add.getByRole('button', { name: 'Thalis', exact: true }).click();
       await button('Save dish').click(); await add.getByText('Choose a diet classification.', { exact: true }).waitFor();
+      await add.getByText('Check the highlighted fields above.', { exact: true }).waitFor(); // next to Save
       assert.equal(posts.length, 0);
       await add.getByRole('button', { name: 'Contains egg', exact: true }).focus(); await page.keyboard.press('Space');
       await eventually(async () => await add.getByRole('button', { name: 'Contains egg', exact: true }).getAttribute('aria-pressed') === 'true');

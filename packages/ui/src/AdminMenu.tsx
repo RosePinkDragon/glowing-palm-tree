@@ -5,7 +5,7 @@ import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
 import { useMarketTheme } from './theme';
-import { applyCategoryOrder, applyItemOrder, dragTarget, featuredLabel, menuSections, moveId, nextCategoryOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems } from './menu-model';
+import { applyCategoryOrder, applyItemOrder, dragTarget, featuredLabel, menuSections, moveId, nextCategoryOrder, sectionSummary, sortCategories, sortMenuItems } from './menu-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { DishEditor, switchColors } from './DishEditor';
 
@@ -33,6 +33,7 @@ export function AdminMenu({ services, showHeader = true, onAddDishChange }: { se
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState('');
+  const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
   const [status, setStatus] = useState('');
   const [query, setQuery] = useState('');
   const pendingRef = useRef(new Map<string, boolean>());
@@ -90,17 +91,21 @@ export function AdminMenu({ services, showHeader = true, onAddDishChange }: { se
   const toggleAvailability = async (item: MenuItem, next: boolean) => {
     if (pendingRef.current.has(item.id)) return;
     pendingRef.current.set(item.id, next); setPending(new Set(pendingRef.current.keys()));
-    setNotice(''); setStatus('');
+    setNotice(''); setStatus(''); setRowError(null);
     setItems(current => current.map(entry => entry.id === item.id ? { ...entry, isAvailable: next } : entry));
     try {
       const updated = await services.setMenuItemAvailability(item.id, next);
       pendingRef.current.delete(item.id);
-      setItems(current => replaceMenuItem(current, updated));
+      // Only availability: a late response must not undo a reorder made meanwhile.
+      setItems(current => current.map(entry => entry.id === updated.id ? { ...entry, isAvailable: updated.isAvailable } : entry));
+      setRowError(current => current?.id === item.id ? null : current);
       setStatus(updated.isAvailable ? `${updated.name} is available to order.` : `${updated.name} now shows as currently unavailable.`);
     } catch (e) {
       pendingRef.current.delete(item.id);
       setItems(current => current.map(entry => entry.id === item.id ? { ...entry, isAvailable: item.isAvailable } : entry));
       setNotice(`Could not ${next ? 'switch on' : 'switch off'} ${item.name}: ${message(e)} Showing the saved menu again.`);
+      // Also explain beside the switch, which may be far below the notice.
+      setRowError({ id: item.id, text: `Not saved. ${item.name} is still ${item.isAvailable ? 'available' : 'unavailable'}.` });
       void load();
     } finally { setPending(new Set(pendingRef.current.keys())); }
   };
@@ -198,7 +203,7 @@ export function AdminMenu({ services, showHeader = true, onAddDishChange }: { se
           {shown.map((id, index) => {
             const item = section.items.find(entry => entry.id === id)!;
             const position = ids.indexOf(id);
-            return <DishRow key={id} item={item} feature={feature} first={index === 0} isFirst={position === 0} isLast={position === ids.length - 1}
+            return <DishRow key={id} item={item} error={rowError?.id === item.id ? rowError.text : undefined} feature={feature} first={index === 0} isFirst={position === 0} isLast={position === ids.length - 1}
               offset={active?.id === id ? active.dy - (target - active.start) * active.height : null}
               canArrange={canArrange} arranging={arrangeId === id} switchDisabled={demo || pending.has(id)} editDisabled={demo || !!drag}
               onLayout={height => rowHeights.current.set(id, height)}
@@ -255,7 +260,8 @@ export function AddDishButton({ action }: { action: AdminMenuAddDish }) {
   </Pressable>;
 }
 
-function DishRow({ item, feature, first, isFirst, isLast, offset, canArrange, arranging, switchDisabled, editDisabled, onLayout, onArrange, onMove, onToggle, onEdit, onDragStart, onDragMove, onDragEnd }: {
+function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArrange, arranging, switchDisabled, editDisabled, onLayout, onArrange, onMove, onToggle, onEdit, onDragStart, onDragMove, onDragEnd }: {
+  error?: string;
   item: MenuItem; feature: string; first: boolean; isFirst: boolean; isLast: boolean; offset: number | null; canArrange: boolean; arranging: boolean; switchDisabled: boolean; editDisabled: boolean;
   onLayout: (height: number) => void; onArrange: () => void; onMove: (delta: -1 | 1) => void; onToggle: (value: boolean) => void; onEdit: () => void;
   onDragStart: () => void; onDragMove: (dy: number) => void; onDragEnd: (dy: number, commit: boolean) => void;
@@ -310,6 +316,7 @@ function DishRow({ item, feature, first, isFirst, isLast, offset, canArrange, ar
       </Pressable>
       <Switch accessibilityLabel={`Available: ${item.name}`} value={item.isAvailable} disabled={switchDisabled} onValueChange={onToggle} {...switchColors} />
     </View>
+    {error ? <Text accessibilityRole="alert" style={{ paddingHorizontal: 12, paddingBottom: 10, color: colors.danger, fontSize: 14, fontWeight: '700' }}>{error}</Text> : null}
     {arranging ? <View style={{ flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
       <SmallButton nativeID={`move-${item.id}-up`} label="↑ Move up" accessibilityLabel={`Move ${item.name} up`} disabled={!canArrange || isFirst} onPress={() => onMove(-1)} />
       <SmallButton nativeID={`move-${item.id}-down`} label="↓ Move down" accessibilityLabel={`Move ${item.name} down`} disabled={!canArrange || isLast} onPress={() => onMove(1)} />

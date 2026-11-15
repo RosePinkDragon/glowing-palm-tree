@@ -67,10 +67,14 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   const fieldError = (text?: string) => text ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{text}</Text> : null;
   const box = { minHeight: 48, borderWidth: 1, borderRadius: 12, backgroundColor: colors.surface, paddingHorizontal: 14 } as const;
   return <AccessiblePanel fullScreen title={item ? 'Edit dish' : 'Add dish'} closeDisabled={!!busy} onClose={() => { if (!busy) onClose(); }}
-    footer={<MarketButton label={busy === 'save' ? 'Saving…' : item ? 'Save changes' : 'Save dish'} disabled={!!busy || demo} onPress={() => void save()} />}>
+    // Errors sit beside Save: the form is taller than a phone screen.
+    footer={<>
+      {error ? <MarketStatus kind="error" title="Could not save dish" message={error} action={<MarketButton label="Reload menu" variant="secondary" disabled={!!busy} onPress={() => void reload()} />} /> : null}
+      {validation && Object.keys(errors).length ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>Check the highlighted fields above.</Text> : null}
+      <MarketButton label={busy === 'save' ? 'Saving…' : item ? 'Save changes' : 'Save dish'} disabled={!!busy || demo} onPress={() => void save()} />
+    </>}>
     {demo ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
     <View role="status" aria-live="polite">{note ? <MarketText>{note}</MarketText> : null}</View>
-    {error ? <MarketStatus kind="error" title="Could not save dish" message={error} action={<MarketButton label="Reload menu" variant="secondary" disabled={!!busy} onPress={() => void reload()} />} /> : null}
 
     <View style={{ height: 180, borderRadius: 16, overflow: 'hidden', backgroundColor: colors.tint }}>
       {photo && failedPhoto !== photo
