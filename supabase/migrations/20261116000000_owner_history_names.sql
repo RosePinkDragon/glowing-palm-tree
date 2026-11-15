@@ -2,11 +2,13 @@
 --
 -- Each restaurant membership carries its own display name. Existing and future
 -- memberships created without one read "Owner"; trusted setup (service role)
--- sets real names with an ordinary UPDATE, validated by the constraint below.
+-- sets real names with an ordinary UPDATE. Names exclude control, invisible
+-- spacing and bidi-override characters (ZWJ/ZWNJ stay allowed for Marathi).
 -- Private customer profiles are never read or joined.
 alter table public.business_memberships add column display_name text not null default 'Owner';
 alter table public.business_memberships add constraint membership_display_name_valid check (
-  display_name = btrim(display_name) and char_length(display_name) between 1 and 60 and display_name !~ '[[:cntrl:]]');
+  display_name = btrim(display_name) and char_length(display_name) between 1 and 60
+  and display_name !~ '[[:cntrl:]\u00A0\u00AD\u2000-\u200B\u200E\u200F\u2028-\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]');
 
 -- Snapshots live beside, not inside, order_status_history: customers can read
 -- their own history rows, and RLS cannot hide individual columns per audience.
@@ -17,7 +19,8 @@ create table public.order_status_actors (
   business_id uuid not null references public.businesses(id) on delete cascade,
   actor_id uuid,
   actor_name text not null constraint order_status_actor_name_valid check (
-    actor_name = btrim(actor_name) and char_length(actor_name) between 1 and 60 and actor_name !~ '[[:cntrl:]]')
+    actor_name = btrim(actor_name) and char_length(actor_name) between 1 and 60
+    and actor_name !~ '[[:cntrl:]\u00A0\u00AD\u2000-\u200B\u200E\u200F\u2028-\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]')
 );
 create index order_status_actors_actor_idx on public.order_status_actors(actor_id) where actor_id is not null;
 alter table public.order_status_actors enable row level security;
@@ -69,16 +72,24 @@ end $$;
 revoke all on function public.transition_order(uuid,text,integer) from public, anon, authenticated;
 grant execute on function public.transition_order(uuid,text,integer) to authenticated;
 
--- Redaction path for account deletion (#51): call before deleting the account.
--- Replaces every snapshot made by that account with "Former owner" and drops
--- the identifier. Returns the number of history steps redacted.
+-- Redaction path for account deletion (#51). Remove the account's memberships
+-- first (or in the same transaction), so no later transition snapshots the
+-- name again. Replaces that account's snapshots with "Former owner" and clears
+-- its id from those owner steps (snapshot and history changed_by). Returns the
+-- number of history steps redacted. Checkout ("placed") steps and orders
+-- placed by the account as a customer remain #51's responsibility.
 create function public.redact_owner_history_names(p_user_id uuid) returns integer
 language plpgsql security definer set search_path = '' as $$
 declare redacted integer;
 begin
   if p_user_id is null then raise exception 'account required' using errcode='22004'; end if;
-  update public.order_status_actors set actor_name='Former owner', actor_id=null where actor_id=p_user_id;
-  get diagnostics redacted = row_count;
+  -- Both data-modifying statements always run, even though only steps is counted.
+  with steps as (
+    update public.order_status_actors set actor_name='Former owner', actor_id=null where actor_id=p_user_id returning history_id
+  ), cleared as (
+    update public.order_status_history h set changed_by=null from steps where h.id=steps.history_id and h.changed_by=p_user_id returning h.id
+  )
+  select count(*) into redacted from steps;
   return redacted;
 end $$;
 revoke all on function public.redact_owner_history_names(uuid) from public, anon, authenticated;

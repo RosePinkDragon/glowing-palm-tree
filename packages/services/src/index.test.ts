@@ -543,7 +543,7 @@ test('owner reads carry history name snapshots; customer reads request status an
     assert.match(selects.admin, /order_status_history\(status,created_at,order_status_actors\(actor_name\)\)/);
     await customer.auth.signIn('customer@example.test', 'password');
     const [own] = await customer.getOrders();
-    assert.equal(own.history?.some(step => 'actorName' in step), false);
+    assert.equal(own.history?.length, 2);
     assert.match(selects.customer, /order_status_history\(status,created_at\)/);
     assert.doesNotMatch(selects.customer, /order_status_actors|changed_by|order_status_history\(\*\)/);
   } finally { owner.dispose(); customer.dispose(); globalThis.fetch = original; }

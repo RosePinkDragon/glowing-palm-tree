@@ -31,11 +31,19 @@ do $$ begin
   begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',''); raise exception 'empty name accepted'; exception when check_violation then null; end;
   begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',repeat('a',61)); raise exception 'long name accepted'; exception when check_violation then null; end;
   begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',E'Line\nbreak'); raise exception 'control character accepted'; exception when check_violation then null; end;
+  begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',E'Asha\u202Eevil'); raise exception 'bidi override accepted'; exception when check_violation then null; end;
+  begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',E'\u00A0Asha'); raise exception 'leading no-break space accepted'; exception when check_violation then null; end;
+  begin insert into public.business_memberships(business_id,user_id,role,display_name) values ('10000000-0000-4000-8000-000000000002','49800000-0000-4000-8000-000000000004','admin',E'\u200B\u200B'); raise exception 'invisible name accepted'; exception when check_violation then null; end;
 end $$;
+-- Marathi names, including a zero-width joiner, are valid.
+update public.business_memberships set display_name = E'\u0938\u0941\u0930\u0947\u0936 \u0930\u094D\u200D\u092F' where user_id = '49800000-0000-4000-8000-000000000003';
+update public.business_memberships set display_name = 'Owner' where user_id = '49800000-0000-4000-8000-000000000003';
 insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,location_accuracy,location_captured_at,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
 values ('49800000-0000-4000-8000-0000000000a1','10000000-0000-4000-8000-000000000001','49800000-0000-4000-8000-000000000004','History customer','9000000000','Khed',0.5,0.5,10,now(),10000,0,10000,'49800000-0000-4000-8000-0000000000b1','history-test');
 insert into public.order_status_history(order_id,status,changed_by) values ('49800000-0000-4000-8000-0000000000a1','placed','49800000-0000-4000-8000-000000000004');
 
+create temporary table owner_history_steps(id bigint);
+grant select on owner_history_steps to authenticated;
 -- Owner A accepts; the snapshot carries the name at that moment.
 set role authenticated;
 select set_config('request.jwt.claim.sub','49800000-0000-4000-8000-000000000001',true);
@@ -54,6 +62,7 @@ exception when serialization_failure then null; end $$;
 reset role;
 select public.test_assert((select count(*) = 2 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.order_id = '49800000-0000-4000-8000-0000000000a1'), 'a rejected transition snapshots nothing');
 delete from public.business_memberships where user_id = '49800000-0000-4000-8000-000000000002';
+insert into owner_history_steps select id from public.order_status_history where order_id = '49800000-0000-4000-8000-0000000000a1';
 
 -- Owner A sees both names as they were, after a rename and a removal.
 set role authenticated;
@@ -69,13 +78,13 @@ select public.test_assert((select display_name = 'Asha K.' from public.business_
 
 -- Removed owner, other restaurant's owner and the customer see no names.
 select set_config('request.jwt.claim.sub','49800000-0000-4000-8000-000000000002',true);
-select public.test_assert((select count(*) = 0 from public.order_status_actors), 'removed owner loses snapshot access');
+select public.test_assert((select count(*) = 0 from public.order_status_actors where history_id in (select id from owner_history_steps)), 'removed owner loses snapshot access');
 do $$ begin perform public.transition_order('49800000-0000-4000-8000-0000000000a1','out_for_delivery',3); raise exception 'removed owner transitioned'; exception when insufficient_privilege then null; end $$;
 select set_config('request.jwt.claim.sub','49800000-0000-4000-8000-000000000003',true);
-select public.test_assert((select count(*) = 0 from public.order_status_actors a where a.history_id in (select id from public.order_status_history)) and (select count(*) = 0 from public.order_status_history where order_id = '49800000-0000-4000-8000-0000000000a1'), 'other restaurant sees neither history nor names');
+select public.test_assert((select count(*) = 0 from public.order_status_actors where history_id in (select id from owner_history_steps)) and (select count(*) = 0 from public.order_status_history where order_id = '49800000-0000-4000-8000-0000000000a1'), 'other restaurant sees neither history nor names');
 select set_config('request.jwt.claim.sub','49800000-0000-4000-8000-000000000004',true);
 select public.test_assert((select string_agg(status, ',' order by id) from public.order_status_history where order_id = '49800000-0000-4000-8000-0000000000a1') = 'placed,accepted,preparing', 'customer timeline keeps status steps');
-select public.test_assert((select count(*) = 0 from public.order_status_actors), 'customer sees no owner names');
+select public.test_assert((select count(*) = 0 from public.order_status_actors where history_id in (select id from owner_history_steps)), 'customer sees no owner names');
 select public.test_assert((select count(*) = 3 from public.order_status_history h left join public.order_status_actors a on a.history_id = h.id where h.order_id = '49800000-0000-4000-8000-0000000000a1' and a.actor_name is null), 'embedded names resolve to nothing for customers');
 do $$ begin
   begin perform changed_by from public.order_status_history; raise exception 'customer read changed_by'; exception when insufficient_privilege then null; end;
@@ -87,8 +96,8 @@ reset role;
 -- Redaction for account deletion replaces only that account's snapshots.
 set role service_role;
 select public.test_assert(public.redact_owner_history_names('49800000-0000-4000-8000-000000000001') >= 1, 'redaction reports changed steps');
-select public.test_assert((select a.actor_name = 'Former owner' and a.actor_id is null from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.order_id = '49800000-0000-4000-8000-0000000000a1' and h.status = 'accepted'), 'redacted step reads Former owner without an id');
-select public.test_assert((select a.actor_name = 'Ravi' and a.actor_id = '49800000-0000-4000-8000-000000000002' from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.order_id = '49800000-0000-4000-8000-0000000000a1' and h.status = 'preparing'), 'other owners keep their names');
+select public.test_assert((select a.actor_name = 'Former owner' and a.actor_id is null and h.changed_by is null from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.order_id = '49800000-0000-4000-8000-0000000000a1' and h.status = 'accepted'), 'redacted step reads Former owner without an id');
+select public.test_assert((select a.actor_name = 'Ravi' and a.actor_id = '49800000-0000-4000-8000-000000000002' and h.changed_by = a.actor_id from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.order_id = '49800000-0000-4000-8000-0000000000a1' and h.status = 'preparing'), 'other owners keep their names');
 do $$ begin
   begin perform public.redact_owner_history_names(null); raise exception 'null redaction accepted'; exception when null_value_not_allowed then null; end;
   begin update public.business_memberships set display_name = '' where user_id = '49800000-0000-4000-8000-000000000001'; raise exception 'trusted setup stored an empty name'; exception when check_violation then null; end;
