@@ -210,6 +210,7 @@ const prepareCart = async (page, add = true) => {
   holdOrders = true;
   await second.getByRole('button', { name: 'Account', exact: true }).click();
   await second.getByRole('button', { name: 'Your orders', exact: true }).click();
+  await second.getByRole('dialog').waitFor({ state: 'hidden' });
   await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
   for (let i = 0; i < 50 && !orderHeld; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(orderHeld, true);
