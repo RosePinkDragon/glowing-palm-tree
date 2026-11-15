@@ -23,9 +23,7 @@ This repository's owner instructions override that reference: in particular, the
 and PR ownership here govern. No reference-specific labels or standing authorizations
 are imported. Load only relevant sections of `.codex/reference/project-context.md`.
 
-With Node 24, run `npm ci --ignore-scripts`, `npm run check:codex`, and
-`npm run test:codex`. The read-only CI workflow runs these commands on pushes and pull
-requests. The TOML and YAML parser-based validator checks syntax and the supported
-configuration structure, required roles, skill metadata and bodies, and context file.
-It rejects unknown configuration keys, fixed models, duplicate metadata keys, aliases,
-and non-string metadata. It does not establish runtime discovery or issue approval.
+The agent configuration and instructions are maintained directly in `.codex/`,
+`.agents/`, and `AGENTS.md`. Use the runtime discovery checks above when changing
+this setup. Application checks run through `npm run check`; there is no separate
+Codex configuration validator or CI workflow.
