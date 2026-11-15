@@ -12,6 +12,56 @@ for _ in {1..60}; do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'PostGIS did not become ready' >&2; exit 1; fi
+# Coordinate two live sessions rather than relying on a timed race. Redaction
+# must hold the identity FK lock until deletion commits, even for a new restaurant.
+owner_history_regrant_race() {
+  local race_log race_pid redaction_pid blocked=false ready=false
+  race_log=$(mktemp)
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into auth.users(id) values ('39800000-0000-4000-8000-000000000009')"
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<SQL &
+begin;
+set role service_role;
+select public.redact_owner_history('39800000-0000-4000-8000-000000000009');
+reset role;
+\! touch /tmp/owner-history-$db-locked
+\! while [ ! -f /tmp/owner-history-$db-release ]; do sleep 0.1; done
+delete from auth.users where id='39800000-0000-4000-8000-000000000009';
+commit;
+SQL
+  redaction_pid=$!
+  for _ in {1..100}; do
+    if docker exec "$container" test -f "/tmp/owner-history-$db-locked"; then ready=true; break; fi
+    sleep 0.1
+  done
+  if [[ "$ready" != true ]]; then
+    docker exec "$container" touch "/tmp/owner-history-$db-release"
+    wait "$redaction_pid" || true
+    rm -f "$race_log"
+    echo 'Redaction session did not acquire identity lock' >&2; return 1
+  fi
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >"$race_log" 2>&1 <<SQL &
+set application_name = 'owner-history-regrant-$db';
+set role service_role;
+insert into public.business_memberships(business_id,user_id,role,display_name)
+values ('10000000-0000-4000-8000-000000000002','39800000-0000-4000-8000-000000000009','admin','Concurrent owner');
+SQL
+  race_pid=$!
+  for _ in {1..100}; do
+    if [[ "$(docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select exists(select 1 from pg_stat_activity where application_name='owner-history-regrant-$db' and wait_event_type='Lock')")" == t ]]; then blocked=true; break; fi
+    if ! kill -0 "$race_pid" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  docker exec "$container" touch "/tmp/owner-history-$db-release"
+  wait "$redaction_pid" || { rm -f "$race_log"; echo 'Redaction/deletion transaction failed' >&2; return 1; }
+  if wait "$race_pid"; then
+    rm -f "$race_log"; echo 'Membership grant escaped the identity deletion lock' >&2; return 1
+  fi
+  if [[ "$blocked" != true ]] || ! rg -q 'foreign key constraint' "$race_log"; then
+    cat "$race_log" >&2; rm -f "$race_log"; echo 'Regrant did not wait for identity deletion and fail its FK' >&2; return 1
+  fi
+  rm -f "$race_log"
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert(not exists(select 1 from public.business_memberships where user_id='39800000-0000-4000-8000-000000000009'),'concurrent cross-business regrant cannot recreate a redacted identity')"
+}
 for db in fresh existing; do
   docker exec "$container" createdb -U postgres "$db"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/fixture.sql
@@ -105,6 +155,7 @@ SQL
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261115191726_owner_history.sql
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select bool_and(display_name='Owner') from public.business_memberships),'legacy memberships receive safe trusted default')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
+  owner_history_regrant_race
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
@@ -121,5 +172,6 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
+  owner_history_regrant_race
 done
 echo 'Owner history, database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'

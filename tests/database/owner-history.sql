@@ -21,7 +21,7 @@ select public.test_assert(not exists (select 1 from public.order_history_actors)
 select public.test_assert(not has_column_privilege('authenticated','public.order_status_history','changed_by','select'),'actor UUID is not customer-readable');
 select public.test_assert(not has_table_privilege('authenticated','public.order_history_actors','insert') and not has_table_privilege('authenticated','public.order_history_actors','update') and not has_table_privilege('authenticated','public.order_history_actors','delete'),'no direct actor writes');
 select public.test_assert(not has_function_privilege('authenticated','public.redact_owner_history(uuid)','execute') and not has_function_privilege('anon','public.redact_owner_history(uuid)','execute'),'redaction is trusted only');
-select public.test_assert(not has_schema_privilege('authenticated','owner_history_private','usage') and not has_function_privilege('authenticated','owner_history_private.capture_actor()','execute'),'capture function is private');
+select public.test_assert(not has_schema_privilege('authenticated','owner_history_private','usage') and not has_function_privilege('authenticated','owner_history_private.capture_actor()','execute') and not has_function_privilege('authenticated','owner_history_private.redact_identity(uuid)','execute'),'capture function is private');
 select public.test_assert(not exists (select 1 from pg_publication_tables where schemaname='public' and tablename in ('order_status_history','order_history_actors')),'actor data absent from realtime publications');
 create view public.owner_history_test_view with (security_invoker=true) as select * from public.order_history_actors;
 grant select on public.owner_history_test_view to authenticated;

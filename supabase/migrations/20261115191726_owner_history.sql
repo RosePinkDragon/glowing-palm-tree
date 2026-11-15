@@ -56,12 +56,13 @@ create trigger capture_owner_history after insert on public.order_status_history
   for each row execute function owner_history_private.capture_actor();
 
 -- Trusted deletion primitive for #51, deliberately unavailable to app clients.
--- Revoke sessions and remove memberships before calling, within the deletion
--- transaction; removing memberships serializes against transition_order's lock.
-create function public.redact_owner_history(p_user_id uuid) returns void
-language plpgsql security invoker set search_path = '' as $$
+-- Lock the identity even if memberships have already been removed. Its FK lock
+-- serializes new membership grants in every business with redaction/deletion.
+create function owner_history_private.redact_identity(p_user_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
 begin
   if p_user_id is null then raise exception 'identity required' using errcode = '22023'; end if;
+  perform 1 from auth.users where id = p_user_id for update;
   if exists (select 1 from public.business_memberships where user_id = p_user_id) then
     raise exception 'remove owner memberships before redaction' using errcode = '22023';
   end if;
@@ -69,5 +70,12 @@ begin
     where actor_user_id = p_user_id;
   update public.order_status_history set changed_by = null where changed_by = p_user_id;
 end $$;
+revoke all on function owner_history_private.redact_identity(uuid) from public, anon, authenticated;
+grant usage on schema owner_history_private to service_role;
+grant execute on function owner_history_private.redact_identity(uuid) to service_role;
+create function public.redact_owner_history(p_user_id uuid) returns void
+language sql security invoker set search_path = '' as $$
+  select owner_history_private.redact_identity(p_user_id)
+$$;
 revoke all on function public.redact_owner_history(uuid) from public, anon, authenticated;
 grant execute on function public.redact_owner_history(uuid) to service_role;
