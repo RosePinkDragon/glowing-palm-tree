@@ -1,4 +1,4 @@
-import type { BusinessSlug, MenuItem } from '@market/core';
+import { isDiet, type BusinessSlug, type Diet, type MenuItem } from '@market/core';
 
 export function featuredLabel(businessId: BusinessSlug, audience: 'admin' | 'customer'): string {
   return businessId === 'ammu-sammu' ? "Today's special" : audience === 'admin' ? 'Signature dish' : 'Signature dishes';
@@ -49,4 +49,50 @@ export function moveId(ids: readonly string[], id: string, to: number): string[]
 /** Replace one dish after a saved change without disturbing the rest of the list. */
 export function replaceMenuItem(items: readonly MenuItem[], updated: MenuItem): MenuItem[] {
   return items.map(item => item.id === updated.id ? updated : item);
+}
+
+const maxOrder = 2147483647;
+/** Saved dish position: an edit keeps its place; a new dish, or one moved to another category, joins the end. */
+export function dishSortOrder(items: readonly MenuItem[], categoryId: string, current?: MenuItem): number {
+  if (current && current.categoryId === categoryId) return current.sortOrder;
+  const orders = items.filter(item => item.categoryId === categoryId && item.id !== current?.id).map(item => item.sortOrder);
+  return orders.length ? Math.min(Math.max(...orders) + 1, maxOrder) : 0;
+}
+
+/** A new category is listed last. */
+export function nextCategoryOrder(categories: readonly { sortOrder: number }[]): number {
+  return categories.length ? Math.min(Math.max(...categories.map(category => category.sortOrder)) + 1, maxOrder) : 0;
+}
+
+/** Positions written by the reorder RPCs, applied locally while the save is in flight. */
+export function applyItemOrder(items: readonly MenuItem[], ids: readonly string[]): MenuItem[] {
+  return items.map(item => { const index = ids.indexOf(item.id); return index < 0 || item.sortOrder === index ? item : { ...item, sortOrder: index }; });
+}
+export function applyCategoryOrder<C extends { id: string; sortOrder: number }>(categories: readonly C[], ids: readonly string[]): C[] {
+  return categories.map(category => { const index = ids.indexOf(category.id); return index < 0 || category.sortOrder === index ? category : { ...category, sortOrder: index }; });
+}
+
+export function sectionSummary(total: number, unavailable: number): string {
+  return `${total} ${total === 1 ? 'dish' : 'dishes'}${unavailable ? ` · ${unavailable} off` : ''}`;
+}
+
+/** Row a dragged dish lands on: whole rows travelled, rounded, kept inside the list. */
+export function dragTarget(start: number, dy: number, rowHeight: number, count: number): number {
+  if (count < 1 || !(rowHeight > 0) || !Number.isFinite(dy)) return Math.max(0, Math.min(start, count - 1));
+  return Math.max(0, Math.min(count - 1, start + Math.round(dy / rowHeight)));
+}
+
+export type DishDraft = { id?: string; name: string; description: string; categoryId: string; price: string; diet: Diet | null; isAvailable: boolean; isFeatured: boolean; isDemo: boolean };
+export type DishDraftErrors = Partial<Record<'name' | 'category' | 'price' | 'description' | 'diet', string>>;
+/** Mirrors saveMenuItem's limits so the owner sees field messages before a request is sent. `price` is parseRupees(draft.price). */
+export function dishDraftErrors(draft: DishDraft, categoryIds: readonly string[], price: number | null): DishDraftErrors {
+  const errors: DishDraftErrors = {};
+  const name = draft.name.trim();
+  if (!name) errors.name = 'Enter a dish name.';
+  else if (name.length > 100) errors.name = 'Use up to 100 characters.';
+  if (!categoryIds.includes(draft.categoryId)) errors.category = 'Choose a category. Reload the menu if it is no longer available.';
+  if (price === null || price <= 0 || price > maxOrder) errors.price = 'Enter a positive amount up to 21,474,836.47 with up to two decimal places.';
+  if (draft.description.trim().length > 1000) errors.description = 'Use up to 1,000 characters.';
+  if (!draft.id && !isDiet(draft.diet)) errors.diet = 'Choose a diet classification.';
+  return errors;
 }

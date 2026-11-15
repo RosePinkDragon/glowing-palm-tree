@@ -1,204 +1,370 @@
-import { useEffect, useRef, useState } from 'react';
-import { Image, Platform, Pressable, Switch, Text, View } from 'react-native';
-import { dietLabels, formatINRFromPaise, type Diet, type MenuItem } from '@market/core';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Image, PanResponder, Platform, Pressable, Switch, Text, TextInput, View } from 'react-native';
+import { formatINRFromPaise, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
-import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
+import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
-import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
 import { useMarketTheme } from './theme';
-import { featuredLabel, parseItemOrder, sortCategories, sortMenuItems } from './menu-model';
-import { parseRupees, rupeesInput } from './admin-model';
+import { applyCategoryOrder, applyItemOrder, dragTarget, featuredLabel, menuSections, moveId, nextCategoryOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems } from './menu-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
+import { DishEditor, switchColors } from './DishEditor';
 
-type Draft = { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; price: string; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; order: string };
-const blank = (): Draft => ({ diet: null, name: '', description: '', categoryId: '', price: '', isAvailable: true, isDemo: false, isFeatured: false, order: '0' });
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
-export function AdminMenu({ services }: { services: MarketServices }) {
+const errorCode = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : '';
+const focusById = (id: string) => { if (Platform.OS === 'web' && typeof document !== 'undefined') setTimeout(() => document.getElementById(id)?.focus(), 0); };
+const webOnly = (style: object) => Platform.OS === 'web' ? style : {};
+
+/** Lets a surrounding header (the owners' app shell) show the "Add dish" action. */
+export type AdminMenuAddDish = { open: () => void; disabled: boolean };
+type CategoryPanel = { kind: 'list' } | { kind: 'edit'; category?: MenuCategory } | { kind: 'delete'; category: MenuCategory };
+type Drag = { id: string; categoryId: string; start: number; dy: number; height: number };
+
+/**
+ * Owners' Menu: search, category sections, availability switches, reorder by
+ * drag or Move up/down, and the Add/Edit dish editor. With `showHeader={false}`
+ * the caller renders the title and calls the action given to `onAddDishChange`.
+ */
+export function AdminMenu({ services, showHeader = true, onAddDishChange }: { services: MarketServices; showHeader?: boolean; onAddDishChange?: (action: AdminMenuAddDish) => void }) {
   const { colors, businessId } = useMarketTheme();
-  const featureLabel = featuredLabel(businessId, 'admin');
-  const trigger = useRef<HTMLElement | null>(null);
-  const closeDraft = () => { setDraft(null); restorePanelFocus(trigger.current); };
-  const closeRemove = () => { setRemove(null); restorePanelFocus(trigger.current); };
-  const [categories, setCategories] = useState<MenuCategory[]>([]);
-  const [categoryDraft, setCategoryDraft] = useState<{ id?: string; name: string; order: string } | null>(null);
-  const [removeCategory, setRemoveCategory] = useState<MenuCategory | null>(null);
-  const closeCategory = () => { setCategoryDraft(null); setRemoveCategory(null); restorePanelFocus(trigger.current); };
-  const [photoItem, setPhotoItem] = useState<MenuItem | null>(null);
-  const closePhoto = () => { setPhotoItem(null); restorePanelFocus(trigger.current); };
+  const feature = featuredLabel(businessId, 'admin');
+  const demo = services.mode === 'demo';
   const [items, setItems] = useState<MenuItem[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [remove, setRemove] = useState<MenuItem | null>(null);
-  const [error, setError] = useState('');
-  const [operationError, setOperationError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [validation, setValidation] = useState(false);
-  const load = async () => { setLoading(true); try { const [menu, groups] = await Promise.all([services.getMenu(), services.getCategories()]); setItems(menu); setCategories(sortCategories(groups)); setError(''); return true; } catch (e) { setError(message(e)); return false; } finally { setLoading(false); } };
-  useEffect(() => { void load(); }, [services]);
-  const save = async () => {
-    if (!draft) return;
-    const pricePaise = parseRupees(draft.price);
-    const sortOrder = parseItemOrder(draft.order);
-    if (sortOrder === null || (!draft.id && !draft.diet) || !draft.name.trim() || !categories.some(category => category.id === draft.categoryId) || pricePaise === null || pricePaise <= 0 || pricePaise > 2147483647) { setValidation(true); return; }
-    setBusy(true); setOperationError(''); setSuccess('');
-    try { await services.saveMenuItem({ diet: draft.diet, id: draft.id, name: draft.name.trim(), description: draft.description.trim(), categoryId: draft.categoryId, pricePaise, isAvailable: draft.isAvailable, isDemo: draft.isDemo, isFeatured: draft.isFeatured, sortOrder }); setSuccess('Item saved.'); await load(); closeDraft(); }
-    catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
+  const [loadError, setLoadError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [status, setStatus] = useState('');
+  const [query, setQuery] = useState('');
+  const pendingRef = useRef(new Map<string, boolean>());
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [reordering, setReordering] = useState(false);
+  const [arrangeId, setArrangeId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const lastDragEnd = useRef(0);
+  const rowHeights = useRef(new Map<string, number>());
+  const [editor, setEditor] = useState<{ item?: MenuItem } | null>(null);
+  const [panel, setPanel] = useState<CategoryPanel | null>(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const trigger = useRef<HTMLElement | null>(null);
+  const categoryTrigger = useRef<HTMLElement | null>(null);
+  const request = useRef(0);
+  const pendingFocus = useRef<string | null>(null);
+  dragRef.current = drag;
+
+  const load = useCallback(async () => {
+    const current = ++request.current;
+    setLoading(true);
+    try {
+      const [menu, groups] = await Promise.all([services.getMenu(), services.getCategories()]);
+      if (current === request.current) {
+        // A switch that is still saving keeps its new position until its own response arrives.
+        setItems(menu.map(item => pendingRef.current.has(item.id) ? { ...item, isAvailable: pendingRef.current.get(item.id)! } : item));
+        setCategories(sortCategories(groups)); setLoadError('');
+      }
+      return true;
+    } catch (e) { if (current === request.current) setLoadError(message(e)); return false; }
+    finally { if (current === request.current) setLoading(false); }
+  }, [services]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!reordering && pendingFocus.current) { focusById(pendingFocus.current); pendingFocus.current = null; } }, [reordering]);
+
+  const focusTop = () => focusById(showHeader ? 'admin-menu-heading' : 'admin-menu-search');
+  // Background reloads keep Add dish enabled (no flicker, and focus can return to it after saving).
+  const addDisabled = demo || !!loadError || !categories.length;
+  const openEditor = (item?: MenuItem) => { trigger.current = capturePanelFocus(); setNotice(''); setStatus(''); setArrangeId(null); setEditor({ item }); };
+  const openAdd = useRef(openEditor);
+  openAdd.current = openEditor;
+  const announceAdd = useRef(onAddDishChange);
+  announceAdd.current = onAddDishChange;
+  // Only a change in availability is reported, so an inline callback cannot cause a render loop.
+  useEffect(() => { announceAdd.current?.({ open: () => openAdd.current(), disabled: addDisabled }); }, [addDisabled]);
+  const closeEditor = () => { setEditor(null); restorePanelFocus(trigger.current); };
+  // A saved dish may have moved to another section, which re-creates its row.
+  const closeSaved = () => { const id = editor?.item?.id; setEditor(null); if (id) focusById(`edit-${id}`); else restorePanelFocus(trigger.current); };
+  const openCategories = (next: CategoryPanel = { kind: 'list' }) => { categoryTrigger.current = capturePanelFocus(); setNotice(''); setStatus(''); setPanel(next); };
+  const closeCategories = () => { setPanel(null); restorePanelFocus(categoryTrigger.current); };
+  const categoryName = (id: string) => categories.find(category => category.id === id)?.name ?? '';
+  const idsIn = (categoryId: string) => sortMenuItems(items).filter(item => item.categoryId === categoryId).map(item => item.id);
+
+  const toggleAvailability = async (item: MenuItem, next: boolean) => {
+    if (pendingRef.current.has(item.id)) return;
+    pendingRef.current.set(item.id, next); setPending(new Set(pendingRef.current.keys()));
+    setNotice(''); setStatus('');
+    setItems(current => current.map(entry => entry.id === item.id ? { ...entry, isAvailable: next } : entry));
+    try {
+      const updated = await services.setMenuItemAvailability(item.id, next);
+      pendingRef.current.delete(item.id);
+      setItems(current => replaceMenuItem(current, updated));
+      setStatus(updated.isAvailable ? `${updated.name} is available to order.` : `${updated.name} now shows as currently unavailable.`);
+    } catch (e) {
+      pendingRef.current.delete(item.id);
+      setItems(current => current.map(entry => entry.id === item.id ? { ...entry, isAvailable: item.isAvailable } : entry));
+      setNotice(`Could not ${next ? 'switch on' : 'switch off'} ${item.name}: ${message(e)} Showing the saved menu again.`);
+      void load();
+    } finally { setPending(new Set(pendingRef.current.keys())); }
   };
-  const deleteItem = async () => {
-    if (!remove) return;
-    setBusy(true); setOperationError(''); setSuccess('');
-    try { await services.deleteMenuItem(remove.id); setRemove(null); setSuccess('Item deleted.'); await load(); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); } catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
+
+  // Writes the complete order the owner saw; a stale list is rejected and reloaded.
+  const saveOrder = async (categoryId: string | null, ids: string[], done: string, focusId?: string) => {
+    setReordering(true); setNotice(''); setStatus('');
+    if (categoryId) setItems(current => applyItemOrder(current, ids)); else setCategories(current => sortCategories(applyCategoryOrder(current, ids)));
+    try {
+      if (categoryId) await services.reorderMenuItems(categoryId, ids); else await services.reorderCategories(ids);
+      setStatus(done); pendingFocus.current = focusId ?? null;
+    } catch (e) {
+      const reloaded = await load();
+      setNotice(errorCode(e) === 'MENU_CHANGED'
+        ? `The menu was changed on another device, so this new order was not saved. ${reloaded ? 'The latest menu is shown; arrange it again.' : 'Retry loading the menu, then arrange it again.'}`
+        : `The new order was not saved: ${message(e)} ${reloaded ? 'The saved order is shown again; please try again.' : 'Retry loading the menu, then try again.'}`);
+    } finally { setReordering(false); }
   };
-  const saveCategory = async () => {
-    if (!categoryDraft) return;
-    const sortOrder = parseItemOrder(categoryDraft.order);
-    if (!categoryDraft.name.trim() || [...categoryDraft.name.trim()].length > 100 || sortOrder === null) { setValidation(true); return; }
-    setBusy(true); setOperationError(''); setSuccess('');
-    try { await services.saveCategory({ id: categoryDraft.id, name: categoryDraft.name.trim(), sortOrder }); setSuccess('Category saved.'); await load(); closeCategory(); }
-    catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
+  const moveDish = (item: MenuItem, delta: -1 | 1) => {
+    const ids = idsIn(item.categoryId), to = ids.indexOf(item.id) + delta, next = moveId(ids, item.id, to);
+    if (!next) return;
+    const direction = to === 0 ? 'down' : to === ids.length - 1 ? 'up' : delta < 0 ? 'up' : 'down';
+    void saveOrder(item.categoryId, next, `${item.name} moved to position ${to + 1} of ${ids.length} in ${categoryName(item.categoryId)}.`, `move-${item.id}-${direction}`);
   };
-  const deleteCategory = async () => {
-    if (!removeCategory) return;
-    setBusy(true); setOperationError(''); setSuccess('');
-    try { await services.deleteCategory(removeCategory.id); setRemoveCategory(null); if (await load()) setSuccess('Category deleted.'); if (typeof document !== 'undefined') setTimeout(() => document.getElementById('admin-menu-heading')?.focus(), 0); }
-    catch (e) { setOperationError(message(e)); } finally { setBusy(false); }
+  const moveCategory = (category: MenuCategory, delta: -1 | 1) => {
+    const ids = categories.map(entry => entry.id), to = ids.indexOf(category.id) + delta, next = moveId(ids, category.id, to);
+    if (!next) return;
+    const direction = to === 0 ? 'down' : to === ids.length - 1 ? 'up' : delta < 0 ? 'up' : 'down';
+    void saveOrder(null, next, `${category.name} moved to position ${to + 1} of ${ids.length}.`, `move-category-${category.id}-${direction}`);
   };
-  const openCategory = (category?: MenuCategory) => { trigger.current = capturePanelFocus(); setValidation(false); setOperationError(''); setCategoryDraft(category ? { id: category.id, name: category.name, order: String(category.sortOrder) } : { name: '', order: '0' }); };
+  const canArrange = !demo && !reordering && !query.trim() && !loadError;
+  const dragStart = (item: MenuItem) => {
+    const ids = idsIn(item.categoryId);
+    const heights = ids.map(id => rowHeights.current.get(id) ?? 0).filter(height => height > 0);
+    setArrangeId(null);
+    setDrag({ id: item.id, categoryId: item.categoryId, start: ids.indexOf(item.id), dy: 0, height: heights.length ? Math.min(...heights) : 76 });
+  };
+  const dragEnd = (dy: number, commit: boolean) => {
+    const current = dragRef.current;
+    setDrag(null); lastDragEnd.current = Date.now();
+    if (!current || !commit) return;
+    const ids = idsIn(current.categoryId), to = dragTarget(current.start, dy, current.height, ids.length), next = moveId(ids, current.id, to);
+    const item = items.find(entry => entry.id === current.id);
+    if (next && item) void saveOrder(current.categoryId, next, `${item.name} moved to position ${to + 1} of ${ids.length} in ${categoryName(current.categoryId)}.`);
+  };
+
+  const retryCleanup = () => {
+    setCleanupBusy(true); setStatus(''); setNotice('');
+    void services.retryMenuPhotoCleanup().then(result => setStatus(result.cleanupComplete ? 'Unused photo cleanup completed.' : 'Some photos are still queued. Please retry in a few minutes.'))
+      .catch(e => setNotice(`Photo cleanup did not finish: ${message(e)}`)).finally(() => setCleanupBusy(false));
+  };
+
+  const sections = menuSections(items, categories, query);
+  const matches = sections.reduce((sum, section) => sum + section.items.length, 0);
+  const loadStatus = loadError ? <MarketStatus kind="error" title="Could not load the menu" message={loadError} action={<MarketButton label="Retry loading menu" variant="secondary" onPress={() => void load()} />} /> : null;
+  const noticeStatus = notice ? <MarketStatus kind="error" title="Menu not updated" message={notice} action={<MarketButton label="Dismiss" variant="secondary" onPress={() => setNotice('')} />} /> : null;
   return <View style={{ gap: 16 }}>
-    <Text nativeID="admin-menu-heading" accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 22, fontWeight: '700' }}>Menu</Text>
-    <MarketText variant="muted">Manage availability and prices. Sample items are clearly labelled.</MarketText>
-    {services.mode === 'demo' ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
-    {success ? <View role="status" aria-live="polite"><MarketText>{success}</MarketText></View> : null}
-    {error ? <MarketStatus kind="error" title="Could not complete the request" message={error} action={<MarketButton label="Retry loading menu" variant="secondary" onPress={() => void load()} />} /> : null}
-    {loading ? <MarketStatus kind="loading" title="Loading menu" /> : null}
-    <Text accessibilityRole="header" style={{ fontSize: 22, fontWeight: '700', color: colors.ink }}>Categories</Text>
-    <MarketText variant="muted">Lower category order numbers appear first. Ties are sorted by name.</MarketText>
-    <MarketButton label="Add category" variant="secondary" onPress={() => openCategory()} disabled={services.mode === 'demo' || busy || loading || !!error} />
-    {!loading && !error && !categories.length ? <MarketText>Add a category before adding a dish.</MarketText> : null}
-    {categories.map(category => {
-      const count = items.filter(item => item.categoryId === category.id).length;
-      return <MarketCard key={category.id}><MarketText variant="heading">{category.name}</MarketText><MarketText variant="muted">Order {category.sortOrder} · {count} {count === 1 ? 'dish' : 'dishes'}</MarketText>
-        <MarketButton label={`Edit category ${category.name}`} variant="secondary" disabled={services.mode === 'demo' || busy || loading || !!error} onPress={() => openCategory(category)} />
-        <MarketButton label={`Delete category ${category.name}`} variant="secondary" disabled={services.mode === 'demo' || busy || loading || !!error || count > 0} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemoveCategory(category); }} />
-        {count ? <MarketText variant="muted">Move all dishes to another category before deleting this category.</MarketText> : null}
-      </MarketCard>;
-    })}
-    {categoryDraft ? <AccessiblePanel title={categoryDraft.id ? 'Edit category' : 'Add category'} onClose={() => { if (!busy) closeCategory(); }}>
-      {operationError ? <MarketStatus kind="error" title="Could not save category" message={operationError} /> : null}
-      <MarketField label="Category name" value={categoryDraft.name} editable={!busy} onChangeText={name => setCategoryDraft({ ...categoryDraft, name })} error={validation && (!categoryDraft.name.trim() || [...categoryDraft.name.trim()].length > 100) ? 'Enter a name from 1 to 100 characters.' : undefined} />
-      <MarketField label="Category order" value={categoryDraft.order} editable={!busy} onChangeText={order => setCategoryDraft({ ...categoryDraft, order })} error={validation && parseItemOrder(categoryDraft.order) === null ? 'Enter a whole number from -2,147,483,648 to 2,147,483,647.' : undefined} />
-      <MarketText variant="muted">Lower numbers appear first. Ties are sorted by name.</MarketText>
-      <MarketButton label={busy ? 'Saving…' : 'Save category'} disabled={busy} onPress={() => void saveCategory()} /><MarketButton label="Cancel" variant="secondary" disabled={busy} onPress={closeCategory} />
-    </AccessiblePanel> : null}
-    {removeCategory ? <AccessiblePanel title={`Delete category ${removeCategory.name}?`} onClose={() => { if (!busy) closeCategory(); }}><MarketText>This removes the empty category from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete category" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete category'} disabled={busy} onPress={() => void deleteCategory()} /><MarketButton label="Keep category" variant="secondary" disabled={busy} onPress={closeCategory} /></AccessiblePanel> : null}
-    <Text accessibilityRole="header" style={{ fontSize: 22, fontWeight: '700', color: colors.ink }}>Dishes</Text>
-    <MarketButton label="Retry photo cleanup" variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { setBusy(true); setSuccess(''); void services.retryMenuPhotoCleanup().then(result => setSuccess(result.cleanupComplete ? 'Unused photo cleanup completed.' : 'Some photos are still queued. Please retry in a few minutes.')).catch(e => setError(message(e))).finally(() => setBusy(false)); }} />
-    {photoItem ? <MenuPhotoEditor item={photoItem} services={services} onClose={closePhoto} onSaved={async note => { if (!await load()) throw new Error('Could not reload the menu. Retry loading before changing the photo.'); setSuccess(note); }} /> : null}
-    {draft ? <AccessiblePanel title={draft.id ? 'Edit item' : 'Add item'} onClose={() => { if (!busy) closeDraft(); }}>
-      {operationError ? <MarketStatus kind="error" title="Could not save item" message={operationError} action={<MarketButton label="Reload categories" variant="secondary" disabled={busy || loading} onPress={() => void load()} />} /> : null}
-      <MarketText variant="muted">{draft.id ? 'Save your changes, then use Manage photo for this dish to upload, replace or remove its photo.' : 'Save this dish before adding a photo. Then choose Manage photo from its menu card.'}</MarketText>
-      <MarketField label="Name" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} error={validation && !draft.name.trim() ? 'Enter a name.' : undefined} />
-      <View style={{ gap: 8 }}><MarketText>Category</MarketText><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {categories.map(category => <Pressable key={category.id} accessibilityRole="button" accessibilityLabel={`Category: ${category.name}`} aria-pressed={draft.categoryId === category.id} accessibilityState={{ selected: draft.categoryId === category.id, disabled: busy }} disabled={busy} onPress={() => setDraft({ ...draft, categoryId: category.id })} style={{ minHeight: 48, padding: 12, borderWidth: draft.categoryId === category.id ? 2 : 1, borderRadius: 10, borderColor: colors.inputBorder, backgroundColor: draft.categoryId === category.id ? colors.tint : colors.surface }}><MarketText>{category.name}</MarketText></Pressable>)}
-      </View>{validation && !categories.some(category => category.id === draft.categoryId) ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>Choose a category. Reload the menu if it is no longer available.</Text> : null}</View>
-      <MarketField label="Description" value={draft.description} onChangeText={description => setDraft({ ...draft, description })} multiline />
-      <MarketField label="Price in rupees" value={draft.price} onChangeText={price => setDraft({ ...draft, price })} keyboardType="decimal-pad" error={validation && (parseRupees(draft.price) === null || parseRupees(draft.price)! <= 0 || parseRupees(draft.price)! > 2147483647) ? 'Enter a positive amount up to 21,474,836.47 with up to two decimal places.' : undefined} />
-      <View style={{ gap: 8 }}>
-        <MarketText>Diet classification</MarketText>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {(['veg', 'egg', 'non_veg'] as const).map(diet => <Pressable key={diet} accessibilityRole="button" accessibilityLabel={dietLabels[diet]} aria-pressed={draft.diet === diet} accessibilityState={{ selected: draft.diet === diet, disabled: busy }} disabled={busy} onPress={() => setDraft({ ...draft, diet })} style={{ minHeight: 48, padding: 10, borderWidth: draft.diet === diet ? 2 : 1, borderRadius: 10, borderColor: colors.inputBorder, backgroundColor: draft.diet === diet ? colors.tint : colors.surface }}><DietMark diet={diet} /></Pressable>)}
-        </View>
-        {!draft.diet ? <MarketText variant="muted">{draft.id ? 'Not classified yet. No diet mark is shown to customers.' : 'Choose a diet classification before saving this dish.'}</MarketText> : null}
-        {validation && !draft.id && !draft.diet ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>Choose a diet classification.</Text> : null}
+    {showHeader ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <Text nativeID="admin-menu-heading" accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 26, fontWeight: '700', color: colors.ink }}>Menu</Text>
+      <AddDishButton action={{ open: () => openEditor(), disabled: addDisabled }} />
+    </View> : null}
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, paddingLeft: 14 }}>
+      <View accessible={false} aria-hidden style={{ width: 16, height: 16 }}>
+        <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.muted }} />
+        <View style={{ position: 'absolute', right: 0, bottom: 1, width: 6, height: 2, backgroundColor: colors.muted, transform: [{ rotate: '45deg' }] }} />
       </View>
-      <MarketField label="Order within category" value={draft.order} onChangeText={order => setDraft({ ...draft, order })} error={validation && parseItemOrder(draft.order) === null ? 'Enter a whole number from -2,147,483,648 to 2,147,483,647.' : undefined} />
-      <MarketText variant="muted">Lower numbers appear first within a category. Ties are sorted by name.</MarketText>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><MarketText>{featureLabel}</MarketText><Switch accessibilityLabel={featureLabel} value={draft.isFeatured} onValueChange={isFeatured => setDraft({ ...draft, isFeatured })} /></View>
-      <MarketText variant="muted">Featured dishes appear only while available.</MarketText>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><MarketText>Available</MarketText><Switch accessibilityLabel="Available" value={draft.isAvailable} onValueChange={isAvailable => setDraft({ ...draft, isAvailable })} /></View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><MarketText>Sample item</MarketText><Switch accessibilityLabel="Sample item" value={draft.isDemo} onValueChange={isDemo => setDraft({ ...draft, isDemo })} /></View>
-      <MarketButton label={busy ? 'Saving…' : 'Save item'} onPress={() => void save()} disabled={busy || services.mode === 'demo'} />
-      <MarketButton label="Cancel" variant="secondary" onPress={closeDraft} disabled={busy} />
-    </AccessiblePanel> : <MarketButton label="Add item" onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft(blank()); }} disabled={services.mode === 'demo' || loading || !!error || !categories.length || busy} />}
-    {remove ? <AccessiblePanel title={`Delete ${remove.name}?`} onClose={() => { if (!busy) closeRemove(); }}><MarketText>This removes the item from the menu.</MarketText>{operationError ? <MarketStatus kind="error" title="Could not delete item" message={operationError} /> : null}<MarketButton label={busy ? 'Deleting…' : 'Confirm delete'} onPress={() => void deleteItem()} disabled={busy} /><MarketButton label="Keep item" variant="secondary" onPress={closeRemove} disabled={busy} /></AccessiblePanel> : null}
-    {!loading && !items.length && !error ? <MarketStatus kind="empty" title="No menu items yet" message="Add an item to get started." /> : null}
-    {sortMenuItems(items).map(item => <MarketCard key={item.id}>{item.imageUrl ? <Image accessibilityLabel={item.name} source={{ uri: item.imageUrl }} style={{ width: 120, height: 90, borderRadius: 12 }} resizeMode="cover" /> : <MarketText variant="muted">No photo</MarketText>}<MarketText variant="heading">{item.name}</MarketText><DietMark diet={item.diet} /><MarketText>{item.category} · {formatINRFromPaise(item.pricePaise)}</MarketText><MarketText variant="muted">{item.isAvailable ? 'Available' : 'Unavailable'}{item.isDemo ? ' · Sample item' : ''}{item.isFeatured ? ` · ${featureLabel}` : ''}{` · Order ${item.sortOrder}`}</MarketText>{item.description ? <MarketText>{item.description}</MarketText> : null}<MarketButton label={`Manage photo for ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setPhotoItem(item); }} /><MarketButton label={`Edit ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setValidation(false); setDraft({ ...item, diet: item.diet ?? null, price: rupeesInput(item.pricePaise), order: String(item.sortOrder) }); }} /><MarketButton label={`Delete ${item.name}`} variant="secondary" disabled={services.mode === 'demo' || busy} onPress={() => { trigger.current = capturePanelFocus(); setOperationError(''); setRemove(item); }} /></MarketCard>)}
+      <TextInput nativeID="admin-menu-search" accessibilityLabel="Search dishes" placeholder={`Search ${items.length} ${items.length === 1 ? 'dish' : 'dishes'}`} placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} autoCorrect={false} autoCapitalize="none" returnKeyType="search"
+        style={{ flex: 1, minWidth: 0, minHeight: 46, fontSize: 16, color: colors.ink }} />
+      {query ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => { setQuery(''); focusById('admin-menu-search'); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+        <Text accessible={false} aria-hidden style={{ color: colors.muted, fontSize: 16 }}>✕</Text>
+      </Pressable> : null}
+    </View>
+    <MarketText variant="muted">Switch a dish off when it runs out. Customers see it as currently unavailable. Hold ⠿ and drag to change the order, or tap ⠿ to move a dish up or down.</MarketText>
+    {demo ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
+    <View role="status" aria-live="polite">{status && !panel ? <MarketText>{status}</MarketText> : null}{query.trim() && !loading ? <MarketText variant="muted">{matches === 1 ? '1 dish matches' : `${matches} dishes match`} “{query.trim()}”.</MarketText> : null}</View>
+    {!panel ? loadStatus : null}
+    {!panel ? noticeStatus : null}
+    {loading ? <MarketStatus kind="loading" title="Loading menu" /> : null}
+    {!loading && !loadError && !categories.length ? <MarketStatus kind="empty" title="Add a category first" message="Dishes are grouped into categories such as Thalis or Snacks." action={<MarketButton label="Add category" disabled={demo} onPress={() => openCategories({ kind: 'edit' })} />} /> : null}
+    {!loading && !loadError && categories.length > 0 && !items.length ? <MarketStatus kind="empty" title="No dishes yet" message="Add a dish to get started." /> : null}
+    {!loadError && query.trim() && !sections.length ? <MarketStatus kind="empty" title="No matching dishes" message="Try another name, or clear the search." action={<MarketButton label="Clear search" variant="secondary" onPress={() => { setQuery(''); focusById('admin-menu-search'); }} />} /> : null}
+    {!loadError ? sections.map(section => {
+      const total = items.filter(item => item.categoryId === section.category.id).length;
+      const ids = section.items.map(item => item.id);
+      const active = drag && drag.categoryId === section.category.id ? drag : null;
+      const target = active ? dragTarget(active.start, active.dy, active.height, ids.length) : 0;
+      const shown = active ? (moveId(ids, active.id, target) ?? ids) : ids;
+      return <View key={section.category.id} style={{ gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, paddingTop: 6 }}>
+          <Text accessibilityRole="header" style={{ flexShrink: 1, fontSize: 21, fontWeight: '700', color: colors.ink }}>{section.category.name}</Text>
+          <Text style={{ fontSize: 13, color: colors.muted }}>{sectionSummary(total, section.unavailable)}</Text>
+        </View>
+        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 16 }}>
+          {!section.items.length ? <View style={{ padding: 16 }}><MarketText variant="muted">No dishes in this category yet.</MarketText></View> : null}
+          {shown.map((id, index) => {
+            const item = section.items.find(entry => entry.id === id)!;
+            const position = ids.indexOf(id);
+            return <DishRow key={id} item={item} feature={feature} first={index === 0} isFirst={position === 0} isLast={position === ids.length - 1}
+              offset={active?.id === id ? active.dy - (target - active.start) * active.height : null}
+              canArrange={canArrange} arranging={arrangeId === id} switchDisabled={demo || pending.has(id)} editDisabled={demo || !!drag}
+              onLayout={height => rowHeights.current.set(id, height)}
+              onArrange={() => { if (Date.now() - lastDragEnd.current > 400) setArrangeId(current => current === id ? null : id); }}
+              onMove={delta => moveDish(item, delta)} onToggle={value => void toggleAvailability(item, value)} onEdit={() => openEditor(item)}
+              onDragStart={() => dragStart(item)} onDragMove={dy => setDrag(current => current ? { ...current, dy } : current)} onDragEnd={dragEnd} />;
+          })}
+        </View>
+        {query.trim() && section.items.length ? <MarketText variant="muted">Clear the search to change the order.</MarketText> : null}
+      </View>;
+    }) : null}
+    {!loading || categories.length ? <View style={{ gap: 10, paddingTop: 8 }}>
+      <MarketButton label="Manage categories" variant="secondary" disabled={demo || !!loadError} onPress={() => openCategories()} />
+      <MarketButton label={cleanupBusy ? 'Cleaning up photos…' : 'Retry photo cleanup'} variant="secondary" disabled={demo || cleanupBusy} onPress={retryCleanup} />
+    </View> : null}
+
+    {editor ? <DishEditor item={editor.item} items={items} categories={categories} services={services} reload={load} onClose={closeEditor}
+      onSaved={async note => { await load(); setStatus(note); closeSaved(); }}
+      onDeleted={async name => { await load(); setEditor(null); setStatus(`${name} deleted.`); focusTop(); }} /> : null}
+
+    {panel?.kind === 'list' ? <AccessiblePanel key="categories" fullScreen title="Categories" onClose={closeCategories} footer={<MarketButton label="Done" onPress={closeCategories} />}>
+      <MarketText variant="muted">Customers see categories in this order. A category can be deleted once it has no dishes.</MarketText>
+      <View role="status" aria-live="polite">{status ? <MarketText>{status}</MarketText> : null}</View>
+      {loadStatus}{noticeStatus}
+      <MarketButton label="Add category" variant="secondary" disabled={demo || reordering || !!loadError} onPress={() => { setStatus(''); setPanel({ kind: 'edit' }); }} />
+      {categories.map((category, index) => {
+        const inCategory = items.filter(item => item.categoryId === category.id);
+        const canMove = !demo && !reordering && !loadError;
+        return <View key={category.id} style={{ gap: 10, padding: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surface }}>
+          <View><Text style={{ fontSize: 17, fontWeight: '700', color: colors.ink }}>{category.name}</Text><Text style={{ fontSize: 13, color: colors.muted }}>{sectionSummary(inCategory.length, inCategory.filter(item => !item.isAvailable).length)}</Text></View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <SmallButton nativeID={`move-category-${category.id}-up`} label="↑ Up" accessibilityLabel={`Move category ${category.name} up`} disabled={!canMove || index === 0} onPress={() => moveCategory(category, -1)} />
+            <SmallButton nativeID={`move-category-${category.id}-down`} label="↓ Down" accessibilityLabel={`Move category ${category.name} down`} disabled={!canMove || index === categories.length - 1} onPress={() => moveCategory(category, 1)} />
+            <SmallButton label="Rename" accessibilityLabel={`Rename category ${category.name}`} disabled={!canMove} onPress={() => { setStatus(''); setPanel({ kind: 'edit', category }); }} />
+            <SmallButton label="Delete" accessibilityLabel={`Delete category ${category.name}`} disabled={!canMove || inCategory.length > 0} onPress={() => { setStatus(''); setPanel({ kind: 'delete', category }); }} />
+          </View>
+        </View>;
+      })}
+    </AccessiblePanel> : null}
+    {panel?.kind === 'edit' ? <CategoryForm key={`edit-${panel.category?.id ?? 'new'}`} category={panel.category} services={services}
+      sortOrder={panel.category ? categories.find(entry => entry.id === panel.category!.id)?.sortOrder ?? panel.category.sortOrder : nextCategoryOrder(categories)}
+      onCancel={() => setPanel({ kind: 'list' })} onSaved={async () => { await load(); setStatus('Category saved.'); setPanel({ kind: 'list' }); }} /> : null}
+    {panel?.kind === 'delete' ? <CategoryDelete key={`delete-${panel.category.id}`} category={panel.category} services={services}
+      onCancel={() => setPanel({ kind: 'list' })} onDeleted={async () => { if (await load()) setStatus('Category deleted.'); setPanel({ kind: 'list' }); }} /> : null}
   </View>;
 }
 
-function MenuPhotoEditor({ item, services, onSaved, onClose }: {
-  item: MenuItem; services: MarketServices; onSaved: (message: string) => Promise<void>; onClose: () => void;
+/** The "+ Add dish" action, for the menu's own header or the owners' app header (header-right slot). */
+export function AddDishButton({ action }: { action: AdminMenuAddDish }) {
+  const { colors } = useMarketTheme();
+  return <Pressable accessibilityRole="button" accessibilityLabel="Add dish" disabled={action.disabled} accessibilityState={{ disabled: action.disabled }} onPress={action.open}
+    style={({ pressed }) => ({ minHeight: 44, paddingHorizontal: 16, borderRadius: 12, justifyContent: 'center', backgroundColor: colors.primary, opacity: action.disabled ? 0.5 : pressed ? 0.8 : 1 })}>
+    <Text style={{ color: colors.onPrimary, fontSize: 15, fontWeight: '700' }}>+ Add dish</Text>
+  </Pressable>;
+}
+
+function DishRow({ item, feature, first, isFirst, isLast, offset, canArrange, arranging, switchDisabled, editDisabled, onLayout, onArrange, onMove, onToggle, onEdit, onDragStart, onDragMove, onDragEnd }: {
+  item: MenuItem; feature: string; first: boolean; isFirst: boolean; isLast: boolean; offset: number | null; canArrange: boolean; arranging: boolean; switchDisabled: boolean; editDisabled: boolean;
+  onLayout: (height: number) => void; onArrange: () => void; onMove: (delta: -1 | 1) => void; onToggle: (value: boolean) => void; onEdit: () => void;
+  onDragStart: () => void; onDragMove: (dy: number) => void; onDragEnd: (dy: number, commit: boolean) => void;
 }) {
   const { colors } = useMarketTheme();
-  const [selected, setSelected] = useState<DocumentPickerAsset | null>(null);
-  const [preview, setPreview] = useState<string | undefined>(item.imageUrl);
-  const [busy, setBusy] = useState(false);
-  const active = useRef(false);
-  const [error, setError] = useState('');
-  const [uncertain, setUncertain] = useState(false);
-  const [broken, setBroken] = useState(false);
-  useEffect(() => {
-    if (!selected) { setPreview(item.imageUrl); return; }
-    // Expo's web picker already owns a blob URL for this asset.
-    const uri = selected.uri;
-    setPreview(uri); setBroken(false);
-    return () => { if (Platform.OS === 'web' && uri.startsWith('blob:')) URL.revokeObjectURL(uri); };
-  }, [selected, item.imageUrl]);
-  const choose = async () => {
-    if (active.current) return;
-    setError('');
-    try {
-      const result = await getDocumentAsync({ type: ['image/jpeg', 'image/png', 'image/webp'], multiple: false, copyToCacheDirectory: true, base64: false });
-      if (result.canceled) return;
-      const asset = result.assets[0];
-      if ((asset.size ?? asset.file?.size ?? 0) > 5 * 1024 * 1024) {
-        if (Platform.OS === 'web' && asset.uri.startsWith('blob:')) URL.revokeObjectURL(asset.uri);
-        setError('Choose a photo up to 5 MB.'); return;
-      }
-      setSelected(asset);
-    } catch { setError('The photo picker could not open. Please try again.'); }
-  };
-  const save = async (remove = false) => {
-    if (active.current) return;
-    active.current = true; setBusy(true); setError('');
-    let sent = false;
-    try {
-      let bytes: ArrayBuffer | undefined;
-      if (!remove) {
-        if (!selected) throw new Error('Choose a photo first.');
-        if (Platform.OS === 'web') {
-          if (!selected.file) throw new Error('Choose this photo again.');
-          bytes = await selected.file.arrayBuffer();
-        } else {
-          const { File } = await import('expo-file-system');
-          bytes = await new File(selected.uri).arrayBuffer();
-        }
-        if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) throw new Error('Choose a photo up to 5 MB.');
-      }
-      sent = true;
-      const result = remove ? await services.removeMenuPhoto(item) : await services.uploadMenuPhoto(item, bytes!);
-      await onSaved(`${remove ? 'Photo removed.' : 'Photo saved.'}${result.cleanupComplete ? '' : ' Old photos are queued for cleanup; use Retry photo cleanup.'}`);
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'The photo could not be saved.');
-      // A lost HTTP response may follow a successful attachment. Require a fresh
-      // dish snapshot before retrying, preserving optimistic concurrency.
-      setUncertain(sent);
-    } finally { active.current = false; setBusy(false); }
-  };
-  return <AccessiblePanel title={`Photo for ${item.name}`} onClose={() => { if (!busy) onClose(); }}>
-    <View style={{ height: 200, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}>
-      {preview && !broken ? <Image accessibilityLabel={item.name} source={{ uri: preview }} onError={() => setBroken(true)} style={{ width: '100%', height: '100%' }} resizeMode="contain" /> : <MarketText variant="muted">No photo</MarketText>}
+  const latest = useRef({ canArrange, onDragStart, onDragMove, onDragEnd });
+  latest.current = { canArrange, onDragStart, onDragMove, onDragEnd };
+  // The handle's button handles taps and keyboard; a vertical move takes over as a drag.
+  const pan = useRef(PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => latest.current.canArrange && Math.abs(gesture.dy) > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onMoveShouldSetPanResponder: (_event, gesture) => latest.current.canArrange && Math.abs(gesture.dy) > 6,
+    onPanResponderGrant: () => latest.current.onDragStart(),
+    onPanResponderMove: (_event, gesture) => latest.current.onDragMove(gesture.dy),
+    onPanResponderRelease: (_event, gesture) => latest.current.onDragEnd(gesture.dy, true),
+    onPanResponderTerminate: (_event, gesture) => latest.current.onDragEnd(gesture.dy, false),
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+  })).current;
+  const [failed, setFailed] = useState<string | null>(null);
+  const off = !item.isAvailable;
+  const dragging = offset !== null;
+  const details = `dish-${item.id}-details`;
+  return <View onLayout={event => onLayout(event.nativeEvent.layout.height)}
+    style={[{ borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }, dragging ? { transform: [{ translateY: offset }], zIndex: 2, elevation: 6, backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.primary, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } } : null]}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingLeft: 2, paddingRight: 12 }}>
+      <View {...pan.panHandlers} style={webOnly({ touchAction: 'none', userSelect: 'none', cursor: canArrange ? 'grab' : 'default' })}>
+        <Pressable nativeID={`arrange-${item.id}`} accessibilityRole="button" accessibilityLabel={`Reorder ${item.name}`} aria-expanded={arranging} accessibilityState={{ expanded: arranging, disabled: !canArrange }} disabled={!canArrange} onPress={onArrange}
+          style={{ width: 36, height: 48, alignItems: 'center', justifyContent: 'center', opacity: canArrange ? 1 : 0.4 }}>
+          <Text accessible={false} aria-hidden style={{ fontSize: 20, color: colors.muted }}>⠿</Text>
+        </Pressable>
+      </View>
+      <Pressable nativeID={`edit-${item.id}`} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`} {...(Platform.OS === 'web' ? { 'aria-describedby': details } : {})} disabled={editDisabled} accessibilityState={{ disabled: editDisabled }} onPress={onEdit}
+        style={({ pressed }) => ({ flex: 1, minWidth: 0, minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: pressed ? 0.7 : 1 })}>
+        <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center', opacity: off ? 0.55 : 1 }}>
+          {item.imageUrl && failed !== item.imageUrl
+            ? <Image accessible={false} source={{ uri: item.imageUrl }} onError={() => setFailed(item.imageUrl!)} resizeMode="cover" style={{ width: 52, height: 52 }} />
+            : <View accessible={false} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.border, backgroundColor: colors.surface }} />}
+        </View>
+        <View nativeID={details} style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <DietMark diet={item.diet} compact />
+            <Text numberOfLines={2} style={{ flexShrink: 1, fontSize: 16, fontWeight: '700', color: off ? colors.muted : colors.ink }}>{item.name}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: off ? colors.muted : colors.ink }}>{formatINRFromPaise(item.pricePaise)}</Text>
+            {item.isFeatured ? <Badge background={colors.tint} color={colors.primary} star>{feature}</Badge> : null}
+            {off ? <Badge background="#ECE6E2" color="#3F3633">Currently unavailable</Badge> : null}
+            {item.isDemo ? <Badge background={colors.surface} color={colors.muted} border={colors.inputBorder}>Sample</Badge> : null}
+            {!item.imageUrl ? <Text style={{ fontSize: 12, color: colors.muted }}>No photo</Text> : null}
+          </View>
+        </View>
+      </Pressable>
+      <Switch accessibilityLabel={`Available: ${item.name}`} value={item.isAvailable} disabled={switchDisabled} onValueChange={onToggle} {...switchColors} />
     </View>
-    <MarketText variant="muted">Use your restaurant’s own JPEG, PNG or WebP, up to 5 MB and 16 megapixels. Photos are checked and resized before saving.</MarketText>
-    {selected ? <MarketText>Selected: {selected.name}</MarketText> : null}
-    {error ? <MarketStatus kind="error" title="Could not save photo" message={error} /> : null}
-    {uncertain ? <><MarketText>Reload the dish to check its current photo before trying again.</MarketText><MarketButton label="Reload dish photo" disabled={busy} onPress={() => { void onSaved('Current photo reloaded.').then(onClose).catch(() => setError('Could not reload the menu. Close and retry loading it.')); }} /></> : <>
-      <MarketButton label={selected || item.imageUrl ? 'Choose another photo' : 'Choose photo'} variant="secondary" disabled={busy} onPress={() => void choose()} />
-      <MarketButton label={busy ? 'Saving photo…' : item.imageUrl ? 'Replace photo' : 'Upload photo'} disabled={busy || !selected} onPress={() => void save()} />
-      {item.imageUrl ? <MarketButton label="Remove photo" variant="secondary" disabled={busy} onPress={() => void save(true)} /> : null}
-    </>}
-    <MarketButton label={busy ? 'Please wait…' : 'Close photo editor'} variant="secondary" disabled={busy} onPress={onClose} />
+    {arranging ? <View style={{ flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
+      <SmallButton nativeID={`move-${item.id}-up`} label="↑ Move up" accessibilityLabel={`Move ${item.name} up`} disabled={!canArrange || isFirst} onPress={() => onMove(-1)} />
+      <SmallButton nativeID={`move-${item.id}-down`} label="↓ Move down" accessibilityLabel={`Move ${item.name} down`} disabled={!canArrange || isLast} onPress={() => onMove(1)} />
+    </View> : null}
+  </View>;
+}
+
+function Badge({ children, background, color, border, star = false }: { children: string; background: string; color: string; border?: string; star?: boolean }) {
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: background, borderWidth: border ? 1 : 0, borderColor: border }}>
+    {star ? <Text accessible={false} aria-hidden style={{ fontSize: 11, color }}>★</Text> : null}
+    <Text style={{ fontSize: 12, lineHeight: 18, fontWeight: '700', color }}>{children}</Text>
+  </View>;
+}
+
+function SmallButton({ label, accessibilityLabel, onPress, disabled = false, nativeID }: { label: string; accessibilityLabel: string; onPress: () => void; disabled?: boolean; nativeID?: string }) {
+  const { colors } = useMarketTheme();
+  return <Pressable nativeID={nativeID} accessibilityRole="button" accessibilityLabel={accessibilityLabel} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => ({ minHeight: 44, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface, justifyContent: 'center', opacity: disabled ? 0.4 : pressed ? 0.7 : 1 })}>
+    <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>{label}</Text>
+  </Pressable>;
+}
+
+function CategoryForm({ category, sortOrder, services, onCancel, onSaved }: { category?: MenuCategory; sortOrder: number; services: MarketServices; onCancel: () => void; onSaved: () => Promise<void> }) {
+  const [name, setName] = useState(category?.name ?? '');
+  const [validation, setValidation] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const invalid = !name.trim() || [...name.trim()].length > 100;
+  const save = async () => {
+    if (invalid) { setValidation(true); return; }
+    setBusy(true); setError('');
+    try { await services.saveCategory({ id: category?.id, name: name.trim(), sortOrder }); await onSaved(); }
+    catch (e) { setError(message(e)); } finally { setBusy(false); }
+  };
+  return <AccessiblePanel title={category ? `Rename category ${category.name}` : 'Add category'} onClose={() => { if (!busy) onCancel(); }}>
+    {error ? <MarketStatus kind="error" title="Could not save category" message={error} /> : null}
+    <MarketField label="Category name" value={name} editable={!busy} onChangeText={setName} error={validation && invalid ? 'Enter a name from 1 to 100 characters.' : undefined} />
+    {category ? null : <MarketText variant="muted">New categories are added at the end. Move them from the category list.</MarketText>}
+    <MarketButton label={busy ? 'Saving…' : 'Save category'} disabled={busy} onPress={() => void save()} />
+    <MarketButton label="Cancel" variant="secondary" disabled={busy} onPress={onCancel} />
+  </AccessiblePanel>;
+}
+
+function CategoryDelete({ category, services, onCancel, onDeleted }: { category: MenuCategory; services: MarketServices; onCancel: () => void; onDeleted: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const remove = async () => {
+    setBusy(true); setError('');
+    try { await services.deleteCategory(category.id); await onDeleted(); }
+    catch (e) { setError(message(e)); } finally { setBusy(false); }
+  };
+  return <AccessiblePanel title={`Delete category ${category.name}?`} onClose={() => { if (!busy) onCancel(); }}>
+    <MarketText>This removes the empty category from the menu.</MarketText>
+    {error ? <MarketStatus kind="error" title="Could not delete category" message={error} /> : null}
+    <MarketButton label={busy ? 'Deleting…' : 'Confirm delete category'} disabled={busy} onPress={() => void remove()} />
+    <MarketButton label="Keep category" variant="secondary" disabled={busy} onPress={onCancel} />
   </AccessiblePanel>;
 }

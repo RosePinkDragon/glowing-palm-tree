@@ -4,7 +4,7 @@ import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketNavigation, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
-import { AdminMenu } from './AdminMenu';
+import { AddDishButton, AdminMenu, type AdminMenuAddDish } from './AdminMenu';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { applyOrderTransition, mergeOrderSnapshot, nextStatuses, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
 import { OwnerScreen, OwnerTabBar } from './OwnerShell';
@@ -19,6 +19,7 @@ export function AdminArea({ services, banner, account }: { services: MarketServi
   const [accessError, setAccessError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [tab, setTab] = useState<OwnerTabId>(defaultOwnerTab);
+  const [addDish, setAddDish] = useState<AdminMenuAddDish | null>(null);
   useEffect(() => {
     let active = true;
     setAccess('loading');
@@ -34,10 +35,10 @@ export function AdminArea({ services, banner, account }: { services: MarketServi
     {account}
   </OwnerScreen>;
   return <View style={{ flex: 1 }}>
-    <OwnerScreen key={tab} title={ownerTabLabel(tab)}>
+    <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}>
       {banner}
       {tab === 'orders' ? <OrderQueue services={services} /> : null}
-      {tab === 'menu' ? <AdminMenu services={services} /> : null}
+      {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <MarketStatus kind="empty" title="Today's summary is coming soon" message="A summary of today's orders will appear here in a later update. Use Orders to see current orders." /> : null}
       {tab === 'settings' ? <OwnerSettings account={account} /> : null}
     </OwnerScreen>
