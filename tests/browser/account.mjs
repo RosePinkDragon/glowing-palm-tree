@@ -12,6 +12,20 @@ const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'account-fixture@example.test', user_metadata: {}, app_metadata: {} };
 const token = part({ alg: 'HS256' }) + '.' + part({ sub: userId, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture';
 const session = { access_token: token, refresh_token: 'account-fixture', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
+const settledDrawer = async page => {
+  const phone = page.getByText('Phone not added', { exact: true });
+  await phone.scrollIntoViewIfNeeded();
+  await phone.evaluate(node => new Promise((resolve, reject) => {
+    let last = null, stable = 0;
+    const timeout = setTimeout(() => reject(new Error('Drawer did not settle in the viewport')), 5000);
+    const frame = () => {
+      const rect = node.getBoundingClientRect();
+      stable = last !== null && Math.abs(rect.x - last) < 0.1 && rect.left >= 0 && rect.right <= innerWidth ? stable + 1 : 0;
+      last = rect.x;
+      if (stable >= 4) { clearTimeout(timeout); resolve(); } else requestAnimationFrame(frame);
+    }; frame();
+  }));
+};
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir('dist/browser', { recursive: true });
 try {
@@ -84,6 +98,7 @@ try {
       await page.keyboard.press('Escape'); await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
+      await settledDrawer(page);
       await page.screenshot({ path: `dist/browser/${slug}-account-mobile.png`, fullPage: true });
       await page.getByRole('button', { name: /^(Load|Retry) older orders$/ }).scrollIntoViewIfNeeded();
       await page.getByRole('button', { name: 'Retry older orders', exact: true }).waitFor();
@@ -116,7 +131,21 @@ try {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
+      await settledDrawer(page);
       await page.screenshot({ path: `dist/browser/${slug}-account-desktop.png`, fullPage: true });
+      await page.getByRole('button', { name: 'Account options', exact: true }).click();
+      await page.getByRole('button', { name: 'Edit profile', exact: true }).waitFor();
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Edit profile', exact: true }).waitFor({ state: 'hidden' });
+      await page.getByText('Phone not added', { exact: true }).waitFor();
+      await page.waitForFunction(() => document.activeElement?.textContent === '⋮');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
+      await page.goBack();
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
       const waitForHeld = new Promise(resolve => { held = resolve; }); holdOrders = true;
       await page.getByRole('button', { name: 'Refresh orders', exact: true }).click(); await waitForHeld;
       await page.getByRole('button', { name: 'Account options', exact: true }).click();

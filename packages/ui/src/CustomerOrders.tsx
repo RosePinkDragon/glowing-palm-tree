@@ -38,21 +38,26 @@ export function CustomerHistory({ market, go }: { market: Market; go: (path: str
 export function CustomerOrderDetail({ market, id, receipt }: { market: Market; id: string; receipt: Order | null }) {
   const request = useRef(0);
   const [retry, setRetry] = useState(0);
-  const [snapshot, setSnapshot] = useState<{ identity: Identity; id: string; order: Order | null; loading: boolean; error: string } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ identity: Identity; id: string; order: Order | null; loading: boolean; resolved: boolean; error: string } | null>(null);
   useEffect(() => {
     const started = market.identity.current, current = ++request.current;
-    setSnapshot({ identity: started, id, order: null, loading: true, error: '' });
+    setSnapshot(previous => previous?.id === id && sameIdentity(previous.identity, started) ? { ...previous, loading: true, error: '' } : { identity: started, id, order: null, loading: true, resolved: false, error: '' });
     if (!started.userId) return;
     void market.services.getCustomerOrder(id).then(order => {
-      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot({ identity: started, id, order, loading: false, error: '' });
+      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot(previous => ({ identity: started, id, order: previous?.id === id && sameIdentity(previous.identity, started) && previous.order && order && previous.order.version > order.version ? previous.order : order, loading: false, resolved: true, error: '' }));
     }).catch(error => {
-      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot({ identity: started, id, order: null, loading: false, error: error instanceof Error ? error.message : 'Could not load this order.' });
+      if (current === request.current && sameIdentity(started, market.identity.current)) setSnapshot(previous => ({ identity: started, id, order: previous?.id === id && sameIdentity(previous.identity, started) ? previous.order : null, loading: false, resolved: previous?.id === id && sameIdentity(previous.identity, started) ? previous.resolved : false, error: error instanceof Error ? error.message : 'Could not load this order.' }));
     });
     return () => { request.current++; };
   }, [id, market.services, market.identity, market.identityVersion, market.ordersRevision, retry]);
   const current = snapshot?.id === id && sameIdentity(snapshot.identity, market.identity.current) ? snapshot : null;
   const saved = receipt?.id === id ? receipt : null;
+  const shown = current?.order ?? (!current?.resolved ? saved : null);
   return <View style={{ gap: 16 }}><MarketText variant="heading">Order status</MarketText><MarketButton label="Refresh orders" variant="secondary" onPress={() => { setRetry(n => n + 1); void market.refreshOrders(); }} />
-    {!current || current.loading ? saved ? <OrderCard order={saved} details /> : <MarketStatus kind="loading" title="Loading your orders" /> : current.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : current.order ? <OrderCard order={current.order} details /> : <MarketStatus kind="empty" title="We can't show this order" message="It may belong to another account or restaurant, or no longer be available." />}
+    {shown ? <OrderCard order={shown} details /> : null}
+    {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}
+    {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
+    {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}
+    {current?.resolved && !shown && !current.error ? <MarketStatus kind="empty" title="We can't show this order" message="It may belong to another account or restaurant, or no longer be available." /> : null}
   </View>;
 }

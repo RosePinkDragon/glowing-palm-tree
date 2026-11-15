@@ -12,13 +12,13 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
   const panel = useRef<ComponentRef<typeof ScrollView>>(null), title = useRef<ComponentRef<typeof Text>>(null);
   const [options, setOptions] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const user = market.session?.user;
+  const optionTrigger = useRef<ComponentRef<typeof Pressable>>(null);
   const fullName = typeof user?.user_metadata.full_name === 'string' ? user.user_metadata.full_name.trim().slice(0, 120) : '';
   const navigate = (path: string) => { setOptions(false); close(false); go(path); };
   useEffect(() => { if (!open) { setOptions(false); setError(''); } }, [open]);
   useEffect(() => {
     if (!open || Platform.OS !== 'web') return;
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); if (options) setOptions(false); else close(); return; }
       if (event.key !== 'Tab') return;
       const element = panel.current?.getScrollableNode() as unknown as HTMLElement | null;
       const elements = Array.from(element?.querySelectorAll<HTMLElement>('button,[role="button"],[tabindex="0"],input,a[href]') ?? []).filter(node => !node.hasAttribute('disabled') && node.getAttribute('aria-disabled') !== 'true' && node.getClientRects().length > 0);
@@ -30,13 +30,19 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
     document.addEventListener('keydown', keydown); window.addEventListener('popstate', back);
     return () => { document.removeEventListener('keydown', keydown); window.removeEventListener('popstate', back); };
   }, [open, options, close]);
+  const dismiss = () => {
+    if (!options) { close(); return; }
+    setOptions(false);
+    if (Platform.OS === 'web') (optionTrigger.current as unknown as HTMLElement | null)?.focus();
+    else { const handle = findNodeHandle(optionTrigger.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
+  };
   const logout = async () => {
     if (busy) return; setBusy(true); setOptions(false); setError('');
     try { await signOut(); close(false); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not log out. Please try again.'); }
     finally { setBusy(false); }
   };
-  return <Modal visible={open && !!user} transparent animationType="none" onRequestClose={() => close()} onShow={() => {
+  return <Modal visible={open && !!user} transparent animationType="none" onRequestClose={dismiss} onShow={() => {
     translate.setValue(width); Animated.timing(translate, { toValue: 0, duration: 220, useNativeDriver: true }).start();
     if (Platform.OS === 'web') (title.current as unknown as HTMLElement | null)?.focus();
     else { const handle = findNodeHandle(title.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
@@ -49,7 +55,7 @@ export function AccountDrawer({ open, close, market, go, signOut }: { open: bool
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => close()} style={{ minHeight: 48, minWidth: 48, justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>×</Text></Pressable>
               <Pressable accessibilityRole="button" accessibilityLabel="Help" onPress={() => navigate('/help')} style={{ minHeight: 48, paddingHorizontal: 16, justifyContent: 'center', marginLeft: 'auto' }}><Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Help</Text></Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Account options" accessibilityState={{ expanded: options }} onPress={() => setOptions(value => !value)} style={{ minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>⋮</Text></Pressable>
+              <Pressable ref={optionTrigger} accessibilityRole="button" accessibilityLabel="Account options" accessibilityState={{ expanded: options }} onPress={() => setOptions(value => !value)} style={{ minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>⋮</Text></Pressable>
             </View>
             <Text ref={title} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ color: colors.onPrimary, fontSize: 26, fontWeight: '700' }}>{fullName || 'Your account'}</Text>
             <Text style={{ color: colors.onPrimary, fontSize: 16 }}>{user?.phone || 'Phone not added'}</Text>
