@@ -44,7 +44,7 @@ export function CustomerHistory({ market, go, onReorder }: { market: Market; go:
     <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{market.ordersReady ? `${market.orders.length} orders loaded` : ''}</MarketText></View>
   </View>;
 }
-export function CustomerOrderDetail({ market, id, receipt, onReorder }: { market: Market; id: string; receipt: Order | null; onReorder?: ReorderAction }) {
+export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: { market: Market; id: string; receipt: Order | null; onReorder?: ReorderAction; onHelp?: () => void }) {
   const request = useRef(0);
   const [retry, setRetry] = useState(0);
   const [snapshot, setSnapshot] = useState<{ identity: Identity; id: string; order: Order | null; loading: boolean; resolved: boolean; error: string } | null>(null);
@@ -68,5 +68,6 @@ export function CustomerOrderDetail({ market, id, receipt, onReorder }: { market
     {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
     {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}
     {current?.resolved && !shown && !current.error ? <MarketStatus kind="empty" title="We can't show this order" message="It may belong to another account or restaurant, or no longer be available." /> : null}
+    {onHelp ? <MarketButton label="Help & support" variant="secondary" onPress={onHelp} /> : null}
   </View>;
 }

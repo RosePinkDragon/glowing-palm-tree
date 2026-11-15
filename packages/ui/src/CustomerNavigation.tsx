@@ -11,8 +11,8 @@ import { useMarketTheme } from './theme';
 import type { useMarket } from './useMarket';
 import type { ReorderAction } from './CustomerOrders';
 
-export type CustomerScreen = 'Menu' | 'Cart' | 'Orders' | 'Order' | 'Account' | 'Login' | 'Help' | 'Profile' | 'Addresses' | 'Notifications';
-type Routes = { Menu: undefined; Cart: undefined; Orders: undefined; Order: { id: string }; Account: undefined; Help: undefined; Profile: undefined; Addresses: undefined; Notifications: undefined; Login: { next?: string } | undefined; NotFound: undefined };
+export type CustomerScreen = 'Menu' | 'Cart' | 'Orders' | 'Order' | 'Account' | 'Login' | 'Help' | 'Privacy' | 'Terms' | 'Profile' | 'Addresses' | 'Notifications';
+type Routes = { Menu: undefined; Cart: undefined; Orders: undefined; Order: { id: string }; Account: undefined; Help: { id?: string } | undefined; Privacy: undefined; Terms: undefined; Profile: undefined; Addresses: undefined; Notifications: undefined; Login: { next?: string } | undefined; NotFound: undefined };
 type Market = ReturnType<typeof useMarket>;
 type Controls = { go: (path: string) => void; login: (next: string) => void };
 const Stack = createNativeStackNavigator<Routes>();
@@ -23,6 +23,10 @@ function destination(path: string) {
   if (path === '/orders') return { name: 'Orders', params: undefined };
   if (path === '/account') return { name: 'Account', params: undefined };
   if (path === '/help') return { name: 'Help', params: undefined };
+  if (path.startsWith('/help?id=') && uuid.test(path.slice(9))) return { name: 'Help', params: { id: path.slice(9) } };
+  if (path === '/privacy') return { name: 'Privacy', params: undefined };
+  if (path === '/terms') return { name: 'Terms', params: undefined };
+  if (path === '/login') return { name: 'Login', params: { next: '/help' } };
   if (path === '/profile') return { name: 'Profile', params: undefined };
   if (path === '/addresses') return { name: 'Addresses', params: undefined };
   if (path === '/notifications') return { name: 'Notifications', params: undefined };
@@ -60,7 +64,7 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
   const closeDrawer = (restore = true) => { setDrawer(false); if (!restore) return; if (Platform.OS === 'web') restorePanelFocus(opener.current); else setTimeout(() => { const handle = findNodeHandle(nativeOpener.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }, 0); };
   useEffect(() => { setDrawer(false); }, [market.identityVersion]);
   controls.current = {
-    go(path) { setDrawer(false); if (navigation.isReady()) { const next = destination(path); const existing = navigation.getRootState()?.routes.some(route => route.name === next.name && (next.name !== 'Order' || (route.params as { id?: string } | undefined)?.id === next.params?.id)); navigation.dispatch(existing ? StackActions.popTo(next.name, next.params) : CommonActions.navigate(next.name, next.params)); } },
+    go(path) { setDrawer(false); if (navigation.isReady()) { const next = destination(path); const existing = navigation.getRootState()?.routes.some(route => route.name === next.name && (next.name !== 'Order' || (route.params as { id?: string } | undefined)?.id === (next.params as { id?: string } | undefined)?.id)); navigation.dispatch(existing ? StackActions.popTo(next.name, next.params) : CommonActions.navigate(next.name, next.params)); } },
     login(next) { if (navigation.isReady()) navigation.navigate('Login', { next }); }
   };
   useEffect(() => {
@@ -84,12 +88,12 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
   }, [navigation, controls]);
   const linking = {
     prefixes: [Linking.createURL('/')],
-    config: { initialRouteName: 'Menu' as const, screens: { Menu: '', Cart: 'cart', Orders: 'orders', Order: 'orders/:id', Account: 'account', Help: 'help', Profile: 'profile', Addresses: 'addresses', Notifications: 'notifications', Login: 'login', NotFound: '*' } }
+    config: { initialRouteName: 'Menu' as const, screens: { Menu: '', Cart: 'cart', Orders: 'orders', Order: 'orders/:id', Account: 'account', Help: 'help', Privacy: 'privacy', Terms: 'terms', Profile: 'profile', Addresses: 'addresses', Notifications: 'notifications', Login: 'login', NotFound: '*' } }
   };
   return <SafeAreaProvider><Content.Provider value={{ market, render }}>
     <View style={{ flex: 1 }} accessibilityElementsHidden={drawer} importantForAccessibility={drawer ? 'no-hide-descendants' : 'auto'}><NavigationContainer onStateChange={() => setDrawer(false)} ref={navigation} linking={linking} fallback={<MarketStatus kind="loading" title="Opening the app" />} theme={{ dark: false, colors: { primary: colors.primary, background: colors.background, card: colors.surface, text: colors.ink, border: colors.border, notification: colors.primary }, fonts: { regular: { fontFamily: 'System', fontWeight: '400' }, medium: { fontFamily: 'System', fontWeight: '500' }, bold: { fontFamily: 'System', fontWeight: '700' }, heavy: { fontFamily: 'System', fontWeight: '800' } } }}>
-      <Stack.Navigator screenOptions={({ route }) => ({ title: route.name === 'Menu' ? name : route.name === 'Order' ? 'Order status' : route.name === 'Login' ? 'Sign in' : route.name === 'NotFound' ? 'Page not found' : route.name === 'Cart' ? 'Your cart' : route.name === 'Orders' ? 'Your orders' : route.name === 'Help' ? 'Help & support' : route.name === 'Profile' ? 'Edit profile' : route.name === 'Addresses' ? 'Saved addresses' : route.name === 'Notifications' ? 'Notifications' : 'Your account', headerBackTitle: 'Back', contentStyle: { backgroundColor: colors.background }, headerRight: () => <AccountControl onPress={node => { if (!market.authReady) return; if (!market.session) { controls.current?.login('/account'); return; } nativeOpener.current = node; opener.current = capturePanelFocus(); setDrawer(true); }} /> })}>
-        {(['Menu', 'Cart', 'Orders', 'Order', 'Account', 'Login', 'Help', 'Profile', 'Addresses', 'Notifications', 'NotFound'] as const).map(screen => <Stack.Screen key={screen} name={screen} component={CustomerRoute} />)}
+      <Stack.Navigator screenOptions={({ route }) => ({ title: route.name === 'Menu' ? name : route.name === 'Order' ? 'Order status' : route.name === 'Login' ? 'Sign in' : route.name === 'NotFound' ? 'Page not found' : route.name === 'Cart' ? 'Your cart' : route.name === 'Orders' ? 'Your orders' : route.name === 'Help' ? 'Help & support' : route.name === 'Privacy' ? 'Privacy policy' : route.name === 'Terms' ? 'Terms' : route.name === 'Profile' ? 'Edit profile' : route.name === 'Addresses' ? 'Saved addresses' : route.name === 'Notifications' ? 'Notifications' : 'Your account', headerBackTitle: 'Back', contentStyle: { backgroundColor: colors.background }, headerRight: () => <AccountControl onPress={node => { if (!market.authReady) return; if (!market.session) { controls.current?.login('/account'); return; } nativeOpener.current = node; opener.current = capturePanelFocus(); setDrawer(true); }} /> })}>
+        {(['Menu', 'Cart', 'Orders', 'Order', 'Account', 'Login', 'Help', 'Privacy', 'Terms', 'Profile', 'Addresses', 'Notifications', 'NotFound'] as const).map(screen => <Stack.Screen key={screen} name={screen} component={CustomerRoute} />)}
       </Stack.Navigator>
     </NavigationContainer>
     {cartCount ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
