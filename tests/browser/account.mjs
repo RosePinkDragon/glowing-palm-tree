@@ -37,7 +37,7 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await page.getByText('Contact number not available yet.', { exact: true }).waitFor();
   assert.equal(await page.getByText('Good food starts here.', { exact: true }).filter({ visible: true }).count(), 0);
   const questions = [
-    ['Where do you deliver?', 'checks your delivery location at checkout'],
+    ['Where do you deliver?', 'device’s current location'],
     ['How can I pay?', 'cash on delivery'],
     ['Can I cancel or change my order?', 'does not currently offer customer cancellation'],
     ['What if a dish is unavailable?', 'Reorder skips dishes'],
