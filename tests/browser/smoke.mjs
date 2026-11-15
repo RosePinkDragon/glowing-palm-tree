@@ -78,13 +78,13 @@ await context.route(origin + '/**', async route => {
     return json({ outcome: 'placed', id: orderId });
   }
   if (url.pathname === '/rest/v1/rpc/transition_order') { const body = req.postDataJSON(); mutations.push(body); savedOrder = { ...savedOrder, status: body.p_status, version: savedOrder.version + 1 }; return json({ id: orderId }); }
-  if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { releaseOrders = resolve; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? savedOrder : savedOrder ? [savedOrder] : []); }
+  if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { releaseOrders = resolve; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? (savedOrder?.id === url.searchParams.get('id')?.slice(3) ? savedOrder : null) : savedOrder ? [savedOrder] : []); }
   throw new Error('Unhandled fixture request: ' + req.method() + ' ' + url.pathname);
 });
 const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Add to cart', exact: true }).waitFor(); return page; };
 const focused = (page, text) => page.waitForFunction(expected => document.activeElement?.textContent === expected, text);
-const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click(); else await page.getByRole('button', { name: 'Sign in', exact: true }).click(); };
+const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
@@ -162,7 +162,7 @@ const prepareCart = async (page, add = true) => {
   await second.waitForTimeout(250);
   await second.screenshot({ path: 'dist/browser/customer-drawer-mobile.png', fullPage: true });
   await second.keyboard.press('Shift+Tab'); await focused(second, 'Browse menu');
-  await second.keyboard.press('Tab'); await focused(second, 'Close');
+  await second.keyboard.press('Tab'); await focused(second, '×');
   await second.keyboard.press('Escape'); await focused(second, 'Account');
   await second.getByRole('button', { name: 'Account', exact: true }).click();
   await second.getByRole('button', { name: 'Browse menu', exact: true }).click();
@@ -318,7 +318,7 @@ const prepareCart = async (page, add = true) => {
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
         if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn', accepting_orders: true });
         if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
-        if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? historical : [historical]);
+        if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? (historical.id === url.searchParams.get('id')?.slice(3) ? historical : null) : historical.customer_id === activeUser.id ? [historical] : []);
         if (url.pathname === '/rest/v1/menu_categories') {
           const method = request.method(), id = url.searchParams.get('id')?.replace('eq.', '');
           if (method === 'GET') {
@@ -586,3 +586,5 @@ const prepareCart = async (page, add = true) => {
   }
 
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
+
+if (!categoriesOnly) await import('./account.mjs');

@@ -18,7 +18,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
   const [storageError, setStorageError] = useState('');
   const auth = useMarketAuth(services, identity, setError);
   const catalog = useMarketCatalog(services, setError);
-  const orders = useMarketOrders(services, auth.session, identity, auth.identityVersion);
+  const orders = useMarketOrders(services, auth.session, identity, auth.identityVersion, audience === 'customer');
   const preferences = useNotificationPreferences(businessId, audience, auth.session, services, orders.refreshOrders);
   useEffect(() => {
     let active = true;
