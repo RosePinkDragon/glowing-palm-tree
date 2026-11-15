@@ -68,8 +68,6 @@ export interface LocationFix {
   capturedAtISO: string;
 }
 
-export type LocationPermissionState = 'granted' | 'denied' | 'undetermined';
-
 export interface OrderLine {
   /** Trusted snapshot at order placement; never read from the current menu. */
   diet?: Diet | null;
