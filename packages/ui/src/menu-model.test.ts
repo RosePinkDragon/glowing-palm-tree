@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MenuItem } from '@market/core';
-import { featuredLabel, featuredMenuItems, parseItemOrder, sortCategories, sortMenuItems } from './menu-model.ts';
+import { featuredLabel, featuredMenuItems, menuSections, moveId, parseItemOrder, replaceMenuItem, sortCategories, sortMenuItems } from './menu-model.ts';
 import { readCart } from './cart-state.ts';
 
 const dish: MenuItem = { id: 'b', businessId: 'ammu-sammu', name: 'Rice', category: 'Meals', categoryId: 'meals', categorySortOrder: 0, description: '', pricePaise: 100, diet: null, isAvailable: true, isDemo: false, isFeatured: true, sortOrder: 0 };
@@ -57,4 +57,29 @@ test('owner category controls share stable rank/name/id ordering', () => {
   const groups = [{ id: 'b', name: 'All', sortOrder: 0 }, { id: 'a', name: 'All', sortOrder: 0 }, { id: 'z', name: 'Z', sortOrder: -1 }];
   assert.deepEqual(sortCategories(groups).map(group => group.id), ['z', 'a', 'b']);
   assert.equal(groups[0].id, 'b');
+});
+
+test('owner menu sections keep category and dish order, count unavailable dishes and search by dish or category', () => {
+  const categories = [{ id: 'snacks', name: 'Snacks', sortOrder: 1 }, { id: 'thalis', name: 'Thalis', sortOrder: 0 }, { id: 'empty', name: 'Sweets', sortOrder: 2 }];
+  const items: MenuItem[] = [
+    { ...dish, id: 'veg', name: 'Veg thali', category: 'Thalis', categoryId: 'thalis', sortOrder: 1 },
+    { ...dish, id: 'fish', name: 'Fish thali', category: 'Thalis', categoryId: 'thalis', sortOrder: 0 },
+    { ...dish, id: 'vadi', name: 'Kothimbir vadi', category: 'Snacks', categoryId: 'snacks', categorySortOrder: 1, isAvailable: false },
+  ];
+  const sections = menuSections(items, categories);
+  assert.deepEqual(sections.map(section => [section.category.id, section.items.map(item => item.id), section.unavailable]), [['thalis', ['fish', 'veg'], 0], ['snacks', ['vadi'], 1], ['empty', [], 0]]);
+  assert.deepEqual(menuSections(items, categories, ' VADI ').map(section => [section.category.id, section.items.map(item => item.id)]), [['snacks', ['vadi']]]);
+  assert.deepEqual(menuSections(items, categories, 'thalis').map(section => section.items.length), [2], 'category names match too');
+  assert.deepEqual(menuSections(items, categories, 'biryani'), []);
+});
+
+test('moves change only the chosen position and refuse no-op or out-of-range moves', () => {
+  assert.deepEqual(moveId(['a', 'b', 'c'], 'c', 0), ['c', 'a', 'b']);
+  assert.deepEqual(moveId(['a', 'b', 'c'], 'a', 1), ['b', 'a', 'c']);
+  assert.equal(moveId(['a', 'b', 'c'], 'a', 0), null);
+  assert.equal(moveId(['a', 'b', 'c'], 'a', 3), null);
+  assert.equal(moveId(['a', 'b', 'c'], 'a', -1), null);
+  assert.equal(moveId(['a', 'b', 'c'], 'z', 1), null);
+  const updated = { ...dish, isAvailable: false };
+  assert.deepEqual(replaceMenuItem([dish, { ...dish, id: 'c' }], updated).map(item => item.isAvailable), [false, true]);
 });

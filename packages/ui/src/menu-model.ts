@@ -23,3 +23,30 @@ export function sortMenuItems(items: readonly MenuItem[]): MenuItem[] {
 export function featuredMenuItems(items: readonly MenuItem[]): MenuItem[] {
   return sortMenuItems(items.filter(item => item.isAvailable && item.isFeatured));
 }
+
+export type MenuSection<C> = { category: C; items: MenuItem[]; unavailable: number };
+/** Owner menu: every category in order (empty ones too, unless searching), dishes in saved order. */
+export function menuSections<C extends { id: string; name: string; sortOrder: number }>(items: readonly MenuItem[], categories: readonly C[], query = ''): MenuSection<C>[] {
+  const needle = query.trim().toLocaleLowerCase('en');
+  const sorted = sortMenuItems(items);
+  return sortCategories(categories).map(category => {
+    const inCategory = sorted.filter(item => item.categoryId === category.id);
+    const matching = needle ? inCategory.filter(item => item.name.toLocaleLowerCase('en').includes(needle) || category.name.toLocaleLowerCase('en').includes(needle)) : inCategory;
+    return { category, items: matching, unavailable: inCategory.filter(item => !item.isAvailable).length };
+  }).filter(section => !needle || section.items.length > 0);
+}
+
+/** Move one id to a new index; returns null when the move changes nothing or is out of range. */
+export function moveId(ids: readonly string[], id: string, to: number): string[] | null {
+  const from = ids.indexOf(id);
+  if (from < 0 || to < 0 || to >= ids.length || to === from) return null;
+  const next = [...ids];
+  next.splice(from, 1);
+  next.splice(to, 0, id);
+  return next;
+}
+
+/** Replace one dish after a saved change without disturbing the rest of the list. */
+export function replaceMenuItem(items: readonly MenuItem[], updated: MenuItem): MenuItem[] {
+  return items.map(item => item.id === updated.id ? updated : item);
+}
