@@ -27,7 +27,7 @@ if (categoriesOnly) savedOrder = { id: orderId, business_id: businessId, custome
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
 let heldOrderResponses = [];
-let adminAllowed = false;
+let adminAllowed = false, failMembership = false;
 let failSave = true, failDelete = true;
 let menuItems = [item];
 let failCatalog = false;
@@ -68,7 +68,7 @@ await context.route(origin + '/**', async route => {
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
-  if (url.pathname === '/rest/v1/business_memberships') return json(adminAllowed ? { role: 'admin' } : null);
+  if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin' } : null);
   if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
   if (url.pathname === '/rest/v1/rpc/place_order') {
     const body = req.postDataJSON(); requests.push(body);
@@ -233,8 +233,21 @@ const prepareCart = async (page, add = true) => {
   await admin.goto(adminServer.url, { waitUntil: 'networkidle' });
   await signIn(admin);
   await admin.getByText('Access denied', { exact: true }).filter({ visible: true }).waitFor();
-  adminAllowed = true;
+  // Owner tabs exist only after the server confirms membership; sign out stays available meanwhile.
+  const ownerTabs = admin.getByRole('navigation', { name: 'Owner sections' });
+  const ownerTab = name => ownerTabs.getByRole('button', { name, exact: true });
+  assert.equal(await ownerTabs.count(), 0, 'access denied shows no owner tabs');
+  await admin.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+  failMembership = true;
   await admin.reload({ waitUntil: 'networkidle' });
+  await admin.getByText('Could not check access', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await ownerTabs.count(), 0, 'an access check error shows no owner tabs');
+  failMembership = false; adminAllowed = true;
+  await admin.getByRole('button', { name: 'Retry', exact: true }).click();
+  await ownerTabs.waitFor();
+  assert.deepEqual(await ownerTabs.getByRole('button').allTextContents(), ['Orders', 'Menu', 'Today', 'Settings']);
+  assert.equal(await ownerTab('Orders').getAttribute('aria-current'), 'page');
+  await admin.getByRole('heading', { name: 'Orders', exact: true }).waitFor();
   await admin.getByText('Order queue', { exact: true }).filter({ visible: true }).waitFor();
   await admin.getByRole('button', { name: 'View details', exact: true }).click();
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
@@ -290,6 +303,28 @@ const prepareCart = async (page, add = true) => {
   await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
   await admin.getByText('Item deleted.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(menuItems.length, 1);
+  assert.equal(await ownerTab('Menu').getAttribute('aria-current'), 'page');
+  await ownerTab('Today').click();
+  await admin.getByText("Today's summary is coming soon", { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await ownerTab('Today').getAttribute('aria-current'), 'page');
+  assert.equal(await ownerTab('Menu').getAttribute('aria-current'), null);
+  assert.equal(await admin.getByText('Order queue', { exact: true }).count(), 0);
+  await ownerTab('Settings').click();
+  await admin.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
+  await admin.getByText(user.email, { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByRole('button', { name: 'Turn notifications on', exact: true }).waitFor();
+  await admin.getByText('Phone numbers, delivery fee and minimum order · Coming soon', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Who can manage Ammu Sammu · Coming soon', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await admin.getByRole('button', { name: /Restaurant details|Owners|Coming soon/ }).count(), 0, 'placeholders are not interactive');
+  await ownerTab('Orders').click();
+  await admin.getByText('Order queue', { exact: true }).filter({ visible: true }).waitFor();
+  await ownerTab('Settings').click();
+  await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await admin.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  assert.equal(await ownerTabs.count(), 0, 'signing out removes owner tabs');
+  await admin.getByText("This app is for Ammu Sammu's owners. Customers order from the Ammu Sammu app.", { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await admin.getByLabel('Password', { exact: true }).filter({ visible: true }).inputValue(), '');
+  console.log('PASS: owner tabs appear only after server access; denied/error states hide them; tab switching and sign-out');
   assert.deepEqual(errors, []);
   assert.deepEqual(externalRequests, []);
   assert.deepEqual(externalSockets, []);
@@ -423,6 +458,29 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1, 'only frozen attempt retains the old mark');
       assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), JSON.stringify(attempt));
       await adminPage.goto(owner.url, { waitUntil: 'networkidle' });
+      // Each owners' app shows only its own logo and fonts, with a bottom tab bar at phone and desktop widths.
+      const brands = { 'ammu-sammu': { name: 'Ammu Sammu', heading: 'Eczar_600SemiBold' }, 'kokani-dine-inn': { name: 'Kokani Dine Inn', heading: 'TiroDevanagariMarathi_400Regular' } };
+      const brand = brands[slug], other = Object.values(brands).find(value => value !== brand);
+      const sections = adminPage.getByRole('navigation', { name: 'Owner sections' });
+      await sections.waitFor();
+      assert.equal(await adminPage.getByRole('img', { name: brand.name, exact: true }).count(), 1);
+      assert.equal(await adminPage.getByRole('img', { name: other.name }).count(), 0);
+      const title = adminPage.getByRole('heading', { name: 'Orders', exact: true });
+      await adminPage.waitForFunction(family => [...document.querySelectorAll('[role=heading]')].some(node => getComputedStyle(node).fontFamily.includes(family)), brand.heading);
+      const families = await adminPage.evaluate(() => [...document.fonts].map(font => font.family.replace(/"/g, '')));
+      assert.ok(families.includes(brand.heading));
+      assert.equal(families.includes(other.heading), false, 'the other restaurant fonts are never loaded');
+      assert.match(await title.evaluate(node => getComputedStyle(node).fontFamily), new RegExp(brand.heading));
+      for (const [width, height] of [[390, 844], [1440, 900]]) {
+        await adminPage.setViewportSize({ width, height });
+        const bar = await sections.boundingBox();
+        assert.ok(Math.abs(bar.y + bar.height - height) <= 1, 'tab bar is fixed to the bottom');
+        assert.ok(bar.width <= 600 && Math.abs(bar.x + bar.width / 2 - width / 2) <= 1, 'tab bar is centred');
+        for (const box of await sections.getByRole('button').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()))) assert.ok(box.width >= 48 && box.height >= 48, 'tab targets are at least 48px');
+        await adminPage.screenshot({ path: `dist/browser/${slug}-owner-tabs-${width}.png` });
+      }
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      console.log(`PASS: ${slug} owner shell brand logo/fonts isolation and responsive bottom tabs`);
       await adminPage.getByRole('button', { name: 'View details', exact: true }).click();
       await assertMarks(adminPage);
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
@@ -607,6 +665,18 @@ const prepareCart = async (page, add = true) => {
       console.log(`PASS: ${slug} deletion waits for reload, restores focus, and reload failure retries without duplicate deletion`);
       assert.ok(categoryWrites.every(write => write.method !== 'PATCH' || write.values.business_id === undefined));
       console.log(`PASS: ${slug} category create/rename/order/picker, duplicate and retry errors, in-use restriction/race, keyboard focus and real All filter`);
+      // Signing out from Settings returns this brand's owners' app to its branded sign-in without tabs.
+      const ownerName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
+      const ownerSections = adminPage.getByRole('navigation', { name: 'Owner sections' });
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      await ownerSections.getByRole('button', { name: 'Settings', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      assert.equal(await ownerSections.count(), 0, 'signed-out owners see no tabs');
+      await adminPage.getByRole('heading', { name: `${ownerName} kitchen`, exact: true }).waitFor();
+      await adminPage.getByText(`This app is for ${ownerName}'s owners. Customers order from the ${ownerName} app.`, { exact: true }).filter({ visible: true }).waitFor();
+      assert.equal(await adminPage.getByRole('img', { name: ownerName }).count(), 0, 'the logo is decorative beside the restaurant name');
+      console.log(`PASS: ${slug} owner sign-out shows the branded signed-out state without tabs`);
       assert.deepEqual(dietErrors, []);
       if (!categoriesOnly) console.log(`PASS: ${slug} accessible diet shapes, unknown mark absence, menu/cart/reload/history/frozen attempt and owner keyboard classification`);
     } finally { await dietContext.close(); await customer.close(); await owner.close(); }
