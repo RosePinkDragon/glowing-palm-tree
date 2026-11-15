@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
@@ -7,13 +7,18 @@ import { DietMark } from './DietMark';
 import { AdminMenu } from './AdminMenu';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { applyOrderTransition, mergeOrderSnapshot, nextStatuses, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
+import { OwnerScreen, OwnerTabBar } from './OwnerShell';
+import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
+import { useMarketTheme } from './theme';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
-export function AdminArea({ services }: { services: MarketServices }) {
+// Tabs render only after the server confirms owner access; the access states keep the account card (and sign out) available.
+export function AdminArea({ services, banner, account }: { services: MarketServices; banner?: ReactNode; account?: ReactNode }) {
+  const { name } = useMarketTheme();
   const [access, setAccess] = useState<'loading' | 'allowed' | 'denied' | 'error'>('loading');
   const [accessError, setAccessError] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const [section, setSection] = useState<'orders' | 'menu'>('orders');
+  const [tab, setTab] = useState<OwnerTabId>(defaultOwnerTab);
   useEffect(() => {
     let active = true;
     setAccess('loading');
@@ -21,12 +26,37 @@ export function AdminArea({ services }: { services: MarketServices }) {
     services.isAdmin().then(allowed => { if (active) setAccess(allowed ? 'allowed' : 'denied'); }).catch(error => { if (active) { setAccessError(message(error)); setAccess('error'); } });
     return () => { active = false; };
   }, [services, attempt]);
-  if (access === 'loading') return <MarketStatus kind="loading" title="Checking access" />;
-  if (access === 'error') return <MarketStatus kind="error" title="Could not check access" message={accessError} action={<MarketButton label="Retry" onPress={() => setAttempt(n => n + 1)} />} />;
-  if (access === 'denied') return <MarketStatus kind="error" title="Access denied" message="Your account is not an administrator for this business. Contact the business owner for access." />;
+  if (access !== 'allowed') return <OwnerScreen title={name}>
+    {banner}
+    {access === 'loading' ? <MarketStatus kind="loading" title="Checking access" /> : null}
+    {access === 'error' ? <MarketStatus kind="error" title="Could not check access" message={accessError} action={<MarketButton label="Retry" onPress={() => setAttempt(n => n + 1)} />} /> : null}
+    {access === 'denied' ? <MarketStatus kind="error" title="Access denied" message="Your account is not an administrator for this business. Contact the business owner for access." /> : null}
+    {account}
+  </OwnerScreen>;
+  return <View style={{ flex: 1 }}>
+    <OwnerScreen key={tab} title={ownerTabLabel(tab)}>
+      {banner}
+      {tab === 'orders' ? <OrderQueue services={services} /> : null}
+      {tab === 'menu' ? <AdminMenu services={services} /> : null}
+      {tab === 'today' ? <MarketStatus kind="empty" title="Today's summary is coming soon" message="A summary of today's orders will appear here in a later update. Use Orders to see current orders." /> : null}
+      {tab === 'settings' ? <OwnerSettings account={account} /> : null}
+    </OwnerScreen>
+    <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} />
+  </View>;
+}
+// Real account controls first; restaurant settings (#60) and owner management (#59) are announced, not interactive.
+function OwnerSettings({ account }: { account?: ReactNode }) {
+  const { name } = useMarketTheme();
   return <View style={{ gap: 20 }}>
-    <MarketNavigation items={[{ label: 'Orders', selected: section === 'orders', onPress: () => setSection('orders') }, { label: 'Menu', selected: section === 'menu', onPress: () => setSection('menu') }]} />
-    {section === 'orders' ? <OrderQueue services={services} /> : <AdminMenu services={services} />}
+    {account ?? <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>Sign-in is not available in sample mode.</MarketText></MarketCard>}
+    <MarketCard>
+      <MarketText variant="eyebrow">Restaurant</MarketText>
+      {[['Restaurant details', 'Phone numbers, delivery fee and minimum order'], ['Owners', `Who can manage ${name}`]].map(([title, detail]) => <View key={title} style={{ gap: 2 }}>
+        <MarketText>{title}</MarketText>
+        <MarketText variant="muted">{`${detail} · Coming soon`}</MarketText>
+      </View>)}
+    </MarketCard>
+    <MarketText variant="muted">{`${name} owners' app`}</MarketText>
   </View>;
 }
 function OrderQueue({ services }: { services: MarketServices }) {

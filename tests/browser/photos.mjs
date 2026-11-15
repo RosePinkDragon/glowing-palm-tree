@@ -173,7 +173,7 @@ try {
       const admin = await context.newPage(); admin.on('pageerror', e => errors.push(e.message));
       await admin.goto(owner.url, { waitUntil: 'networkidle' });
       await admin.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await admin.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-      await admin.getByRole('button', { name: 'Sign in', exact: true }).click(); await admin.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); await admin.getByRole('button', { name: 'Menu', exact: true }).click();
+      await admin.getByRole('button', { name: 'Sign in', exact: true }).click(); await admin.getByRole('navigation', { name: 'Owner sections' }).getByRole('button', { name: 'Menu', exact: true }).click();
       const openPhoto = async () => { await admin.getByRole('button', { name: 'Manage photo for Photo dish', exact: true }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Photo for Photo dish'); };
       const choose = async (name, buffer) => { const chooser = admin.waitForEvent('filechooser'); await admin.getByRole('button', { name: /^Choose (photo|another photo)$/ }).click(); await (await chooser).setFiles({ name, mimeType: 'image/png', buffer }); };
       await openPhoto(); await choose('oversized.png', Buffer.alloc(5 * 1024 * 1024 + 1)); await admin.getByText('Choose a photo up to 5 MB.', { exact: true }).waitFor(); assert.equal(ownerActions.length, 0);
