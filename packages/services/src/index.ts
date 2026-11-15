@@ -347,6 +347,29 @@ export function createMarketServices(options: ServiceOptions) {
     fail(error, 'Could not delete menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
+  // Only availability changes, so the list switch never overwrites a concurrent dish edit.
+  const setMenuItemAvailability = async (id: string, isAvailable: boolean): Promise<MenuItem> => {
+    if (typeof id !== 'string' || !id.trim() || typeof isAvailable !== 'boolean') throw new ServiceError('INVALID_MENU_ITEM', 'Choose a dish and whether it is available.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_items').update({ available: isAvailable }).eq('id', id).eq('business_id', business.id).select(menuSelect).maybeSingle();
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not change availability');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business. Reload the menu.');
+    return mapMenu(data as MenuRow, slug, photoBase);
+  };
+  const reorder = async (fn: 'reorder_menu_items' | 'reorder_menu_categories', args: Record<string, unknown>, ids: readonly string[]): Promise<void> => {
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) throw new ServiceError('INVALID_ORDER', 'List each entry exactly once.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { error } = await db.rpc(fn, { p_business_slug: slug, ...args });
+    if (error?.code === '40001') throw new ServiceError('MENU_CHANGED', 'The menu changed on another device. It has been reloaded; arrange it again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not save the new order');
+  };
+  const reorderMenuItems = (categoryId: string, itemIds: readonly string[]) => {
+    if (typeof categoryId !== 'string' || !categoryId.trim()) throw new ServiceError('INVALID_ORDER', 'Choose a category to arrange.');
+    return reorder('reorder_menu_items', { p_category_id: categoryId, p_item_ids: itemIds }, itemIds);
+  };
+  const reorderCategories = (categoryIds: readonly string[]) => reorder('reorder_menu_categories', { p_category_ids: categoryIds }, categoryIds);
   const photoRequest = async (action: 'upload' | 'remove' | 'cleanup', item?: MenuItem, bytes?: ArrayBuffer): Promise<{ cleanupComplete: boolean }> => {
     const db = requireClient();
     if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage dish photos.');
@@ -451,7 +474,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
@@ -477,6 +500,8 @@ export function subscribeToBusinessState(db: SupabaseClient, businessId: string,
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
     // Realtime cannot filter deletes (the old row carries only its key), so any deleted dish triggers a refresh.
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'menu_items' }, notify)
+    // Category adds, renames and reorders change how customers see the menu (#102).
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_categories', filter: `business_id=eq.${businessId}` }, notify)
     .subscribe(status => {
       if (!active) return;
       if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect
