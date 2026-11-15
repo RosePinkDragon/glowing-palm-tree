@@ -4,6 +4,7 @@ import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketNavigation, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
+import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
 import { AdminMenu } from './AdminMenu';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { applyOrderTransition, mergeOrderSnapshot, nextStatuses, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
@@ -73,6 +74,7 @@ function OrderQueue({ services }: { services: MarketServices }) {
   const chosen = orders.find(order => order.id === selected);
   return <View style={{ gap: 16 }}>
     <MarketText variant="heading">Order queue</MarketText>
+    <OwnerOrderingSwitch services={services} />
     {services.mode === 'demo' ? <MarketStatus kind="empty" title="Sample mode" message="There are no live orders in sample mode. Connect the backend and sign in as an administrator to manage orders." /> : null}
     {success ? <View role="status" aria-live="polite"><MarketText>{success}</MarketText></View> : null}
     {notice ? <MarketStatus kind="error" title="Order update notice" message={notice} action={<MarketButton label="Refresh and reconnect" variant="secondary" onPress={() => { setNotice(''); setSubscriptionAttempt(n => n + 1); }} />} /> : null}

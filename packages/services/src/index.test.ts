@@ -358,7 +358,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
   const originalFetch = globalThis.fetch;
   const memory = new Map<string, string>();
   const storage = { getItem: (k: string) => memory.get(k) ?? null, setItem: (k: string, v: string) => { memory.set(k, v); }, removeItem: (k: string) => { memory.delete(k); } };
-  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', session_id: 'owner-session-1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
   let business: Record<string, unknown> = { id: 'tenant-id', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
   let admin = true;
   const rpcs: { name: string; body: Record<string, unknown> }[] = [];
@@ -396,6 +396,60 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     await assert.rejects(customer.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('owner switch fences a held membership check to its initiating owner and auth session', async t => {
+  const originalFetch = globalThis.fetch;
+  const jwt = (sub: string, session_id: string, version: number) => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub, session_id, version, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`;
+  for (const scenario of ['other-owner', 'new-session', 'matching-refresh', 'disposed'] as const) await t.test(scenario, async () => {
+    const initial = jwt('owner-a', 'session-a', 1);
+    let activeUser = 'owner-a', activeToken = initial;
+    let release!: () => void, arrived!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const membershipArrived = new Promise<void>(resolve => { arrived = resolve; });
+    const rpcs: { auth: string | null; body: unknown }[] = [];
+    const memory = new Map<string, string>();
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/auth/v1/token') return Response.json({ access_token: activeToken, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: activeUser, aud: 'authenticated' } });
+      if (url.pathname === '/auth/v1/logout') return new Response(null, { status: 204 });
+      if (url.pathname === '/auth/v1/user') {
+        const token = new Headers(init?.headers).get('Authorization')!.slice(7);
+        const sub = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub;
+        return Response.json({ id: sub, aud: 'authenticated' });
+      }
+      if (url.pathname === '/rest/v1/businesses') return Response.json({ id: 'business', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+      if (url.pathname === '/rest/v1/business_memberships') {
+        assert.equal(new Headers(init?.headers).get('Authorization'), `Bearer ${initial}`, 'membership lookup started with owner A');
+        arrived(); await held; return Response.json({ role: 'admin' });
+      }
+      if (url.pathname === '/rest/v1/rpc/set_accepting_orders') {
+        rpcs.push({ auth: new Headers(init?.headers).get('Authorization'), body: JSON.parse(String(init?.body)) });
+        return Response.json({ business_id: 'business', accepting_orders: false });
+      }
+      throw new Error(`Unexpected owner-session fixture ${url}`);
+    };
+    const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: key => memory.get(key) ?? null, setItem: (key, value) => { memory.set(key, value); }, removeItem: key => { memory.delete(key); } } });
+    try {
+      await service.auth.signIn('owner-a@example.test', 'password');
+      const pending = service.setAcceptingOrders(false).then(value => ({ value, error: undefined }), error => ({ value: undefined, error }));
+      await membershipArrived;
+      if (scenario === 'disposed') service.dispose();
+      else {
+        if (scenario === 'other-owner') { await service.auth.signOut(); activeUser = 'owner-b'; activeToken = jwt(activeUser, 'session-b', 1); }
+        else activeToken = jwt(activeUser, scenario === 'new-session' ? 'session-other' : 'session-a', 2);
+        await service.auth.signIn(`${activeUser}@example.test`, 'password');
+      }
+      release(); const result = await pending;
+      if (scenario === 'matching-refresh') {
+        assert.equal(result.error, undefined); assert.equal(result.value, false);
+        assert.deepEqual(rpcs, [{ auth: `Bearer ${activeToken}`, body: { p_business_slug: slug, p_accepting: false } }], 'matching refreshed credentials authorize exactly the initiating owner request');
+      } else {
+        assert.ok(result.error instanceof ServiceError && result.error.code === 'SESSION_CHANGED', 'stale owner/session must be rejected before dispatch');
+        assert.equal(rpcs.length, 0, 'no switch mutation may be attributed to the next owner or auth session');
+      }
+    } finally { release(); service.dispose(); globalThis.fetch = originalFetch; }
+  });
 });
 
 test('demo diet stays unknown and explicit menu marks map for both restaurants', async () => {

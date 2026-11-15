@@ -412,8 +412,19 @@ export function createMarketServices(options: ServiceOptions) {
   /** Owners open or close the restaurant for new orders; the backend checks ownership. */
   const setAcceptingOrders = async (accepting: boolean): Promise<boolean> => {
     if (typeof accepting !== 'boolean') throw new ServiceError('INVALID_VALUE', 'Choose whether the restaurant is taking orders.');
-    const db = requireClient(); await requireAdminBusiness();
-    const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting });
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to change restaurant status.');
+    const initial = await db.auth.getSession(); fail(initial.error, 'Could not restore session');
+    const expected = initial.data.session ? sessionIdentity(initial.data.session.access_token) : null;
+    if (!expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SESSION_CHANGED', 'Sign in again before changing restaurant status.');
+    await requireAdminBusiness();
+    const current = await db.auth.getSession(); fail(current.error, 'Could not restore session');
+    const token = current.data.session?.access_token;
+    const identity = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started || !identity || expected.userId !== identity.userId || expected.sessionId !== identity.sessionId || current.data.session?.user.id !== identity.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Review restaurant status before trying again.');
+    // Pin this request after verification: a later auth change cannot attribute
+    // the initiating owner's action to the next account during fetch dispatch.
+    const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting }).setHeader('Authorization', `Bearer ${token}`);
     fail(error, 'Could not change whether the restaurant is taking orders');
     if (typeof data?.accepting_orders !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the change.');
     return data.accepting_orders;
