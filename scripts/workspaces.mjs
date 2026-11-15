@@ -29,23 +29,8 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-async function testFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const path = resolve(directory, entry.name);
-    if (entry.isDirectory() && entry.name !== 'node_modules') files.push(...await testFiles(path));
-    else if (entry.isFile() && /\.(test|spec)\.(js|mjs|cjs|ts)$/.test(entry.name)) files.push(path);
-  }
-  return files;
-}
-
 const [operation, ...args] = process.argv.slice(2);
-if (operation === 'test:core') {
-  const files = await testFiles(resolve(root, 'packages/core'));
-  if (files.length) run(process.execPath, ['--test', '--test-isolation=none', ...files]);
-  else console.log('No core tests yet.');
-} else if (operation === 'app') {
+if (operation === 'app') {
   const [name, command, ...rest] = args;
   if (!name || !command || !(await appWorkspaces()).includes(name)) {
     console.error('Usage: npm run app -- <installed-app-workspace> <command> [...args]');
@@ -54,7 +39,8 @@ if (operation === 'test:core') {
   run('npm', ['run', command, '--workspace', name, ...(rest.length ? ['--', ...rest] : [])]);
 } else if (operation === 'build:web' || operation === 'export:native') {
   const apps = await appWorkspaces();
-  if (!apps.length) console.log('No app workspaces present yet.');
+  const missing = Object.keys(targets).filter(name => !apps.includes(name));
+  if (missing.length) throw new Error(`Missing app workspaces: ${missing.join(', ')}`);
   for (const app of apps) run('npm', ['run', operation, '--workspace', app]);
 } else {
   console.error(`Unknown workspace operation: ${operation}`);
