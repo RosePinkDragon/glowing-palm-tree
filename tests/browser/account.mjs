@@ -32,7 +32,8 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   };
   const detail = async () => { await page.goto(server.url + '/orders/' + target.id, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Reorder order 000024', exact: true }).waitFor(); };
   const reorder = () => page.getByRole('button', { name: 'Reorder order 000024', exact: true }).click();
-  const choice = async () => { await reorder(); await page.getByRole('button', { name: 'Replace cart', exact: true }).waitFor(); };
+  const panelFocused = () => page.waitForFunction(() => document.activeElement?.tagName === 'H1' && document.activeElement?.textContent === 'Reorder');
+  const choice = async () => { await reorder(); await page.getByRole('button', { name: 'Replace cart', exact: true }).waitFor(); await panelFocused(); };
   const cancel = async () => { await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); };
   const heldMenu = () => {
     let release, arrived;
@@ -44,28 +45,47 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByLabel('Email', { exact: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+  await page.goto(server.url, { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Meals', exact: true }).click();
   await page.getByRole('button', { name: 'Account', exact: true }).click(); await settledDrawer(page);
   const initial = await raw(), gate = heldMenu();
   await reorder(); await gate.pending;
   await page.getByText('Checking the current menu', { exact: true }).waitFor();
-  await page.keyboard.press('Tab'); await page.waitForFunction(() => document.activeElement?.textContent === 'Cancel');
+  await panelFocused();
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Cancel');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
   gate.release(); assert.equal(await raw(), initial, 'cancel while fetching preserves draft and restores the drawer trigger');
-  fixture.menu = [{ ...item, price_paise: 17500 }];
+  const freshItem = { ...item, price_paise: 17500, category_id: '56000000-0000-4000-8000-000000000002', menu_categories: { name: 'Fresh meals', sort_order: 0 } };
+  fixture.menu = [freshItem];
   await reorder();
   await page.getByText(/Reorder added to your cart at current menu prices/).waitFor();
   await page.waitForFunction(() => document.activeElement?.textContent?.includes('Reorder added to your cart'));
   let current = await saved(); assert.equal(current.lines[0].quantity, 2); assert.equal(current.lines[0].item.pricePaise, 17500);
   await page.getByText(/Skipped unavailable dishes: Removed curry/).waitFor();
+  await page.goBack(); await page.getByRole('button', { name: 'Fresh meals', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'All dishes', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.locator('#regular-menu').getByText('Account fixture meal', { exact: true }).waitFor();
+  await page.goForward(); await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).click();
   current = await saved(); assert.equal(current.lines[0].item.pricePaise, 17500, 'cached-menu reconciliation cannot restore the old price after import');
   await detail();
-  const existing = await raw(); await choice(); await page.screenshot({ path: `dist/browser/${slug}-reorder-choice.png`, fullPage: true });
+  const existing = await raw(); await choice();
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `dist/browser/${slug}-reorder-choice-${width}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await cancel(); assert.equal(await raw(), existing, 'Cancel leaves existing cart byte-for-byte unchanged');
-  await choice(); await page.keyboard.press('Escape'); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
+  await choice(); await page.keyboard.press('Escape'); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
   assert.equal(await raw(), existing, 'Escape leaves existing cart unchanged');
-  await choice(); await page.getByRole('button', { name: 'Add to cart', exact: true }).click();
+  await choice(); await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
+  assert.equal(await raw(), existing, 'browser back dismissal leaves the cart unchanged');
+  await choice(); await page.getByRole('button', { name: 'Add to cart', exact: true }).evaluate(button => { button.click(); button.click(); });
   await page.getByText(/Reorder added to your cart at current menu prices/).filter({ visible: true }).waitFor();
   assert.equal((await saved()).lines[0].quantity, 5);
   await detail(); await choice(); await page.getByRole('button', { name: 'Replace cart', exact: true }).click();
@@ -73,7 +93,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   // With the same mounted cached catalog, all unavailable leaves the existing draft intact.
   await detail(); fixture.menu = []; const unavailable = await raw(); await reorder();
   await page.getByText('No dishes available to reorder', { exact: true }).waitFor(); assert.equal(await raw(), unavailable); await cancel();
-  fixture.menu = [{ ...item, price_paise: 17500 }];
+  fixture.menu = [freshItem];
   const base = (await saved()).lines[0]; await seed([{ ...base, quantity: 9 }]);
   await choice(); const overQuantity = await raw(); await page.getByRole('button', { name: 'Add to cart', exact: true }).click();
   await page.getByText(/Quantity must be a whole number from 1 to 10/).waitFor(); assert.equal(await raw(), overQuantity);
@@ -111,6 +131,12 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await other.evaluate(({ key, line }) => { const value = JSON.parse(localStorage.getItem(key)); value.revision++; value.lines = [line]; localStorage.setItem(key, JSON.stringify(value)); }, { key, line: base });
   raced.release(); await page.getByRole('button', { name: 'Review current cart', exact: true }).waitFor();
   assert.deepEqual((await saved()).lines, [base]); await cancel();
+  await seed([]); await page.evaluate(() => { window.__delayCartEvents = true; });
+  const delayedEmpty = heldMenu(); await reorder(); await delayedEmpty.pending;
+  await other.evaluate(({ key, line }) => { const value = JSON.parse(localStorage.getItem(key)); value.revision++; value.lines = [line]; localStorage.setItem(key, JSON.stringify(value)); }, { key, line: base });
+  delayedEmpty.release(); await page.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
+  assert.deepEqual((await saved()).lines, [base], 'fresh locked review prompts instead of replacing an unseen addition'); await cancel();
+  await page.evaluate(() => { window.__delayCartEvents = false; });
   // Logout while a fresh-menu fetch is outstanding cannot resurrect the old account's cart.
   const identityGate = heldMenu(); await reorder(); await identityGate.pending;
   await other.getByRole('button', { name: 'Account', exact: true }).click();
@@ -187,19 +213,27 @@ try {
       }
       throw new Error(`Unexpected account request ${url.pathname}`);
     });
+    await context.addInitScript(() => {
+      const add = window.addEventListener.bind(window), remove = window.removeEventListener.bind(window), listeners = new WeakMap();
+      window.addEventListener = function(type, listener, options) {
+        if (type !== 'storage' || !listener) return add(type, listener, options);
+        const wrapped = event => { if (window.__delayCartEvents && event.key?.startsWith('market:cart:')) return; if (typeof listener === 'function') listener.call(window, event); else listener.handleEvent(event); };
+        listeners.set(listener, wrapped); return add(type, wrapped, options);
+      };
+      window.removeEventListener = function(type, listener, options) { return remove(type, type === 'storage' && listener ? listeners.get(listener) ?? listener : listener, options); };
+      const set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
+    });
     try {
       if (process.env.REORDER_ONLY === '1') {
-        await context.addInitScript(() => {
-          const add = window.addEventListener.bind(window);
-          window.addEventListener = function(type, listener, options) {
-            if (type !== 'storage') return add(type, listener, options);
-            return add(type, event => { if (window.__delayCartEvents && event.key?.startsWith('market:cart:')) return; if (typeof listener === 'function') listener.call(window, event); else listener?.handleEvent(event); }, options);
-          };
-          const set = Storage.prototype.setItem;
-          Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
-        });
         const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
-        await reorderScenarios({ page, context, server, slug, item, rows, fixture }); assert.deepEqual(errors, []); continue;
+        try { await reorderScenarios({ page, context, server, slug, item, rows, fixture }); }
+        catch (error) {
+          await page.screenshot({ path: `dist/browser/${slug}-reorder-failure.png`, fullPage: true });
+          console.error('Reorder focus at failure:', await page.evaluate(() => ({ tag: document.activeElement?.tagName, text: document.activeElement?.textContent?.slice(0, 180), label: document.activeElement?.getAttribute('aria-label') })));
+          throw error;
+        }
+        assert.deepEqual(errors, []); continue;
       }
       const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
       await page.goto(server.url, { waitUntil: 'networkidle' });

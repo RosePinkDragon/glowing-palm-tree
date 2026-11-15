@@ -62,7 +62,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const orderedMenu = sortMenuItems(draft.menu);
   const featured = featuredMenuItems(draft.menu);
   const categories = [...new Map(orderedMenu.map(item => [item.categoryId, { id: item.categoryId, name: item.category }])).values()];
-  useEffect(() => { if (category !== null && !market.loading && !market.menu.some(item => item.categoryId === category)) setCategory(null); }, [category, market.loading, market.menu]);
+  useEffect(() => { if (category !== null && !market.loading && !draft.menu.some(item => item.categoryId === category)) setCategory(null); }, [category, market.loading, draft.menu]);
   const changeCart = (fn: (lines: CartLine[]) => CartLine[]) => { void draft.changeCart(fn).then(() => setLocalError('')).catch(e => setLocalError(messageOf(e))); };
   const locate = async () => {
     if (!market.session) { navigation.current?.login('/cart'); setLocalError('Sign in before checking your delivery location. Your cart will stay here.'); return; }
