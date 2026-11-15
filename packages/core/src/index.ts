@@ -21,7 +21,6 @@ export type {
   Diet,
   DomainFieldErrors,
   LocationFix,
-  LocationPermissionState,
   MenuItem,
   Order,
   OrderLine,
