@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOrderTransition, mergeOrderSnapshot, nextStatuses, ordersForFilter, parseRupees, rupeesInput } from './admin-model.ts';
+import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, parseRupees, queueFilters, rupeesInput, shortAddress } from './admin-model.ts';
 import type { Order } from '@market/core';
 
 test('rupees are converted exactly and invalid or unsafe amounts rejected', () => {
@@ -28,4 +28,26 @@ test('late transition and snapshot responses cannot roll back a newer order or r
   assert.deepEqual(mergeOrderSnapshot(lateTransition.orders, [v2]), [v3]);
   const removed = mergeOrderSnapshot(live, []);
   assert.deepEqual(applyOrderTransition(removed, v2), { orders: [], observed: undefined });
+});
+test('queue filters count each status, label the design filters and drive the New badge', () => {
+  const orders = ['placed', 'placed', 'accepted', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'].map(status => ({ status }) as Order);
+  assert.deepEqual(filterCounts(orders), { placed: 2, accepted: 1, preparing: 1, out_for_delivery: 1, complete: 2 });
+  assert.equal(newOrderCount(orders), 2);
+  assert.equal(newOrderCount([]), 0);
+  assert.deepEqual(queueFilters.map(filterLabel), ['New', 'Accepted', 'Preparing', 'Out', 'Done']);
+  assert.equal(filterForStatus('cancelled'), 'complete');
+  assert.equal(filterForStatus('placed'), 'placed');
+});
+test('order reference, elapsed time and address summary', () => {
+  assert.equal(orderReference('40000000-0000-4000-8000-0000000abc01'), '#0ABC01');
+  assert.equal(orderReference('abc'), '#ABC');
+  const now = Date.parse('2026-11-16T10:00:00Z');
+  assert.equal(elapsedLabel('2026-11-16T09:59:30Z', now), 'just now');
+  assert.equal(elapsedLabel('2026-11-16T10:05:00Z', now), 'just now');
+  assert.equal(elapsedLabel('2026-11-16T09:58:00Z', now), '2 min ago');
+  assert.equal(elapsedLabel('2026-11-16T08:30:00Z', now), '1 h ago');
+  assert.equal(elapsedLabel('2026-11-14T10:00:00Z', now), '2 d ago');
+  assert.equal(elapsedLabel('not a date', now), 'just now');
+  assert.equal(shortAddress('  Station   Road '), 'Station Road');
+  assert.equal(shortAddress('x'.repeat(50), 10), `${'x'.repeat(9)}…`);
 });

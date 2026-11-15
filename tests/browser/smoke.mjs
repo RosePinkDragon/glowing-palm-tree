@@ -235,7 +235,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByText('Access denied', { exact: true }).filter({ visible: true }).waitFor();
   // Owner tabs exist only after the server confirms membership; sign out stays available meanwhile.
   const ownerTabs = admin.getByRole('navigation', { name: 'Owner sections' });
-  const ownerTab = name => ownerTabs.getByRole('button', { name, exact: true });
+  const ownerTab = name => ownerTabs.getByRole('button', { name: new RegExp(`^${name}(,|$)`) }); // the Orders name gains ", N new"
   assert.equal(await ownerTabs.count(), 0, 'access denied shows no owner tabs');
   await admin.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   failMembership = true;
@@ -245,22 +245,22 @@ const prepareCart = async (page, add = true) => {
   failMembership = false; adminAllowed = true;
   await admin.getByRole('button', { name: 'Retry', exact: true }).click();
   await ownerTabs.waitFor();
-  assert.deepEqual(await ownerTabs.getByRole('button').allTextContents(), ['Orders', 'Menu', 'Today', 'Settings']);
+  assert.deepEqual((await ownerTabs.getByRole('button').allTextContents()).map(text => text.replace(/^\d+|\d+$/g, '')), ['Orders', 'Menu', 'Today', 'Settings']);
   assert.equal(await ownerTab('Orders').getAttribute('aria-current'), 'page');
   await admin.getByRole('heading', { name: 'Orders', exact: true }).waitFor();
-  await admin.getByText('Order queue', { exact: true }).filter({ visible: true }).waitFor();
-  await admin.getByRole('button', { name: 'View details', exact: true }).click();
+  await admin.getByRole('button', { name: 'Accept order #000001', exact: true }).waitFor();
+  await admin.getByRole('button', { name: 'Details for #000001', exact: true }).click();
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
-  await focused(admin, `Cancel order ${orderId}?`);
+  await focused(admin, 'Cancel order #000001?');
   await admin.getByRole('button', { name: 'Keep order', exact: true }).click();
   await focused(admin, 'Cancel order');
   assert.equal(mutations.length, 0);
   await admin.getByRole('button', { name: 'Mark accepted', exact: true }).click();
-  await admin.getByText('Order updated to Accepted.', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Order #000001 updated to Accepted.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[0].p_status, 'accepted');
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
   await admin.getByRole('button', { name: 'Confirm cancellation', exact: true }).click();
-  await admin.getByText('Order updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Order #000001 updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[1].p_status, 'cancelled');
   await admin.getByRole('button', { name: 'Menu', exact: true }).click();
   await admin.getByRole('button', { name: 'Add dish', exact: true }).click();
@@ -308,7 +308,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByText("Today's summary is coming soon", { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await ownerTab('Today').getAttribute('aria-current'), 'page');
   assert.equal(await ownerTab('Menu').getAttribute('aria-current'), null);
-  assert.equal(await admin.getByText('Order queue', { exact: true }).count(), 0);
+  assert.equal(await admin.getByRole('button', { name: 'Details for #000001' }).count(), 0, 'order cards are only on the Orders tab');
   await ownerTab('Settings').click();
   await admin.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
   await admin.getByText(user.email, { exact: true }).filter({ visible: true }).waitFor();
@@ -317,7 +317,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByText('Who can manage Ammu Sammu · Coming soon', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await admin.getByRole('button', { name: /Restaurant details|Owners|Coming soon/ }).count(), 0, 'placeholders are not interactive');
   await ownerTab('Orders').click();
-  await admin.getByText('Order queue', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByRole('button', { name: 'Done', exact: true }).waitFor();
   await ownerTab('Settings').click();
   await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
   await admin.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
@@ -487,7 +487,7 @@ const prepareCart = async (page, add = true) => {
       }
       await adminPage.setViewportSize({ width: 390, height: 844 });
       console.log(`PASS: ${slug} owner shell brand logo/fonts isolation and responsive bottom tabs`);
-      await adminPage.getByRole('button', { name: 'View details', exact: true }).click();
+      await adminPage.getByRole('button', { name: /^Details for #/ }).click();
       await assertMarks(adminPage);
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
@@ -695,6 +695,154 @@ const prepareCart = async (page, add = true) => {
     } finally { await dietContext.close(); await customer.close(); await owner.close(); }
   }
 
+  // Owners' Orders queue (#100): cards, accept, conflicts, live/paused, badge and single subscription, per brand.
+  if (!categoriesOnly) for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
+    if (selectedBrand && slug !== selectedBrand) continue;
+    const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    const primary = { 'ammu-sammu': 'rgb(168, 62, 50)', 'kokani-dine-inn': 'rgb(22, 92, 84)' }[slug];
+    const brandName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
+    const errs = [], unhandled = [], rpcCalls = [], sockets = [], joined = new Map();
+    let realtimeFail = false, gate = null, orderGets = 0;
+    const ids = n => `40000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+    const ref = n => `#${n.toString(16).toUpperCase().padStart(6, '0')}`;
+    const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+    const row = (n, status, customer, address, minutes, lines) => ({ id: ids(n), business_id: businessId, customer_id: userId, status, version: 1, subtotal_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0), delivery_fee_paise: 3000, total_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0) + 3000, customer_name: customer, customer_phone: '9876543210', delivery_address_line: address, created_at: ago(minutes), order_items: lines.map(([name, quantity, unit], i) => ({ menu_item_id: `20000000-0000-4000-8000-00000000010${i}`, name, quantity, unit_price_paise: unit, line_total_paise: quantity * unit })), order_status_history: [{ status: 'placed', created_at: ago(minutes) }] });
+    let db = [
+      row(0x1A1, 'placed', 'Priya Kadam', 'Station Road, Khed, Ratnagiri, Maharashtra 415709', 2, [['Veg thali', 2, 15000], ['Sol kadhi', 1, 10000]]),
+      row(0x1A2, 'placed', 'Amit Jadhav', 'Bharne Naka', 6, [['Chicken thali', 1, 25000], ['Ukadiche modak (4 pcs)', 2, 12000]]),
+      row(0x1A3, 'accepted', 'Sneha Pawar', 'Market Yard', 12, [['Fish curry meal', 1, 28000]]),
+      row(0x1A4, 'preparing', 'Rahul More', 'Temple Lane', 20, [['Veg thali', 1, 15000]]),
+      row(0x1A5, 'delivered', 'Asha Gole', 'Mill Road', 90, [['Sol kadhi', 1, 10000]]),
+    ];
+    await ctx.addInitScript(({ slug, session }) => { for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session)); }, { slug, session });
+    await ctx.routeWebSocket(/.*/, socket => {
+      const entry = { socket, array: true, closed: false }; sockets.push(entry);
+      socket.onClose(() => { entry.closed = true; });
+      socket.onMessage(message => {
+        const data = JSON.parse(String(message)); entry.array = Array.isArray(data);
+        const [join, reference, topic, event, payload] = entry.array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
+        const fail = event === 'phx_join' && realtimeFail && topic.includes('orders:');
+        const response = fail ? { status: 'error', response: { reason: 'fixture realtime failure' } } : { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+        if (event === 'phx_join' && topic.includes('orders:') && !fail) joined.set(topic, entry);
+        if (event === 'phx_leave') joined.delete(topic);
+        if (['phx_join', 'heartbeat', 'phx_leave'].includes(event)) socket.send(JSON.stringify(entry.array ? [join, reference, topic, 'phx_reply', response] : { join_ref: join, ref: reference, topic, event: 'phx_reply', payload: response }));
+      });
+    });
+    const activeSubscriptions = () => [...joined.values()].filter(entry => !entry.closed).length;
+    const pushChange = () => { for (const [topic, entry] of joined) if (!entry.closed) { const payload = { ids: [1], data: { schema: 'public', table: 'orders', type: 'INSERT', commit_timestamp: new Date().toISOString(), columns: [], record: {}, old_record: null, errors: null } }; entry.socket.send(JSON.stringify(entry.array ? [null, null, topic, 'postgres_changes', payload] : { topic, event: 'postgres_changes', payload, ref: null })); } };
+    await ctx.route('**/*', route => { const url = new URL(route.request().url()); if (url.origin === origin || url.hostname === '127.0.0.1') return route.fallback(); return route.abort(); });
+    await ctx.route(origin + '/**', async route => {
+      const req = route.request(), url = new URL(req.url());
+      const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      if (url.pathname === '/auth/v1/token') return json(session);
+      if (url.pathname === '/auth/v1/user') return json(user);
+      if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
+      if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: brandName });
+      if (url.pathname === '/rest/v1/business_memberships') return json({ role: 'admin' });
+      if (url.pathname === '/rest/v1/menu_categories') return json([]);
+      if (url.pathname === '/rest/v1/menu_items') return json([]);
+      if (url.pathname === '/rest/v1/orders') {
+        if (url.searchParams.has('id')) return json(db.find(order => order.id === url.searchParams.get('id').slice(3)) ?? null);
+        orderGets++; return json(db);
+      }
+      if (url.pathname === '/rest/v1/rpc/transition_order') {
+        const body = req.postDataJSON(); rpcCalls.push(body);
+        if (gate) await gate;
+        const order = db.find(candidate => candidate.id === body.p_order_id);
+        if (!order || order.version !== body.p_expected_version) return json({ code: 'P0001', message: 'Order was changed by someone else' }, 409);
+        Object.assign(order, { status: body.p_status, version: order.version + 1 });
+        return json({ id: order.id });
+      }
+      unhandled.push(req.method() + ' ' + url.pathname); return json({}, 404);
+    });
+    const open = async () => { const page = await ctx.newPage(); page.on('pageerror', error => errs.push(error.message)); await page.goto(owner.url, { waitUntil: 'networkidle' }); return page; };
+    try {
+      let page = await open();
+      const tabs = page.getByRole('navigation', { name: 'Owner sections' });
+      const card = n => page.getByRole('group', { name: new RegExp(`^Order ${ref(n)},`) });
+      const accept = n => page.getByRole('button', { name: `Accept order ${ref(n)}`, exact: true });
+      const pill = state => page.getByRole('status', { name: `Live updates: ${state}`, exact: true });
+      await accept(0x1A1).waitFor(); await pill('Live').waitFor();
+      // Card content, filters with counts, badge and brand.
+      const first = card(0x1A1);
+      await first.getByRole('heading', { name: 'Priya Kadam', level: 3 }).waitFor();
+      for (const text of [/^New · 2 min ago$/, ref(0x1A1), /^Station Road, Khed/, '2 × Veg thali', '1 × Sol kadhi', /₹430/, 'Cash']) await first.getByText(text).first().waitFor();
+      assert.equal(await first.getByText(/^Station Road, Khed, Ratnagiri, Maharashtra 415709$/).count(), 0, 'long addresses are truncated on the card');
+      for (const name of ['New, 2', 'Accepted, 1', 'Preparing, 1', 'Out', 'Done']) await page.getByRole('button', { name, exact: true }).waitFor();
+      await tabs.getByRole('button', { name: 'Orders, 2 new', exact: true }).waitFor();
+      assert.equal(await accept(0x1A1).evaluate(node => getComputedStyle(node).backgroundColor), primary, `${slug} accent colour`);
+      await page.getByRole('img', { name: brandName, exact: true }).count();
+      for (const button of [accept(0x1A1), page.getByRole('button', { name: `Details for ${ref(0x1A1)}`, exact: true })]) { const box = await button.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'card targets are at least 48px'); }
+      assert.equal(await card(0x1A3).count(), 0, 'accepted orders are not under New');
+      await mkdir('/tmp/review100', { recursive: true });
+      await page.screenshot({ path: `/tmp/review100/${slug}-orders.png` });
+      // Accept: version-checked transition, per-card in-flight disable, no double accept.
+      let release; gate = new Promise(resolve => { release = resolve; });
+      await accept(0x1A1).click();
+      await page.waitForFunction(() => document.body.innerText.includes('Accepting'));
+      assert.equal(await accept(0x1A1).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: `Details for ${ref(0x1A1)}`, exact: true }).isDisabled(), true);
+      assert.equal(await accept(0x1A2).isDisabled(), false, 'other cards stay usable');
+      await accept(0x1A1).click({ force: true, timeout: 500 }).catch(() => {});
+      gate = null; release();
+      await page.getByText(`Order ${ref(0x1A1)} updated to Accepted.`, { exact: true }).filter({ visible: true }).waitFor();
+      assert.deepEqual(rpcCalls, [{ p_order_id: ids(0x1A1), p_status: 'accepted', p_expected_version: 1 }]);
+      await page.getByRole('button', { name: 'New, 1', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Accepted, 2', exact: true }).waitFor();
+      assert.equal(await card(0x1A1).count(), 0);
+      // Another owner accepted the second order first: the stale accept is rejected, the queue reloads, nothing claims success.
+      Object.assign(db.find(order => order.id === ids(0x1A2)), { status: 'accepted', version: 2 });
+      await accept(0x1A2).click();
+      await page.getByText(new RegExp(`^Order ${ref(0x1A2)} was not updated: .*Order was changed by someone else`)).filter({ visible: true }).waitFor();
+      assert.equal(rpcCalls.at(-1).p_expected_version, 1);
+      assert.equal(await page.getByText(`Order ${ref(0x1A2)} updated to Accepted.`).count(), 0, 'no false success');
+      await page.getByText('No new orders', { exact: true }).waitFor();
+      await page.getByText('Keep this app open. New orders appear here.', { exact: true }).waitFor();
+      assert.equal(await accept(0x1A2).count(), 0);
+      await page.getByRole('button', { name: 'Accepted, 3', exact: true }).waitFor();
+      await page.screenshot({ path: `/tmp/review100/${slug}-empty.png` });
+      // New orders arrive live, including while another tab is open; one subscription survives tab switches.
+      assert.equal(activeSubscriptions(), 1);
+      db.push(row(0x1A6, 'placed', 'Meera Salvi', 'Gandhi Chowk', 0, [['Veg thali', 1, 15000]]));
+      pushChange();
+      await accept(0x1A6).waitFor();
+      await tabs.getByRole('button', { name: 'Orders, 1 new', exact: true }).waitFor();
+      await tabs.getByRole('button', { name: /^Menu/ }).click();
+      await page.getByRole('button', { name: 'Add item', exact: true }).waitFor();
+      db.push(row(0x1A7, 'placed', 'Omkar Patil', 'Bus Stand', 0, [['Sol kadhi', 3, 10000]]));
+      pushChange();
+      await tabs.getByRole('button', { name: 'Orders, 2 new', exact: true }).waitFor();
+      await tabs.getByRole('button', { name: /^Today/ }).click(); await tabs.getByRole('button', { name: /^Orders/ }).click();
+      await accept(0x1A7).waitFor(); await accept(0x1A6).waitFor();
+      assert.equal(await page.getByRole('group', { name: /^Order #/ }).count(), 2, 'no duplicate cards');
+      assert.equal(joined.size, 1, 'exactly one orders subscription after tab switches');
+      assert.equal(activeSubscriptions(), 1);
+      await page.close();
+      // Paused: the channel fails to join; Reconnect re-subscribes and refreshes without losing or duplicating cards.
+      realtimeFail = true;
+      page = await open();
+      await accept(0x1A6).waitFor();
+      await pill('Paused').waitFor();
+      await page.getByText('Live updates paused.', { exact: false }).first().waitFor();
+      await page.getByText('New orders may not show until you reconnect.', { exact: false }).first().waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Reconnect', exact: true }).evaluate(node => node.getBoundingClientRect().height >= 48), true);
+      await page.screenshot({ path: `/tmp/review100/${slug}-paused.png` });
+      db.push(row(0x1A8, 'placed', 'Late Customer', 'Ring Road', 0, [['Veg thali', 1, 15000]]));
+      assert.equal(await accept(0x1A8).count(), 0, 'missed while paused');
+      realtimeFail = false;
+      await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+      await pill('Live').waitFor();
+      await accept(0x1A8).waitFor();
+      assert.equal(await page.getByText('Live updates paused.', { exact: false }).count(), 0);
+      assert.equal(await page.getByRole('group', { name: /^Order #/ }).count(), 3, 'reconnect keeps every card once');
+      assert.equal(activeSubscriptions(), 1, 'reconnect leaves exactly one subscription');
+      await page.getByRole('button', { name: `Details for ${ref(0x1A8)}`, exact: true }).click();
+      await page.getByRole('button', { name: 'Cancel order', exact: true }).waitFor();
+      assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
+      console.log(`PASS: ${slug} owners' Orders queue cards, accept, in-flight, conflict, empty, live badge, single subscription and Paused/Reconnect`);
+    } finally { await ctx.close(); await owner.close(); }
+  }
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
 
 if (!categoriesOnly) await import('./account.mjs');
