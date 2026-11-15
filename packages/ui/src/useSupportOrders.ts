@@ -26,7 +26,7 @@ export function useSupportOrders(market: ReturnType<typeof useMarket>, orderRefe
       if (token !== request.current || !sameIdentity(started, identity.current)) return;
       const orders = mergeHistory(previous.orders, result.orders, false).filter(isSupportOrder);
       const selectedId = selectedSupportOrder(orders, previous.ready ? latest.current.selectedId : orderReference ?? null)?.id ?? null;
-      const removed = previous.selectedId && !orders.some(order => order.id === previous.selectedId);
+      const removed = latest.current.selectedId && !orders.some(order => order.id === latest.current.selectedId);
       publish({ ...latest.current, identity: started, orders, selectedId, selectionNotice: removed ? `The previously selected order is no longer active.${selectedId ? ' Showing another active order.' : ''}` : latest.current.selectionNotice, cursor: result.nextCursor, pages: result.pages, loading: false, ready: true, error: '' });
     } catch (error) {
       if (token === request.current && sameIdentity(started, identity.current)) publish({ ...latest.current, loading: false, error: message(error) });

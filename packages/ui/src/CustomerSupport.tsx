@@ -7,6 +7,7 @@ import { MarketButton, MarketCard, MarketStatus, MarketText } from './components
 import { useMarketTheme } from './theme';
 import { supportConfig, supportLinks } from './support-model';
 import { useSupportOrders } from './useSupportOrders';
+import { sameIdentity, type Identity } from './checkout-state';
 
 function SupportHeading({ children }: { children: string }) {
   const { colors } = useMarketTheme();
@@ -42,13 +43,17 @@ function ContactActions({ businessId }: { businessId: BusinessSlug }) {
 }
 export function CustomerSupport({ businessId, market, go, orderReference }: { businessId: BusinessSlug; market: ReturnType<typeof useMarket>; go: (path: string) => void; orderReference?: string }) {
   const { colors, name } = useMarketTheme();
-  const support = useSupportOrders(market, orderReference);
+  const origin = useRef<{ reference?: string; identity: Identity | null }>({ reference: orderReference, identity: null });
+  if (origin.current.reference !== orderReference) origin.current = { reference: orderReference, identity: null };
+  if (!origin.current.identity && market.authReady && market.session) origin.current.identity = market.identity.current;
+  const currentReference = market.authReady && market.session && origin.current.identity && sameIdentity(origin.current.identity, market.identity.current) ? orderReference : undefined;
+  const support = useSupportOrders(market, currentReference);
   const [expanded, setExpanded] = useState<string | null>(null);
   const config = supportConfig[businessId];
   const order = support.selected;
   return <View style={{ gap: 24, width: '100%', maxWidth: 720, alignSelf: 'center' }}>
     <View style={{ gap: 8 }}><SupportHeading>Help &amp; support</SupportHeading><MarketText variant="muted">Questions about your order? Get in touch with {name}.</MarketText></View>
-    {orderReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{orderReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
+    {currentReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{currentReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
     <MarketCard>
       <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 20, lineHeight: 28, fontWeight: '700' }}>Contact the restaurant</Text>
       {!market.authReady ? <MarketStatus kind="loading" title="Checking your account" /> : !market.session ? <><MarketText>Sign in to see your active orders. You can still read common questions and contact information here.</MarketText><MarketButton label="Sign in to see orders" variant="secondary" onPress={() => go('/login')} /></> : null}
@@ -74,7 +79,7 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
     <View style={{ gap: 8 }}><Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>Common questions</Text>
       {config.questions.map(question => {
         const open = expanded === question.id;
-        return <View key={question.id} style={{ borderBottomWidth: 1, borderColor: colors.border, paddingVertical: 4 }}><Pressable nativeID={`faq-${question.id}`} accessibilityRole="button" accessibilityState={{ expanded: open }} aria-controls={`faq-answer-${question.id}`} onPress={() => setExpanded(open ? null : question.id)} style={{ minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 12 }}><Text style={{ flex: 1, color: colors.ink, fontSize: 16, lineHeight: 24, fontWeight: '700' }}>{question.question}</Text><Text accessibilityElementsHidden importantForAccessibility="no" style={{ color: colors.primary, fontSize: 22 }}>{open ? '−' : '+'}</Text></Pressable>{open ? <View nativeID={`faq-answer-${question.id}`} role="region" aria-labelledby={`faq-${question.id}`} style={{ paddingBottom: 16 }}><MarketText>{question.answer}</MarketText></View> : null}</View>;
+        return <View key={question.id} style={{ borderBottomWidth: 1, borderColor: colors.border, paddingVertical: 4 }}><Pressable nativeID={`faq-${question.id}`} accessibilityRole="button" accessibilityLabel={question.question} accessibilityState={{ expanded: open }} aria-expanded={open} aria-controls={`faq-answer-${question.id}`} onPress={() => setExpanded(open ? null : question.id)} style={{ minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 12 }}><Text style={{ flex: 1, color: colors.ink, fontSize: 16, lineHeight: 24, fontWeight: '700' }}>{question.question}</Text><Text aria-hidden accessibilityElementsHidden importantForAccessibility="no" style={{ color: colors.primary, fontSize: 22 }}>{open ? '−' : '+'}</Text></Pressable>{open ? <View nativeID={`faq-answer-${question.id}`} role="region" aria-labelledby={`faq-${question.id}`} style={{ paddingBottom: 16 }}><MarketText>{question.answer}</MarketText></View> : null}</View>;
       })}
     </View>
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}><MarketButton label="Privacy policy" variant="secondary" onPress={() => go('/privacy')} /><MarketButton label="Terms" variant="secondary" onPress={() => go('/terms')} /></View>

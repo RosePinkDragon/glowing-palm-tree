@@ -23,13 +23,19 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'Refresh active orders', exact: true }).waitFor();
   };
-  await page.goto(server.url + '/help', { waitUntil: 'networkidle' });
+  assert.equal((await page.goto(server.url + '/help', { waitUntil: 'networkidle' })).status(), 200);
+  const script = await page.locator('script[src]').first().getAttribute('src');
+  for (const path of [script, '/firebase-messaging-worker.js']) {
+    const asset = await context.request.get(new URL(path, server.url).href);
+    assert.equal(asset.status(), 200); assert.match(asset.headers()['content-type'], /javascript/);
+  }
+  assert.equal((await context.request.get(server.url + '/missing-support-fixture.js')).status(), 404, 'unknown assets cannot return the SPA document');
   await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/help');
   assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: 'WhatsApp restaurant', exact: true }).count(), 0);
   await page.getByText('Contact number not available yet.', { exact: true }).waitFor();
-  assert.equal(await page.getByText('Good food starts here.', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('Good food starts here.', { exact: true }).filter({ visible: true }).count(), 0);
   const questions = [
     ['Where do you deliver?', 'checks your delivery location at checkout'],
     ['How can I pay?', 'cash on delivery'],
@@ -41,9 +47,9 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   for (const [question, answer] of questions) {
     const disclosure = page.getByRole('button', { name: question, exact: true });
     await disclosure.focus(); await page.keyboard.press('Enter');
-    assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
     await page.getByRole('region').getByText(answer, { exact: false }).waitFor();
-    await page.keyboard.press('Space'); assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+    assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Space'); await page.getByRole('region').waitFor({ state: 'hidden' }); assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
   }
   await page.getByRole('button', { name: 'Privacy policy', exact: true }).click(); await privacy().waitFor();
   assert.equal(new URL(page.url()).pathname, '/privacy');
@@ -54,7 +60,7 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await page.getByRole('button', { name: 'Back to Help & support', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
   for (const path of ['/privacy', '/terms']) {
-    await page.goto(server.url + path, { waitUntil: 'networkidle' });
+    assert.equal((await page.goto(server.url + path, { waitUntil: 'networkidle' })).status(), 200);
     await page.getByText('Draft · owner review required before deployment', { exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, path);
     await page.getByRole('button', { name: 'Back to Help & support', exact: true }).click();
@@ -108,6 +114,11 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await drawer.getByRole('button', { name: 'Help & support', exact: true }).click();
   await drawer.waitFor({ state: 'hidden' });
   assert.equal(new URL(page.url()).pathname, '/help');
+  assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).count(), 0, 'general Help clears the originating reference');
+  await page.goto(server.url + '/orders/' + orderId(25), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Help & support', exact: true }).click();
+  await page.getByText('You opened Help for this order reference:', { exact: true }).waitFor();
+  await selected.getByText(orderId(25), { exact: true }).waitFor();
   let release, arrived;
   const pending = new Promise(resolve => { arrived = resolve; });
   fixture.holdActive = { gate: new Promise(resolve => { release = resolve; }), arrived };
@@ -116,6 +127,7 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await other.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
   assert.equal(await selected.count(), 0, 'logout removes private support data before pending requests resolve');
+  assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).count(), 0, 'logout also removes the originating private reference');
   release(); await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor();
   fixture.authSession = { ...session, access_token: part({ alg: 'HS256' }) + '.' + part({ sub: otherUser, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000002', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture', user: { ...user, id: otherUser, email: 'other-fixture@example.test' } };
   fixture.supportRows = []; await login();

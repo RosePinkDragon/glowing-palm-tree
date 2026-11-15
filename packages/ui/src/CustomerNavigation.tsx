@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ComponentRef, type ReactNode, type RefObject } from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, View } from 'react-native';
-import { CommonActions, NavigationContainer, StackActions, useNavigationContainerRef, type RouteProp } from '@react-navigation/native';
+import { CommonActions, NavigationContainer, StackActions, useIsFocused, useNavigationContainerRef, type RouteProp } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Linking from 'expo-linking';
@@ -36,14 +36,15 @@ function destination(path: string) {
 }
 function CustomerRoute({ route, navigation }: { route: RouteProp<Routes>; navigation: NativeStackNavigationProp<Routes> }) {
   const { market, render } = useContext(Content)!;
+  const focused = useIsFocused();
   const params = route.params as { id?: string; next?: string } | undefined;
   const protectedScreen = route.name === 'Orders' || route.name === 'Order' || route.name === 'Account' || route.name === 'Profile' || route.name === 'Addresses' || route.name === 'Notifications';
   const target = route.name === 'Order' ? `/orders/${params?.id ?? ''}` : route.name === 'Orders' ? '/orders' : route.name === 'Profile' ? '/profile' : route.name === 'Addresses' ? '/addresses' : route.name === 'Notifications' ? '/notifications' : '/account';
   useEffect(() => {
-    if (!market.authReady) return;
+    if (!market.authReady || !focused) return;
     if (protectedScreen && !market.session) navigation.dispatch(StackActions.replace('Login', { next: target }));
     if (route.name === 'Login' && market.session && !market.recovery) { const next = destination(params?.next ?? '/account'); navigation.dispatch(StackActions.popTo(next.name, next.params)); }
-  }, [market.authReady, market.session?.user.id, market.recovery, protectedScreen, route.name, target, params?.next, navigation]);
+  }, [focused, market.authReady, market.session?.user.id, market.recovery, protectedScreen, route.name, target, params?.next, navigation]);
   if ((protectedScreen && (!market.authReady || !market.session)) || (route.name === 'Login' && !market.authReady)) return <MarketStatus kind="loading" title="Checking your account" />;
   if (route.name === 'NotFound') return <MarketStatus kind="empty" title="Page not found" action={<MarketButton label="Browse menu" onPress={() => navigation.navigate('Menu')} />} />;
   return render(route.name as CustomerScreen, params?.id);
