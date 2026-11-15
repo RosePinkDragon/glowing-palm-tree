@@ -68,6 +68,10 @@ test('maps database menu and complete order into domain values', () => {
   assert.equal(order.lines[0].diet, 'egg');
   assert.equal(order.delivery.addressLine, 'Address');
   assert.deepEqual(order.history?.map(entry => entry.status), ['placed', 'accepted']);
+  assert.equal('location' in order, false, 'no pin stored');
+  const base = { id: 'o', status: 'placed' as const, version: 1, subtotal_paise: 0, delivery_fee_paise: 0, total_paise: 0, customer_name: 'N', customer_phone: 'P', delivery_address_line: 'A', created_at: '2026-01-01', order_items: [] };
+  assert.deepEqual(mapOrder({ ...base, latitude: 17.7, longitude: 73.4 }, slug).location, { latitude: 17.7, longitude: 73.4 });
+  assert.equal('location' in mapOrder({ ...base, latitude: 17.7, longitude: null }, slug), false, 'a partial pin is ignored');
 });
 test('configured backend errors do not fall back to sample data', async () => {
   const original = globalThis.fetch;

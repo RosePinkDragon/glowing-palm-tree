@@ -3,9 +3,9 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
-import { DietMark } from './DietMark';
-import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
-import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, queueFilters, shortAddress, statusLabel, type QueueFilter } from './admin-model';
+import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
+import { ActionButton, OwnerOrderDetails } from './OwnerOrderDetails';
+import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, orderReference, ordersForFilter, queueFilters, shortAddress, statusLabel, type QueueFilter } from './admin-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
@@ -115,15 +115,7 @@ function Strong({ children, size = 16, color, align }: { children: ReactNode; si
   const fonts = useMarketFonts();
   return <Text style={{ color: color ?? colors.ink, fontSize: size, lineHeight: Math.round(size * 1.4), textAlign: align, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{children}</Text>;
 }
-function CardAction({ label, name, primary, disabled, onPress }: { label: string; name: string; primary?: boolean; disabled?: boolean; onPress: () => void }) {
-  const { colors } = useMarketTheme();
-  const fonts = useMarketFonts();
-  return <Pressable accessibilityRole="button" accessibilityLabel={name} accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ flex: primary ? 1 : undefined, minHeight: 48, minWidth: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 })}>
-    <Text style={{ color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
-  </Pressable>;
-}
-
-function OrderCard({ order, now, busy, expanded, demo, onAccept, onToggle, onTransition, onCancel }: { order: Order; now: number; busy: boolean; expanded: boolean; demo: boolean; onAccept: () => void; onToggle: () => void; onTransition: (status: OrderStatus) => void; onCancel: () => void }) {
+function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Order; now: number; busy: boolean; demo: boolean; onAccept: () => void; onDetails: () => void }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const reference = orderReference(order.id);
@@ -145,21 +137,9 @@ function OrderCard({ order, now, busy, expanded, demo, onAccept, onToggle, onTra
         {order.lines.map((line, index) => <MarketText key={`${line.menuItemId}-${index}`}>{`${line.quantity} × ${line.name}`}</MarketText>)}
       </View>
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        {isNew ? <CardAction primary label={busy ? 'Accepting…' : 'Accept order'} name={`Accept order ${reference}`} disabled={busy || demo} onPress={onAccept} /> : null}
-        <CardAction label={expanded ? 'Hide details' : 'Details'} name={`${expanded ? 'Hide details' : 'Details'} for ${reference}`} disabled={busy} onPress={onToggle} />
+        {isNew ? <ActionButton grow tone="primary" label={busy ? 'Accepting…' : 'Accept order'} name={`Accept order ${reference}`} disabled={busy || demo} onPress={onAccept} /> : null}
+        <ActionButton label="Details" name={`Details for ${reference}`} disabled={busy} onPress={onDetails} />
       </View>
-      {expanded ? <View style={{ gap: 10 }}>
-        <MarketText variant="heading">Order details</MarketText>
-        {order.lines.map((line, index) => <View key={`${line.menuItemId}-${index}`} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText><DietMark diet={line.diet} /></View>)}
-        <MarketText>Subtotal: {formatINRFromPaise(order.subtotalPaise)}</MarketText>
-        <MarketText>Delivery: {formatINRFromPaise(order.deliveryFeePaise)}</MarketText>
-        <MarketText>Total: {formatINRFromPaise(order.totalPaise)}</MarketText>
-        <MarketText>Contact: {order.delivery.name} · {order.delivery.phone}</MarketText>
-        <MarketText>Address: {order.delivery.addressLine}</MarketText>
-        <MarketText variant="heading">Status history</MarketText>
-        {order.history?.length ? order.history.map((entry, index) => <MarketText key={index}>{statusLabel(entry.status)} · {new Date(entry.createdAtISO).toLocaleString()}</MarketText>) : <MarketText variant="muted">No history available.</MarketText>}
-        {nextStatuses(order.status).map(status => <MarketButton key={status} label={status === 'cancelled' ? 'Cancel order' : `Mark ${statusLabel(status).toLowerCase()}`} variant={status === 'cancelled' ? 'secondary' : 'primary'} disabled={busy || demo} onPress={() => status === 'cancelled' ? onCancel() : onTransition(status)} />)}
-      </View> : null}
     </View>
   </View>;
 }
@@ -170,14 +150,15 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
   const fonts = useMarketFonts();
   const now = useNow();
   const [selected, setSelected] = useState<string | null>(null);
-  const [cancelOrder, setCancelOrder] = useState<Order | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
-  const closeCancel = () => { setCancelOrder(null); restorePanelFocus(trigger.current); };
+  const selectedOrder = queue.orders.find(order => order.id === selected);
+  // Closing returns to the list that holds the order (it may have moved on) and to its Details button.
+  const closeDetails = () => { if (selectedOrder) queue.setFilter(filterForStatus(selectedOrder.status)); setSelected(null); restorePanelFocus(trigger.current); };
   const { orders, filter, loading, error, notice, success, connection, busyIds, demo } = queue;
   const counts = filterCounts(orders);
   const visible = ordersForFilter(orders, filter);
   return <View style={{ gap: 16 }}>
-    <View role="status" aria-live="polite">{success ? <MarketText>{success}</MarketText> : null}</View>
+    <View role="status" aria-live="polite">{success && !selected ? <MarketText>{success}</MarketText> : null}</View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
       <View role="group" aria-label="Order status filters" style={{ flexDirection: 'row', gap: 8 }}>
         {queueFilters.map(value => {
@@ -195,13 +176,12 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
       <MarketButton label="Reconnect" onPress={queue.reconnect} />
     </View> : null}
     {demo ? <MarketStatus kind="empty" title="Sample mode" message="There are no live orders in sample mode. Connect the backend and sign in as an administrator to manage orders." /> : null}
-    {notice ? <MarketStatus kind="error" title="Order update notice" message={notice} action={<MarketButton label="Dismiss" variant="secondary" onPress={queue.dismissNotice} />} /> : null}
+    {notice && !selected ? <MarketStatus kind="error" title="Order update notice" message={notice} action={<MarketButton label="Dismiss" variant="secondary" onPress={queue.dismissNotice} />} /> : null}
     {error ? <MarketStatus kind="error" title="Could not load orders" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => void queue.reload()} />} /> : null}
     {loading ? <MarketStatus kind="loading" title="Loading orders" /> : null}
     {!loading && !error && !demo && !visible.length ? <MarketStatus kind="empty" title={emptyCopy[filter][0]} message={emptyCopy[filter][1]} /> : null}
-    {cancelOrder ? <AccessiblePanel title={`Cancel order ${orderReference(cancelOrder.id)}?`} onClose={closeCancel}><MarketText>Confirm that this order should be cancelled.</MarketText><MarketButton label="Confirm cancellation" disabled={busyIds.has(cancelOrder.id)} onPress={() => { const order = cancelOrder; closeCancel(); void queue.transition(order, 'cancelled').then(updated => { if (updated) queue.setFilter(filterForStatus(updated.status)); }); }} /><MarketButton label="Keep order" variant="secondary" disabled={busyIds.has(cancelOrder.id)} onPress={closeCancel} /></AccessiblePanel> : null}
-    {visible.map(order => <OrderCard key={order.id} order={order} now={now} demo={demo} busy={busyIds.has(order.id)} expanded={selected === order.id}
-      onAccept={() => void queue.transition(order, 'accepted')} onToggle={() => setSelected(selected === order.id ? null : order.id)}
-      onTransition={status => void queue.transition(order, status).then(updated => { if (updated) queue.setFilter(filterForStatus(updated.status)); })} onCancel={() => { trigger.current = capturePanelFocus(); setCancelOrder(order); }} />)}
+    {selected ? <OwnerOrderDetails queue={queue} orderId={selected} now={now} onClose={closeDetails} /> : null}
+    {visible.map(order => <OrderCard key={order.id} order={order} now={now} demo={demo} busy={busyIds.has(order.id)}
+      onAccept={() => void queue.transition(order, 'accepted')} onDetails={() => { trigger.current = capturePanelFocus(); setSelected(order.id); }} />)}
   </View>;
 }

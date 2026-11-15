@@ -250,18 +250,22 @@ const prepareCart = async (page, add = true) => {
   await admin.getByRole('heading', { name: 'Orders', exact: true }).waitFor();
   await admin.getByRole('button', { name: 'Accept order #000001', exact: true }).waitFor();
   await admin.getByRole('button', { name: 'Details for #000001', exact: true }).click();
+  await focused(admin, 'Order #000001');
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
   await focused(admin, 'Cancel order #000001?');
-  await admin.getByRole('button', { name: 'Keep order', exact: true }).click();
+  await admin.getByRole('button', { name: 'Keep the order', exact: true }).click();
   await focused(admin, 'Cancel order');
   assert.equal(mutations.length, 0);
-  await admin.getByRole('button', { name: 'Mark accepted', exact: true }).click();
+  await admin.getByRole('button', { name: 'Accept order', exact: true }).click();
   await admin.getByText('Order #000001 updated to Accepted.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[0].p_status, 'accepted');
+  await admin.getByRole('button', { name: 'Start preparing', exact: true }).waitFor();
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
-  await admin.getByRole('button', { name: 'Confirm cancellation', exact: true }).click();
+  await admin.getByRole('button', { name: 'Cancel the order', exact: true }).click();
   await admin.getByText('Order #000001 updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[1].p_status, 'cancelled');
+  assert.equal(await admin.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0, 'cancelled orders have no actions');
+  await admin.getByRole('button', { name: 'Close', exact: true }).click();
   await admin.getByRole('button', { name: 'Menu', exact: true }).click();
   await admin.getByRole('button', { name: 'Add dish', exact: true }).click();
   const addDialog = admin.getByRole('dialog');
@@ -489,6 +493,7 @@ const prepareCart = async (page, add = true) => {
       console.log(`PASS: ${slug} owner shell brand logo/fonts isolation and responsive bottom tabs`);
       await adminPage.getByRole('button', { name: /^Details for #/ }).click();
       await assertMarks(adminPage);
+      await adminPage.getByRole('button', { name: 'Close', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
       await dialog.getByText('Not classified yet. No diet mark is shown to customers.', { exact: true }).waitFor();
@@ -837,10 +842,107 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await page.getByText('Live updates paused.', { exact: false }).count(), 0);
       assert.equal(await page.getByRole('group', { name: /^Order #/ }).count(), 3, 'reconnect keeps every card once');
       assert.equal(activeSubscriptions(), 1, 'reconnect leaves exactly one subscription');
-      await page.getByRole('button', { name: `Details for ${ref(0x1A8)}`, exact: true }).click();
-      await page.getByRole('button', { name: 'Cancel order', exact: true }).waitFor();
+      // ---- Order details (#101) ----
+      await mkdir('/tmp/review101', { recursive: true });
+      const find = n => db.find(order => order.id === ids(n));
+      Object.assign(find(0x1A6), { customer_phone: '123' });
+      Object.assign(find(0x1A3), { latitude: 17.7, longitude: 73.4, order_status_history: [{ status: 'placed', created_at: ago(12) }, { status: 'accepted', created_at: ago(10), order_status_actors: { actor_name: 'Suresh' } }] });
+      pushChange(); await page.waitForTimeout(400);
+      const detailsButton = n => page.getByRole('button', { name: `Details for ${ref(n)}`, exact: true });
+      const panel = () => page.getByRole('dialog').first();
+      const rpcFor = n => rpcCalls.filter(call => call.p_order_id === ids(n));
+      // An unusable phone and no pin hide Call and Open in Maps; the state machine's first step is Accept order.
+      await detailsButton(0x1A6).click();
+      await focused(page, `Order ${ref(0x1A6)}`);
+      await panel().getByText('123', { exact: true }).waitFor();
+      assert.equal(await panel().getByRole('link', { name: 'Call', exact: true }).count(), 0, 'no Call for an invalid phone');
+      assert.equal(await panel().getByRole('link', { name: 'Open in Maps', exact: true }).count(), 0, 'no Maps without a pin');
+      await panel().getByRole('button', { name: 'Accept order', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.waitForFunction(label => document.activeElement?.getAttribute('aria-label') === label, `Details for ${ref(0x1A6)}`);
+      // Full details for an accepted order: contact, links, bill, history with the owner snapshot.
+      await page.getByRole('button', { name: 'Accepted, 3', exact: true }).click();
+      await detailsButton(0x1A3).click();
+      await focused(page, `Order ${ref(0x1A3)}`);
+      const view = panel();
+      for (const text of ['Sneha Pawar', '9876543210', 'Market Yard', '1 × Fish curry meal', 'Collect in cash', 'Accepted by Suresh', 'Items', 'Delivery']) await view.getByText(text, { exact: true }).first().waitFor();
+      await view.getByText(/^Placed today, \d{1,2}:\d{2} (am|pm)$/).waitFor();
+      await view.getByRole('heading', { name: 'History' }).waitFor();
+      assert.equal(await view.getByText('Placed', { exact: true }).count(), 1, 'the placed step has no owner name');
+      assert.equal(await view.getByText(/^Placed by /).count(), 0);
+      await view.getByText('₹280.00').first().waitFor(); await view.getByText('₹310.00').first().waitFor();
+      assert.equal(await view.getByRole('link', { name: 'Call', exact: true }).getAttribute('href'), 'tel:+919876543210');
+      assert.equal(await view.getByRole('link', { name: 'Open in Maps', exact: true }).getAttribute('href'), 'https://www.google.com/maps/search/?api=1&query=17.7,73.4');
+      for (const control of [view.getByRole('link', { name: 'Call', exact: true }), view.getByRole('link', { name: 'Open in Maps', exact: true }), page.getByRole('button', { name: 'Cancel order', exact: true }), page.getByRole('button', { name: 'Start preparing', exact: true })]) { const box = await control.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'details targets are at least 48px'); }
+      assert.equal(await page.getByRole('button', { name: 'Start preparing', exact: true }).evaluate(node => getComputedStyle(node).backgroundColor), primary, `${slug} primary action colour`);
+      await page.screenshot({ path: `/tmp/review101/${slug}-details.png` });
+      // Another owner moved it on first: our stale step is refused, the screen reloads to the current state and says so.
+      Object.assign(find(0x1A3), { status: 'preparing', version: 2 });
+      await page.getByRole('button', { name: 'Start preparing', exact: true }).click();
+      await page.getByText(new RegExp(`^Order ${ref(0x1A3)} was not updated: .*Order was changed by someone else`)).filter({ visible: true }).waitFor();
+      assert.deepEqual(rpcFor(0x1A3), [{ p_order_id: ids(0x1A3), p_status: 'preparing', p_expected_version: 1 }]);
+      assert.equal(await page.getByText(`Order ${ref(0x1A3)} updated to Preparing.`).count(), 0, 'no false success');
+      await view.getByRole('status', { name: 'Status: Preparing' }).waitFor();
+      // Next step uses the new version, is disabled while in flight and cannot be sent twice.
+      let letGo; gate = new Promise(resolve => { letGo = resolve; });
+      await page.getByRole('button', { name: 'Out for delivery', exact: true }).click();
+      await page.getByRole('button', { name: 'Out for delivery', exact: true }).isDisabled();
+      assert.equal(await page.getByRole('button', { name: 'Out for delivery', exact: true }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: 'Cancel order', exact: true }).isDisabled(), true);
+      await page.getByRole('button', { name: 'Out for delivery', exact: true }).click({ force: true, timeout: 500 }).catch(() => {});
+      gate = null; letGo();
+      await page.getByText(`Order ${ref(0x1A3)} updated to Out for delivery.`, { exact: true }).filter({ visible: true }).waitFor();
+      assert.deepEqual(rpcFor(0x1A3).at(-1), { p_order_id: ids(0x1A3), p_status: 'out_for_delivery', p_expected_version: 2 });
+      assert.equal(rpcFor(0x1A3).length, 2, 'one RPC per tap');
+      assert.equal(await page.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0, 'out for delivery cannot be cancelled');
+      await page.getByRole('button', { name: 'Mark delivered', exact: true }).click();
+      await view.getByRole('status', { name: 'Status: Delivered' }).waitFor();
+      await view.getByText('This order was delivered. No further actions.', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: /^(Mark delivered|Cancel order|Start preparing|Accept order)$/ }).filter({ visible: true }).count(), 0, 'terminal orders have no actions');
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Done', exact: true }).waitFor();
+      await detailsButton(0x1A3).waitFor();
+      // Cancel sheet: focus moves in, Keep restores it, confirm sends one version-checked cancellation.
+      await page.getByRole('button', { name: 'Preparing, 1', exact: true }).click();
+      await detailsButton(0x1A4).click();
+      await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
+      await focused(page, `Cancel order ${ref(0x1A4)}?`);
+      await page.getByText("Rahul More's order for ₹180.00 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
+      await page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true }).waitFor();
+      await page.screenshot({ path: `/tmp/review101/${slug}-cancel.png` });
+      await page.getByRole('button', { name: 'Keep the order', exact: true }).click();
+      await focused(page, 'Cancel order');
+      assert.equal(rpcFor(0x1A4).length, 0);
+      await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
+      gate = new Promise(resolve => { letGo = resolve; });
+      await page.getByRole('button', { name: 'Cancel the order', exact: true }).click();
+      await page.getByRole('status', { name: 'Status: Preparing' }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Cancel order', exact: true }).isDisabled(), true, 'disabled while cancelling');
+      gate = null; letGo();
+      await page.getByText(`Order ${ref(0x1A4)} updated to Cancelled.`, { exact: true }).filter({ visible: true }).waitFor();
+      assert.deepEqual(rpcFor(0x1A4), [{ p_order_id: ids(0x1A4), p_status: 'cancelled', p_expected_version: 1 }]);
+      await page.getByRole('status', { name: 'Status: Cancelled' }).waitFor();
+      await page.getByText('This order was cancelled. No further actions.', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      // A retry after a lost response: the order is already cancelled, so the stale cancel is refused, nothing is cancelled twice, and the screen shows Cancelled.
+      await page.getByRole('button', { name: 'New, 3', exact: true }).click();
+      await detailsButton(0x1A7).click();
+      await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
+      Object.assign(find(0x1A7), { status: 'cancelled', version: 2 });
+      await page.getByRole('button', { name: 'Cancel the order', exact: true }).click();
+      await page.getByText(new RegExp(`^Order ${ref(0x1A7)} was not updated: `)).filter({ visible: true }).waitFor();
+      await page.getByRole('status', { name: 'Status: Cancelled' }).waitFor();
+      assert.deepEqual(rpcFor(0x1A7).map(call => call.p_status), ['cancelled']);
+      assert.equal(await page.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0);
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByRole('button', { name: 'Done', exact: true }).click();
+      await detailsButton(0x1A5).click();
+      await page.getByRole('dialog').first().getByText('This order was delivered. No further actions.', { exact: true }).waitFor();
+      await page.screenshot({ path: `/tmp/review101/${slug}-details-wide.png` });
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
       assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
-      console.log(`PASS: ${slug} owners' Orders queue cards, accept, in-flight, conflict, empty, live badge, single subscription and Paused/Reconnect`);
+      console.log(`PASS: ${slug} owners' Orders queue cards, accept, in-flight, conflict, empty, live badge, single subscription and Paused/Reconnect, plus order details (#101): contact/maps/bill/history, version-checked steps, conflict reload, cancel sheet, terminal state`);
     } finally { await ctx.close(); await owner.close(); }
   }
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }

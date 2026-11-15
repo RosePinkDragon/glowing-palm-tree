@@ -89,6 +89,8 @@ export interface Order {
   totalPaise: number;
   delivery: DeliveryDetails;
   createdAtISO: string;
+  /** Delivery pin captured at checkout (owner Open in Maps); absent when not stored. #48 will add the structured address/pin. */
+  location?: { latitude: number; longitude: number };
   /** actorName is the owner's display name snapshot; present only on owner reads (#98). */
   history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }
