@@ -84,7 +84,7 @@ await context.route(origin + '/**', async route => {
 });
 const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Add to cart', exact: true }).waitFor(); return page; };
-const focused = (page, text) => page.waitForFunction(expected => document.activeElement?.textContent === expected, text);
+const focused = (page, text) => page.waitForFunction(expected => [document.activeElement?.textContent, document.activeElement?.getAttribute('aria-label')].includes(expected), text);
 const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async (page, add = true) => {
@@ -263,45 +263,45 @@ const prepareCart = async (page, add = true) => {
   await admin.getByText('Order updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[1].p_status, 'cancelled');
   await admin.getByRole('button', { name: 'Menu', exact: true }).click();
-  await admin.getByRole('button', { name: 'Add item', exact: true }).click();
-  await admin.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Test dish');
-  await admin.getByRole('button', { name: 'Category: Meals', exact: true }).click();
-  await admin.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).fill('123.45');
-  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
-  await admin.getByText('Choose a diet classification.', { exact: true }).waitFor();
-  await admin.getByRole('button', { name: 'Contains egg', exact: true }).click();
-  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
+  await admin.getByRole('button', { name: 'Add dish', exact: true }).click();
   const addDialog = admin.getByRole('dialog');
+  await addDialog.getByLabel('Dish name', { exact: true }).fill('Test dish');
+  await addDialog.getByLabel('Price in rupees', { exact: true }).fill('123.45');
+  await admin.getByRole('button', { name: 'Save dish', exact: true }).click();
+  await admin.getByText('Choose a diet classification.', { exact: true }).waitFor();
+  await addDialog.getByRole('button', { name: 'Contains egg', exact: true }).click();
+  await admin.getByRole('button', { name: 'Save dish', exact: true }).click();
   await addDialog.getByRole('alert').getByText(/Fixture save failure/).waitFor();
-  assert.equal(await addDialog.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Test dish');
-  assert.equal(await addDialog.getByRole('button', { name: 'Category: Meals', exact: true }).getAttribute('aria-pressed'), 'true');
-  assert.equal(await addDialog.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).inputValue(), '123.45');
-  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
+  assert.equal(await addDialog.getByLabel('Dish name', { exact: true }).inputValue(), 'Test dish');
+  assert.equal(await addDialog.getByRole('button', { name: 'Category: Meals', exact: true }).count(), 1, 'the only category is preselected');
+  assert.equal(await addDialog.getByLabel('Price in rupees', { exact: true }).inputValue(), '123.45');
+  await admin.getByRole('button', { name: 'Save dish', exact: true }).click();
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).waitFor();
   assert.equal(mutations[2].price_paise, 12345);
   assert.equal(mutations[2].diet, 'egg');
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
-  await focused(admin, 'Edit item');
+  await focused(admin, 'Edit dish');
   assert.equal(await admin.getByRole('dialog').getByRole('alert').count(), 0);
-  await admin.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await admin.getByRole('button', { name: 'Close', exact: true }).click();
   await focused(admin, 'Edit Test dish');
   await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
-  await admin.getByLabel('Price in rupees', { exact: true }).filter({ visible: true }).fill('125.67');
-  await admin.getByRole('button', { name: 'Save item', exact: true }).click();
-  await admin.getByText('Meals · ₹125.67', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByLabel('Price in rupees', { exact: true }).fill('125.67');
+  await admin.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await admin.getByText('₹125.67', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[3].price_paise, 12567);
-  await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
+  await admin.getByRole('button', { name: 'Edit Test dish', exact: true }).click();
+  await admin.getByRole('button', { name: 'Delete this dish', exact: true }).click();
   await focused(admin, 'Delete Test dish?');
-  await admin.getByRole('button', { name: 'Keep item', exact: true }).click();
-  await focused(admin, 'Delete Test dish');
-  await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
-  await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
+  await admin.getByRole('button', { name: 'Keep dish', exact: true }).click();
+  await focused(admin, 'Delete this dish');
+  await admin.getByRole('button', { name: 'Delete this dish', exact: true }).click();
+  await admin.getByRole('button', { name: 'Delete dish', exact: true }).click();
   await admin.getByRole('dialog').getByRole('alert').getByText(/Fixture delete failure/).waitFor();
-  await admin.getByRole('button', { name: 'Keep item', exact: true }).click();
-  await admin.getByRole('button', { name: 'Delete Test dish', exact: true }).click();
+  await admin.getByRole('button', { name: 'Keep dish', exact: true }).click();
+  await admin.getByRole('button', { name: 'Delete this dish', exact: true }).click();
   assert.equal(await admin.getByRole('dialog').getByRole('alert').count(), 0);
-  await admin.getByRole('button', { name: 'Confirm delete', exact: true }).click();
-  await admin.getByText('Item deleted.', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByRole('button', { name: 'Delete dish', exact: true }).click();
+  await admin.getByText('Test dish deleted.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(menuItems.length, 1);
   assert.equal(await ownerTab('Menu').getAttribute('aria-current'), 'page');
   await ownerTab('Today').click();
@@ -352,7 +352,7 @@ const prepareCart = async (page, add = true) => {
       let dishes = ['veg', 'egg', 'non_veg', null].map((diet, index) => ({ ...item, id: `20000000-0000-4000-8000-00000000004${index}`, name: `Diet fixture ${index + 1}`, diet }));
       let groups = [{ id: item.category_id, name: 'Meals', sort_order: 0 }];
       let failCategorySave = true, categoryDeleteRace = true;
-      const categoryWrites = [];
+      const categoryWrites = [], reorderCalls = [];
       let categoryReloadGate = null, failCategoryReload = false;
       const joined = dish => ({ ...dish, menu_categories: groups.find(group => group.id === dish.category_id) });
       const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
@@ -401,6 +401,12 @@ const prepareCart = async (page, add = true) => {
           const row = { ...values, id: id ?? `14300000-0000-4000-8000-00000000000${groups.length + 1}` };
           groups = method === 'POST' ? [...groups,row] : groups.map(group => group.id === id ? row : group);
           return json(row);
+        }
+        if (url.pathname === '/rest/v1/rpc/reorder_menu_items' || url.pathname === '/rest/v1/rpc/reorder_menu_categories') {
+          const body = request.postDataJSON(); reorderCalls.push(body);
+          if (body.p_item_ids) dishes = dishes.map(dish => body.p_item_ids.includes(dish.id) ? { ...dish, sort_order: body.p_item_ids.indexOf(dish.id) } : dish);
+          else groups = groups.map(group => ({ ...group, sort_order: body.p_category_ids.indexOf(group.id) }));
+          return json((body.p_item_ids ?? body.p_category_ids).length);
         }
         if (url.pathname === '/rest/v1/menu_items') {
           if (request.method() === 'GET') return json(dishes.map(joined));
@@ -491,8 +497,8 @@ const prepareCart = async (page, add = true) => {
       await adminPage.setViewportSize({ width: 390, height: 1400 });
       await adminPage.screenshot({ path: `dist/browser/${slug}-diet-owner-mobile.png`, fullPage: true });
       await adminPage.setViewportSize({ width: 390, height: 844 });
-      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
-      await adminPage.getByText('Item saved.', { exact: true }).waitFor();
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await adminPage.getByText('Dish saved.', { exact: true }).waitFor();
       assert.equal(dietWrites.at(-1).diet, 'non_veg');
       await adminPage.setViewportSize({ width: 1440, height: 900 });
       await adminPage.screenshot({ path: `dist/browser/${slug}-diet-owner-desktop.png`, fullPage: true });
@@ -535,23 +541,25 @@ const prepareCart = async (page, add = true) => {
       // Owner merchandising persists, sorts deterministically and appears publicly only while available.
       const featureLabel = slug === 'ammu-sammu' ? "Today's special" : 'Signature dish';
       const featureHeading = slug === 'ammu-sammu' ? "Today's special" : 'Signature dishes';
+      // Ordering is by Move up/down (#102): put Diet fixture 4 first in Meals.
+      await adminPage.getByRole('button', { name: 'Reorder Diet fixture 4', exact: true }).click();
+      for (const position of [3, 2, 1]) {
+        await adminPage.getByRole('button', { name: 'Move Diet fixture 4 up', exact: true }).click();
+        await adminPage.getByText(`Diet fixture 4 moved to position ${position} of 4 in Meals.`, { exact: true }).waitFor();
+      }
+      assert.deepEqual(reorderCalls.at(-1).p_item_ids, ['20000000-0000-4000-8000-000000000043', '20000000-0000-4000-8000-000000000040', '20000000-0000-4000-8000-000000000041', '20000000-0000-4000-8000-000000000042']);
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
-      await dialog.getByLabel('Order within category', { exact: true }).fill('1.5');
-      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
-      await dialog.getByText('Enter a whole number from -2,147,483,648 to 2,147,483,647.', { exact: true }).waitFor();
-      await dialog.getByLabel('Order within category', { exact: true }).fill('-5');
       await dialog.getByRole('switch', { name: featureLabel, exact: true }).click();
       await adminPage.setViewportSize({ width: 390, height: 1500 });
       await adminPage.screenshot({ path: `dist/browser/${slug}-featured-owner-mobile.png`, fullPage: true });
-      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
-      await adminPage.getByText('Item saved.', { exact: true }).waitFor();
-      assert.equal(dietWrites.at(-1).is_featured, true); assert.equal(dietWrites.at(-1).sort_order, -5);
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await adminPage.getByText('Dish saved.', { exact: true }).waitFor();
+      assert.equal(dietWrites.at(-1).is_featured, true); assert.equal(dietWrites.at(-1).sort_order, 0, 'an edit keeps the moved position');
       await adminPage.reload({ waitUntil: 'networkidle' });
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
-      assert.equal(await dialog.getByLabel('Order within category', { exact: true }).inputValue(), '-5');
       assert.equal(await dialog.getByRole('switch', { name: featureLabel, exact: true }).isChecked(), true);
-      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
       // Deliberately return unsorted rows: the public UI establishes its own stable order.
       dishes[0] = { ...dishes[0], is_featured: true, available: false, sort_order: -10 };
       await page.evaluate(key => localStorage.removeItem(key), `market:checkout:${slug}`);
@@ -587,33 +595,37 @@ const prepareCart = async (page, add = true) => {
         await page.goto(customer.url, { waitUntil: 'networkidle' });
       }
       // Categories use independent IDs, with a real category named All.
+      const categoriesButton = adminPage.getByRole('button', { name: 'Manage categories', exact: true });
+      await categoriesButton.click(); await focused(adminPage, 'Categories');
       await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
       await focused(adminPage, 'Add category');
       await dialog.getByLabel('Category name', { exact: true }).fill('Z First');
-      await dialog.getByLabel('Category order', { exact: true }).fill('1.5');
-      await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
-      await dialog.getByText('Enter a whole number from -2,147,483,648 to 2,147,483,647.', { exact: true }).waitFor();
-      await dialog.getByLabel('Category order', { exact: true }).fill('-20');
       await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
       await dialog.getByText(/Category save failed/).waitFor();
       assert.equal(await dialog.getByLabel('Category name', { exact: true }).inputValue(), 'Z First');
-      assert.equal(await dialog.getByLabel('Category order', { exact: true }).inputValue(), '-20');
       await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
       await adminPage.getByText('Category saved.', { exact: true }).waitFor();
-      await focused(adminPage, 'Add category');
-      await adminPage.getByRole('button', { name: 'Edit category Z First', exact: true }).click();
+      await focused(adminPage, 'Categories');
+      assert.equal(categoryWrites.at(-1).values.sort_order, 1, 'new categories are added last');
+      await adminPage.getByRole('button', { name: 'Move category Z First up', exact: true }).click();
+      await adminPage.getByText('Z First moved to position 1 of 2.', { exact: true }).waitFor();
+      assert.equal(reorderCalls.at(-1).p_category_ids[0], groups.find(group => group.name === 'Z First').id);
+      await adminPage.getByRole('button', { name: 'Rename category Z First', exact: true }).click();
       await dialog.getByLabel('Category name', { exact: true }).fill('Meals');
       await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
       await dialog.getByText('A category with this name already exists. Choose another name.', { exact: true }).waitFor();
       await dialog.getByLabel('Category name', { exact: true }).fill('All');
       await dialog.getByRole('button', { name: 'Save category', exact: true }).click();
-      await adminPage.getByRole('button', { name: 'Edit category All', exact: true }).waitFor();
+      await adminPage.getByRole('button', { name: 'Rename category All', exact: true }).waitFor();
+      await adminPage.getByRole('button', { name: 'Done', exact: true }).click(); await focused(adminPage, 'Manage categories');
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
-      await dialog.getByRole('button', { name: 'Category: All', exact: true }).click();
-      await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
-      await adminPage.getByText('Item saved.', { exact: true }).waitFor();
+      await dialog.getByRole('button', { name: 'Category: Meals', exact: true }).click();
+      await dialog.getByRole('button', { name: 'All', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+      await adminPage.getByText('Dish saved.', { exact: true }).waitFor();
       assert.equal(dietWrites.at(-1).category_id, groups.find(group => group.name === 'All').id);
       assert.equal(dietWrites.at(-1).category, undefined, 'dish saves contain only category ID');
+      await categoriesButton.click();
       assert.equal(await adminPage.getByRole('button', { name: 'Delete category All', exact: true }).isDisabled(), true);
       await adminPage.setViewportSize({ width: 390, height: 1500 });
       await adminPage.screenshot({ path: `dist/browser/${slug}-categories-owner-mobile.png`, fullPage: true });
@@ -642,11 +654,11 @@ const prepareCart = async (page, add = true) => {
       await reloadStarted;
       await adminPage.getByText('Loading menu', { exact: true }).waitFor();
       assert.equal(await adminPage.getByText('Category deleted.', { exact: true }).count(), 0, 'success waits for the category reload');
-      assert.equal(await adminPage.getByRole('button', { name: 'Edit category Temporary', exact: true }).count(), 1, 'held reload proves the stale UI window');
+      assert.equal(await adminPage.getByRole('button', { name: 'Deleting…', exact: true }).count(), 1, 'held reload keeps the confirmation busy');
       releaseReload();
       await adminPage.getByText('Category deleted.', { exact: true }).waitFor();
-      assert.equal(await adminPage.getByRole('button', { name: 'Edit category Temporary', exact: true }).count(), 0);
-      await focused(adminPage, 'Menu');
+      assert.equal(await adminPage.getByRole('button', { name: 'Rename category Temporary', exact: true }).count(), 0);
+      await focused(adminPage, 'Categories');
       // A committed deletion followed by a failed refresh must not announce success
       // or repeat the DELETE when the owner retries loading the catalog.
       await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
@@ -660,8 +672,9 @@ const prepareCart = async (page, add = true) => {
       const deletesBeforeRetry = categoryWrites.filter(write => write.method === 'DELETE').length;
       failCategoryReload = false;
       await adminPage.getByRole('button', { name: 'Retry loading menu', exact: true }).click();
-      await adminPage.getByRole('button', { name: 'Edit category Reload failure', exact: true }).waitFor({ state: 'hidden' });
+      await adminPage.getByRole('button', { name: 'Rename category Reload failure', exact: true }).waitFor({ state: 'hidden' });
       assert.equal(categoryWrites.filter(write => write.method === 'DELETE').length, deletesBeforeRetry);
+      await adminPage.getByRole('button', { name: 'Done', exact: true }).click(); await focused(adminPage, 'Manage categories');
       console.log(`PASS: ${slug} deletion waits for reload, restores focus, and reload failure retries without duplicate deletion`);
       assert.ok(categoryWrites.every(write => write.method !== 'PATCH' || write.values.business_id === undefined));
       console.log(`PASS: ${slug} category create/rename/order/picker, duplicate and retry errors, in-use restriction/race, keyboard focus and real All filter`);
@@ -686,3 +699,4 @@ const prepareCart = async (page, add = true) => {
 
 if (!categoriesOnly) await import('./account.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
+if (!categoriesOnly) await import('./owner-menu.mjs');
