@@ -42,12 +42,12 @@ export function useMarketOrders(services: Services, session: Session, identity: 
   }, [services, identity, customer]);
   useEffect(() => {
     ++requestId.current; publish(empty(identity.current));
-    if (!session) return;
+    if (!session || !customer) return; // owners' Orders (#100) keeps its own single subscription
     let active = true; let stop: (() => void) | undefined;
     void refreshOrders();
     void services.subscribeOrders(() => { if (active) void refreshOrders(); }, error => { if (active) publish({ ...latest.current, error: message(error) }); }).then(fn => { if (active) stop = fn; else fn(); }).catch(error => { if (active) publish({ ...latest.current, error: message(error) }); });
     return () => { active = false; ++requestId.current; stop?.(); };
-  }, [session?.user.id, identityVersion, services, identity, refreshOrders]);
+  }, [session?.user.id, identityVersion, services, identity, refreshOrders, customer]);
   const current = !!session && sameIdentity(snapshot.identity, identity.current);
   return { orders: current ? snapshot.orders : [], ordersLoading: current && snapshot.loading, ordersReady: current && snapshot.ready, ordersError: current ? snapshot.error : '', olderOrdersError: current ? snapshot.moreError : '', olderOrdersLoading: current && snapshot.moreLoading, hasOlderOrders: current && !!snapshot.cursor, ordersRevision: current ? snapshot.revision : 0, refreshOrders, loadOlderOrders };
 }
