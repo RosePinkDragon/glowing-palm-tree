@@ -195,6 +195,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.locator('#regular-menu').getByText('Account fixture meal', { exact: true }).waitFor();
   await page.goForward(); await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).click();
+  await page.getByRole('button', { name: /^Cart \(3\)/ }).waitFor();
   current = await saved(); assert.equal(current.lines[0].item.pricePaise, 17500, 'cached-menu reconciliation cannot restore the old price after import');
   await detail();
   const existing = await raw(); await choice();
