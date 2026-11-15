@@ -809,7 +809,7 @@ const prepareCart = async (page, add = true) => {
       await accept(0x1A6).waitFor();
       await tabs.getByRole('button', { name: 'Orders, 1 new', exact: true }).waitFor();
       await tabs.getByRole('button', { name: /^Menu/ }).click();
-      await page.getByRole('button', { name: 'Add item', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Add dish', exact: true }).waitFor();
       db.push(row(0x1A7, 'placed', 'Omkar Patil', 'Bus Stand', 0, [['Sol kadhi', 3, 10000]]));
       pushChange();
       await tabs.getByRole('button', { name: 'Orders, 2 new', exact: true }).waitFor();
