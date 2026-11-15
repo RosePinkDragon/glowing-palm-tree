@@ -13,6 +13,132 @@ const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: '
 const token = part({ alg: 'HS256' }) + '.' + part({ sub: userId, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture';
 const session = { access_token: token, refresh_token: 'account-fixture', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
 
+async function supportScenarios({ page, context, server, slug, rows, fixture, queries }) {
+  const selected = page.locator('#support-order');
+  const privacy = () => page.getByRole('heading', { name: 'Draft privacy policy', exact: true });
+  const login = async () => {
+    await page.goto(server.url + '/help', { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).click();
+    await page.getByLabel('Email', { exact: true }).fill(fixture.authSession?.user.email ?? user.email); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh active orders', exact: true }).waitFor();
+  };
+  assert.equal((await page.goto(server.url + '/help', { waitUntil: 'networkidle' })).status(), 200);
+  const script = await page.locator('script[src]').first().getAttribute('src');
+  for (const path of [script, '/firebase-messaging-worker.js']) {
+    const asset = await context.request.get(new URL(path, server.url).href);
+    assert.equal(asset.status(), 200); assert.match(asset.headers()['content-type'], /javascript/);
+  }
+  assert.equal((await context.request.get(server.url + '/missing-support-fixture.js')).status(), 404, 'unknown assets cannot return the SPA document');
+  await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/help');
+  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'WhatsApp restaurant', exact: true }).count(), 0);
+  await page.getByText('Contact number not available yet.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Good food starts here.', { exact: true }).filter({ visible: true }).count(), 0);
+  const questions = [
+    ['Where do you deliver?', 'device’s current location'],
+    ['How can I pay?', 'cash on delivery'],
+    ['Can I cancel or change my order?', 'does not currently offer customer cancellation'],
+    ['What if a dish is unavailable?', 'Reorder skips dishes'],
+    ['Why have I not received a login code?', 'Phone login codes are not available'],
+    ['How do I delete my account?', 'Account deletion is not yet available'],
+  ];
+  for (const [question, answer] of questions) {
+    const disclosure = page.getByRole('button', { name: question, exact: true });
+    await disclosure.focus(); await page.keyboard.press('Enter');
+    await page.getByRole('region').getByText(answer, { exact: false }).waitFor();
+    assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Space'); await page.getByRole('region').waitFor({ state: 'hidden' }); assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  }
+  await page.getByRole('button', { name: 'Privacy policy', exact: true }).click(); await privacy().waitFor();
+  assert.equal(new URL(page.url()).pathname, '/privacy');
+  await page.waitForFunction(() => document.activeElement?.tagName === 'H1' && document.activeElement?.textContent === 'Privacy policy');
+  await page.goBack(); await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Terms', exact: true }).click();
+  await page.getByRole('heading', { name: 'Draft terms', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Back to Help & support', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
+  for (const path of ['/privacy', '/terms']) {
+    assert.equal((await page.goto(server.url + path, { waitUntil: 'networkidle' })).status(), 200);
+    await page.getByText('Draft · owner review required before deployment', { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, path);
+    await page.getByRole('button', { name: 'Back to Help & support', exact: true }).click();
+    assert.equal(new URL(page.url()).pathname, '/help');
+  }
+  fixture.supportRows = [];
+  await login(); await page.getByText('No active orders right now.', { exact: false }).waitFor();
+  fixture.supportRows = rows.map(row => ({ ...row, status: 'preparing' }));
+  fixture.failActive = true;
+  await page.getByRole('button', { name: 'Refresh active orders', exact: true }).click();
+  await page.getByRole('button', { name: 'Retry active orders', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isDisabled(), true);
+  fixture.failActive = false; await page.getByRole('button', { name: 'Retry active orders', exact: true }).click();
+  await selected.getByText(orderId(25), { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^Select order reference / }).count(), 20);
+  assert.ok(queries.some(url => url.searchParams.get('status') === 'in.(placed,accepted,preparing,out_for_delivery)'), 'Help uses the independent active-only API');
+  await page.getByRole('button', { name: `Select order reference ${orderId(24)}`, exact: true }).click();
+  await selected.getByText(orderId(24), { exact: true }).waitFor();
+  fixture.failActiveMore = true;
+  await page.getByRole('button', { name: 'Load more active orders', exact: true }).click();
+  await page.getByRole('button', { name: 'Retry more active orders', exact: true }).waitFor();
+  await selected.getByText(orderId(24), { exact: true }).waitFor();
+  fixture.failActiveMore = false; await page.getByRole('button', { name: 'Retry more active orders', exact: true }).click();
+  await page.getByRole('button', { name: `Select order reference ${orderId(1)}`, exact: true }).waitFor();
+  const live = async changed => {
+    for (const channel of fixture.orderChannels.values()) {
+      const payload = { ids: [1], data: { schema: 'public', table: 'orders', type: 'UPDATE', commit_timestamp: new Date().toISOString(), columns: [], record: changed, old_record: {} } };
+      channel.socket.send(JSON.stringify(channel.array ? [channel.join, null, channel.topic, 'postgres_changes', payload] : { join_ref: channel.join, ref: null, topic: channel.topic, event: 'postgres_changes', payload }));
+    }
+  };
+  const changed = fixture.supportRows.find(row => row.id === orderId(24));
+  changed.status = 'out_for_delivery'; changed.version++;
+  await live(changed); await selected.getByText('Status: out for delivery', { exact: true }).waitFor();
+  changed.status = 'delivered'; changed.version++;
+  await live(changed); await selected.getByText(orderId(25), { exact: true }).waitFor();
+  await page.getByText('The previously selected order is no longer active.', { exact: false }).waitFor();
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+    await selected.scrollIntoViewIfNeeded();
+    assert.equal(await selected.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'full UUID wraps at narrow widths');
+    await page.screenshot({ path: `dist/browser/${slug}-support-${width}.png`, fullPage: true });
+  }
+  await page.goto(server.url + '/orders/' + orderId(25), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Help & support', exact: true }).click();
+  await page.getByText('You opened Help for this order reference:', { exact: true }).waitFor();
+  await selected.getByText(orderId(25), { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('id'), orderId(25));
+  await page.getByRole('button', { name: 'Account', exact: true }).click();
+  const drawer = page.getByRole('dialog');
+  await drawer.getByRole('button', { name: 'Help & support', exact: true }).click();
+  await drawer.waitFor({ state: 'hidden' });
+  assert.equal(new URL(page.url()).pathname, '/help');
+  assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).count(), 0, 'general Help clears the originating reference');
+  await page.goto(server.url + '/orders/' + orderId(25), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Help & support', exact: true }).click();
+  await page.getByText('You opened Help for this order reference:', { exact: true }).waitFor();
+  await selected.getByText(orderId(25), { exact: true }).waitFor();
+  let release, arrived;
+  const pending = new Promise(resolve => { arrived = resolve; });
+  fixture.holdActive = { gate: new Promise(resolve => { release = resolve; }), arrived };
+  await page.getByRole('button', { name: 'Refresh active orders', exact: true }).click(); await pending;
+  const other = await context.newPage(); await other.goto(server.url + '/account', { waitUntil: 'networkidle' });
+  await other.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
+  assert.equal(await selected.count(), 0, 'logout removes private support data before pending requests resolve');
+  assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).count(), 0, 'logout also removes the originating private reference');
+  release(); await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor();
+  fixture.authSession = { ...session, access_token: part({ alg: 'HS256' }) + '.' + part({ sub: otherUser, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000002', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture', user: { ...user, id: otherUser, email: 'other-fixture@example.test' } };
+  fixture.supportRows = []; await login();
+  await page.getByText('No active orders right now.', { exact: false }).waitFor();
+  assert.equal(await selected.count(), 0, 'a different account cannot restore the prior account’s selected order');
+  await other.reload({ waitUntil: 'networkidle' }); await other.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
+  await other.close(); fixture.supportRows = null; fixture.authSession = null;
+  console.log(`PASS: ${slug} public support/FAQ/legal/back, independent active paging/retry/selection, realtime terminal transition, identity isolation, mobile/desktop layouts`);
+}
+
 async function reorderScenarios({ page, context, server, slug, item, rows, fixture }) {
   const key = `market:cart:${slug}`, checkoutKey = `market:checkout:${slug}`;
   const target = rows.find(row => row.id === orderId(24));
@@ -172,7 +298,7 @@ try {
     const businessId = `54000000-0000-4000-8000-00000000000${brand+1}`;
     const business = { id: businessId, slug, name: brand ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
-    const fixture = { menu: [item], holdMenu: null };
+    const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map() };
     const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
     let failOlder = true, failDetail = false, holdOrders = false, held, release;
     await context.routeWebSocket(/.*/, socket => {
@@ -180,6 +306,8 @@ try {
         const data = JSON.parse(String(message)), array = Array.isArray(data);
         const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
         const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+        if (event === 'phx_join' && payload?.config?.postgres_changes?.some(value => value.table === 'orders')) fixture.orderChannels.set(topic, { socket, join, topic, array });
+        if (event === 'phx_leave') fixture.orderChannels.delete(topic);
         if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
       });
     });
@@ -188,8 +316,8 @@ try {
       if (url.hostname === '127.0.0.1') return route.fallback();
       assert.equal(url.origin, api, 'no third-party requests without consent');
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
-      if (url.pathname === '/auth/v1/token') return json(session);
-      if (url.pathname === '/auth/v1/user') return json(user);
+      if (url.pathname === '/auth/v1/token') return json(fixture.authSession ?? session);
+      if (url.pathname === '/auth/v1/user') return json(fixture.authSession?.user ?? user);
       if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
       if (url.pathname === '/rest/v1/businesses') return json(business);
       if (url.pathname === '/rest/v1/menu_items') { const hold = fixture.holdMenu; fixture.holdMenu = null; if (hold) { hold.arrived(); await hold.gate; } return json(fixture.menu); }
@@ -197,13 +325,21 @@ try {
       if (url.pathname === '/rest/v1/orders') {
         queries.push(url);
         assert.equal(url.searchParams.get('business_id'), 'eq.' + businessId);
-        assert.equal(url.searchParams.get('customer_id'), 'eq.' + userId);
+        assert.equal(url.searchParams.get('customer_id'), 'eq.' + (fixture.authSession?.user.id ?? userId));
         if (holdOrders) { holdOrders = false; held?.(); await new Promise(resolve => { release = resolve; }); }
         const id = url.searchParams.get('id');
         if (id) return failDetail ? json({ message: 'Detail fixture unavailable' }, 400) : json(rows.find(row => row.id === id.slice(3)) ?? null);
         const cursor = url.searchParams.get('or');
-        if (cursor && failOlder) return json({ message: 'Older history fixture unavailable' }, 400);
-        let result = [...rows];
+        const active = url.searchParams.has('status');
+        const capturedRows = [...(active && fixture.supportRows !== null ? fixture.supportRows : rows)].filter(row => row.customer_id === (fixture.authSession?.user.id ?? userId));
+        if (active) {
+          assert.equal(url.searchParams.get('status'), 'in.(placed,accepted,preparing,out_for_delivery)');
+          const hold = fixture.holdActive; fixture.holdActive = null; if (hold) { hold.arrived(); await hold.gate; }
+          if (fixture.failActive || cursor && fixture.failActiveMore) return json({ message: 'Active order fixture unavailable' }, 400);
+        }
+        if (!active && cursor && failOlder) return json({ message: 'Older history fixture unavailable' }, 400);
+        let result = capturedRows;
+        if (active) result = result.filter(row => ['placed', 'accepted', 'preparing', 'out_for_delivery'].includes(row.status));
         if (cursor) {
           const parts = /^\(created_at\.lt\.([^,]+),and\(created_at\.eq\.([^,]+),id\.lt\.([^)]+)\)\)$/.exec(cursor);
           assert.ok(parts); result = result.filter(row => row.created_at < parts[1] || (row.created_at === parts[1] && row.id < parts[3]));
@@ -226,6 +362,12 @@ try {
       Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
     });
     try {
+      if (process.env.SUPPORT_ONLY === '1') {
+        const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+        try { await supportScenarios({ page, context, server, slug, rows, fixture, queries }); }
+        catch (error) { await page.screenshot({ path: `dist/browser/${slug}-support-failure.png`, fullPage: true }); throw error; }
+        assert.deepEqual(errors, []); continue;
+      }
       if (process.env.REORDER_ONLY === '1') {
         const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
         try { await reorderScenarios({ page, context, server, slug, item, rows, fixture }); }
@@ -291,7 +433,7 @@ try {
       await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
-      for (const [label, text] of [['Saved addresses', 'Saved addresses are not available yet.'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Restaurant support details will be added here before launch.']]) {
+      for (const [label, text] of [['Saved addresses', 'Saved addresses are not available yet.'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {
         await page.getByRole('button', { name: 'Account', exact: true }).click();
         await page.getByRole('button', { name: label, exact: true }).click();
         await page.getByText(text, { exact: false }).waitFor();
@@ -330,6 +472,7 @@ try {
       await page.getByLabel('Email', { exact: true }).waitFor();
       assert.deepEqual(errors, []);
       console.log(`PASS: ${slug} guest login, scoped paged drawer, retry, old detail, focus, placeholders and logout isolation`);
+      await supportScenarios({ page, context, server, slug, rows, fixture, queries });
       await reorderScenarios({ page, context, server, slug, item, rows, fixture });
       assert.deepEqual(errors, []);
     } finally { release?.(); await context.close(); await server.close(); }

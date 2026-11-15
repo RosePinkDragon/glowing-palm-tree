@@ -23,6 +23,7 @@ import { DishPhoto } from './DishPhoto';
 import { DishDetails } from './DishDetails';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ReorderNotice, ReorderPanel } from './ReorderPanel';
+import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 
 const money = formatINRFromPaise;
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
@@ -177,7 +178,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   </MarketCard></View>;
   const render = (page: CustomerScreen, orderId?: string) => <ScrollView keyboardShouldPersistTaps="handled" scrollEventThrottle={100} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: width >= 760 ? 40 : 20, paddingVertical: 28, gap: 24 }}>
 
-    <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View>
+    {page !== 'Help' && page !== 'Privacy' && page !== 'Terms' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
     {market.notice ? <MarketText>{market.notice}</MarketText> : null}
@@ -198,8 +199,10 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     </View> : null}
     {page === 'Account' || page === 'Login' ? <AuthPanel market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}
-    {page === 'Order' ? <CustomerOrderDetail market={market} id={orderId ?? ''} receipt={receipt} onReorder={startReorder} /> : null}
-    {page === 'Help' || page === 'Profile' || page === 'Addresses' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Help' ? 'Help & support' : page === 'Profile' ? 'Edit profile' : page === 'Addresses' ? 'Saved addresses' : 'Notifications'}</MarketText><MarketText>{page === 'Help' ? 'Restaurant support details will be added here before launch.' : page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : page === 'Addresses' ? 'Saved addresses are not available yet. Enter your delivery details at checkout.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
+    {page === 'Order' ? <CustomerOrderDetail market={market} id={orderId ?? ''} receipt={receipt} onReorder={startReorder} onHelp={() => navigation.current?.go(`/help?id=${orderId}`)} /> : null}
+    {page === 'Help' ? <CustomerSupport businessId={businessId} market={market} go={path => navigation.current?.go(path)} orderReference={orderId} /> : null}
+    {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
+    {page === 'Profile' || page === 'Addresses' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Profile' ? 'Edit profile' : page === 'Addresses' ? 'Saved addresses' : 'Notifications'}</MarketText><MarketText>{page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : page === 'Addresses' ? 'Saved addresses are not available yet. Enter your delivery details at checkout.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   return <><CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
 }
