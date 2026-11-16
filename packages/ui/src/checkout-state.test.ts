@@ -5,7 +5,7 @@ import { menuItem } from '../../../tests/fixtures/menu.ts';
 import { freezeAttempt, readAttempt } from './checkout-state.ts';
 
 test('a persisted attempt preserves the original request for retries', () => {
-  const source = { businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: menuItem(), quantity: 1 }], delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } };
+  const source = { businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: menuItem(), quantity: 1 }], delivery: { name: 'Name', phone: '123' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 } };
   const snapshot = freezeAttempt(source);
   source.lines[0].quantity = 2; source.delivery.name = 'Changed';
   const restored = readAttempt(JSON.stringify(snapshot), 'ammu-sammu');
@@ -73,7 +73,7 @@ test('two checkout clients cannot replace an uncertain persisted attempt', async
   let held = false; let stored: string | null = null; let created = 0; const sent: string[] = [];
   const locks = { async request<T>(_name: string, _options: { ifAvailable: true }, callback: (lock: object | null) => Promise<T>): Promise<T> { if (held) return callback(null); held = true; try { return await callback({}); } finally { held = false; } } };
   const storage = { async getItem() { return stored; }, async setItem(_key: string, value: string) { stored = value; } };
-  const create = () => freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: `key-${++created}`, pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: 'A', phone: '1', addressLine: 'Address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } });
+  const create = () => freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: `key-${++created}`, pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: 'A', phone: '1' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 } });
   let release!: () => void; const network = new Promise<void>(resolve => { release = resolve; });
   const first = withCheckoutGuard('ammu-sammu', true, async () => { const result = await prepareAttempt(storage, 'ammu-sammu', create); sent.push(result.attempt.idempotencyKey); await network; throw new Error('response lost'); }, locks);
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -92,7 +92,7 @@ test('auth redirects preserve only local allowlisted navigation targets', () => 
 test('accepted terms stay frozen and revised quotes disappear at identity boundaries', async () => {
   const { capturePricing, revisedLines, visibleQuote } = await import('./pricing-model.ts');
   const lines = [{ item: menuItem({ name: 'Private dish' }), quantity: 2 }];
-  const original = freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: 'original-key', lines, pricing: capturePricing(lines, 20, 50), delivery: { name: 'Private sender', phone: '1', addressLine: 'Private address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' } });
+  const original = freezeAttempt({ businessId: 'ammu-sammu', userId: 'a', idempotencyKey: 'original-key', lines, pricing: capturePricing(lines, 20, 50), delivery: { name: 'Private sender', phone: '1' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: '2026-11-14T00:00:00Z' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 } });
   const accepted = JSON.stringify(original);
   lines[0].item.pricePaise = 300;
   const identity = { userId: 'a', generation: 1 };
@@ -124,18 +124,12 @@ test('a saved-address attempt keeps the address and a missing phone location for
   assert.equal(readAttempt(JSON.stringify(withFix), 'ammu-sammu')?.location?.accuracy, 20);
 });
 
-test('an older persisted attempt is still read, and unreadable ones fail with the contact message instead of crashing', async () => {
-  const { orderInput } = await import('./checkout-state.ts');
+test('a version 1 or malformed persisted attempt is discarded with the contact message instead of crashing', () => {
   const legacy = { version: 1, businessId: 'ammu-sammu', userId: 'user', idempotencyKey: 'key', lines: [], pricing: { lines: [] }, delivery: { name: 'N', phone: '1', addressLine: 'Typed address line' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } };
-  const restored = readAttempt(JSON.stringify(legacy), 'ammu-sammu');
-  assert.equal(restored?.delivery.addressLine, 'Typed address line');
-  assert.equal(orderInput(restored!).delivery.addressLine, 'Typed address line');
-  assert.equal(orderInput(freezeAttempt(savedSource())).delivery.addressLine, '');
   const unreadable = /could not be read/;
+  assert.throws(() => readAttempt(JSON.stringify(legacy), 'ammu-sammu'), unreadable, 'version 1 is no longer replayed');
   assert.throws(() => readAttempt('{not json', 'ammu-sammu'), unreadable);
-  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, location: null }), 'ammu-sammu'), unreadable, 'legacy needs its fix');
-  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, delivery: { name: 'N', phone: '1' } }), 'ammu-sammu'), unreadable, 'legacy needs its typed line');
-  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, savedAddress: { id: 'x', version: 1 } }), 'ammu-sammu'), unreadable);
+  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, savedAddress: { id: 'x', version: 1 } }), 'ammu-sammu'), unreadable, 'version 1 even with an address');
   assert.throws(() => readAttempt(JSON.stringify({ ...freezeAttempt(savedSource()), savedAddress: undefined }), 'ammu-sammu'), unreadable, 'version 2 needs its address');
   assert.throws(() => readAttempt(JSON.stringify({ ...freezeAttempt(savedSource()), savedAddress: { id: 'x', version: 0 } }), 'ammu-sammu'), unreadable);
   assert.throws(() => readAttempt(JSON.stringify({ ...legacy, version: 3 }), 'ammu-sammu'), unreadable);
@@ -148,7 +142,6 @@ test('a changed address and one outside the area are definite rejections that re
   assert.equal(isDefiniteOrderRejection(error('ADDRESS_CHANGED')), true);
   assert.equal(isDefiniteOrderRejection(error('DELIVERY_UNAVAILABLE')), true);
   assert.equal(isDefiniteOrderRejection(error('SIGN_IN_REQUIRED')), false);
-  assert.equal(isDefiniteOrderRejection(error('LOCATION_REQUIRED')), false);
   assert.equal(isDefiniteOrderRejection(error('INVALID_RESPONSE')), false);
 });
 
@@ -171,6 +164,7 @@ test('the phone-to-pin distance decides whether the customer confirms first', as
   assert.equal(near.title, 'You\'re 3.2 km from this address');
   assert.equal(near.lead, 'You\'re ordering to Home, Flat 3, Sai Krupa Apartments, Bharne Naka. Is that right?');
   assert.match(near.cash, /pay ₹390 in cash/);
+  assert.equal(near.amount, '₹390', 'only the amount is bold');
   assert.equal(confirmationCopy({ kind: 'remote', distanceM: 60_000, notInKhed: true }, address, 103000).title, 'You\'re not in Khed right now');
   const none = confirmationCopy({ kind: 'unknown' }, address, 39000);
   assert.equal(none.title, 'We couldn\'t confirm where you are');

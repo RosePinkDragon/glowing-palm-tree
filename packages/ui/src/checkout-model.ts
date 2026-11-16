@@ -31,14 +31,15 @@ export function confirmationFor(fix: LocationFix | null, pin: { latitude: number
   return { kind: 'remote', distanceM, notInKhed: distanceM > notInKhedThresholdM };
 }
 
-export interface ConfirmationCopy { title: string; lead: string; cash: string }
+export interface ConfirmationCopy { title: string; lead: string; cash: string; /** The part of `cash` shown in bold. */ amount: string }
 /** The sheet text from the design: how far away, the address, and who pays what in cash. */
 export function confirmationCopy(confirmation: Exclude<OrderConfirmation, { kind: 'direct' }>, address: SavedAddress, totalPaise: number): ConfirmationCopy {
   const where = `${addressTitle(address)}, ${addressLine(address)}`;
-  const cash = `Make sure someone at the address can take the food and pay ${formatINRFromPaise(totalPaise)} in cash. The restaurant may call you to confirm.`;
-  if (confirmation.kind === 'unknown') return { title: 'We couldn\'t confirm where you are', lead: `You're ordering to ${where}. Your phone didn't share its location, so please check this is right.`, cash };
-  if (confirmation.notInKhed) return { title: 'You\'re not in Khed right now', lead: `You're ordering to ${where}. Ordering for someone there?`, cash };
-  return { title: `You're ${formatDistance(confirmation.distanceM)} from this address`, lead: `You're ordering to ${where}. Is that right?`, cash };
+  const amount = formatINRFromPaise(totalPaise);
+  const cash = `Make sure someone at the address can take the food and pay ${amount} in cash. The restaurant may call you to confirm.`;
+  if (confirmation.kind === 'unknown') return { title: 'We couldn\'t confirm where you are', lead: `You're ordering to ${where}. Your phone didn't share its location, so please check this is right.`, cash, amount };
+  if (confirmation.notInKhed) return { title: 'You\'re not in Khed right now', lead: `You're ordering to ${where}. Ordering for someone there?`, cash, amount };
+  return { title: `You're ${formatDistance(confirmation.distanceM)} from this address`, lead: `You're ordering to ${where}. Is that right?`, cash, amount };
 }
 
 /** Contact fields use the shared rules; the typed address line they used to include is not asked any more. */

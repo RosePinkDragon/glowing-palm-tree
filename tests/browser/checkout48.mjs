@@ -214,12 +214,16 @@ try {
       await button('Retry order recovery').click(); await page.waitForURL(/\/orders\//);
       assert.equal(orders.length, 2); assert.deepEqual(orders[1], orders[0], 'the retry resends the same payload and idempotency key');
 
-      // An attempt saved before this slice (typed address, required fix) is recovered, not crashed on.
+      // An attempt saved by the old typed-address checkout (version 1) is discarded safely: not replayed, no crash.
       await reset(); await toCart(); await text('Deliver to Home').waitFor();
+      const sentBefore = orders.length;
       await page.evaluate(([key, userId]) => localStorage.setItem(key, JSON.stringify({ version: 1, businessId: key.split(':')[2], userId, idempotencyKey: 'legacy-fixture', lines: [], pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, delivery: { name: 'Legacy', phone: '+919876543210', addressLine: 'Typed address line' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } })), [`market:checkout:${slug}`, userId]);
-      await page.reload({ waitUntil: 'networkidle' }); await button('Retry order recovery').waitFor();
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.getByText(/could not be read/).first().waitFor({ state: 'attached' });
+      assert.equal(await button('Retry order recovery').count(), 0, 'the legacy attempt is not offered for replay');
+      assert.equal(orders.length, sentBefore, 'the legacy attempt is never sent');
       assert.deepEqual(errors, []);
-      console.log(`PASS: ${slug} checkout picker (in/out of area, add, select), direct, remote, not-in-Khed, no-location, ADDRESS_CHANGED, DELIVERY_UNAVAILABLE, idempotent retry`);
+      console.log(`PASS: ${slug} checkout picker (in/out of area, add, select), direct, remote, not-in-Khed, no-location, ADDRESS_CHANGED, DELIVERY_UNAVAILABLE, idempotent retry, legacy v1 attempt discarded`);
     } catch (error) { await shot('failure').catch(() => {}); throw error; }
     finally { await context.close(); await server.close(); }
   }

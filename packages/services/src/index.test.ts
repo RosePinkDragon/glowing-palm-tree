@@ -16,7 +16,7 @@ test('demo browsing is labelled and checkout fails closed', async () => {
   assert.equal((await service.getBusiness()).orderingEnabled, false);
   assert.equal((await service.getBusiness()).acceptingOrders, false);
   assert.equal((await service.getMenu())[0].isDemo, true);
-  await assert.rejects(service.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: '', phone: '', addressLine: '' }, location: { latitude: 0, longitude: 0, accuracy: 0, capturedAtISO: '' }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
+  await assert.rejects(service.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [], delivery: { name: '', phone: '' }, location: null, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 1 }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'DEMO_MODE');
   assert.throws(() => createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://one.example' } }), /both EXPO_PUBLIC/);
 });
 
@@ -400,7 +400,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     await assert.rejects(customer.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
     await customer.auth.signIn('customer@example.test', 'password');
     const item = { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
-    await assert.rejects(customer.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1', addressLine: 'A' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
+    await assert.rejects(customer.placeOrder({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, lines: [{ item, quantity: 1 }], delivery: { name: 'N', phone: '1' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 1 }, idempotencyKey: 'key' }), (e: unknown) => e instanceof ServiceError && e.code === 'NOT_ACCEPTING_ORDERS');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -485,7 +485,7 @@ test('checkout passes frozen terms and treats only validated no-order responses 
   const originalFetch = globalThis.fetch;
   const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
   const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 0, subtotal_paise: 100, total_paise: 120 };
-  const request = { lines: [{ item, quantity: 1 }], pricing, delivery: { name: 'Name', phone: '123', addressLine: 'Address' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, idempotencyKey: 'key' };
+  const request = { lines: [{ item, quantity: 1 }], pricing, delivery: { name: 'Name', phone: '123' }, location: { latitude: 0.5, longitude: 0.5, accuracy: 10, capturedAtISO: new Date().toISOString() }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 1 }, idempotencyKey: 'key' };
   const revised = { ...pricing, delivery_fee_paise: 40, total_paise: 140 };
   let response: unknown = { outcome: 'pricing_changed', pricing: revised };
   let orderReply: Record<string, unknown> | null = null;
@@ -771,7 +771,7 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
 
     const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
     const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 100, total_paise: 100 };
-    const input = { pricing, lines: [{ item, quantity: 1 }], delivery: { name: 'Priya', phone: '+919876543210', addressLine: 'ignored' }, location: null, idempotencyKey: '64800000-0000-4000-8000-000000000001', savedAddress: { id, version: 3 } };
+    const input = { pricing, lines: [{ item, quantity: 1 }], delivery: { name: 'Priya', phone: '+919876543210' }, location: null, idempotencyKey: '64800000-0000-4000-8000-000000000001', savedAddress: { id, version: 3 } };
     placeError = { code: 'PT412', message: 'saved address changed', details: null, hint: null };
     await assert.rejects(customer.placeOrder(input), (e: unknown) => e instanceof ServiceError && e.code === 'ADDRESS_CHANGED');
     const sent = requests.at(-1)?.body as Record<string, unknown>;
@@ -780,13 +780,9 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
     placeError = { code: '22023', message: 'delivery unavailable', details: null, hint: null };
     await assert.rejects(customer.placeOrder({ ...input, location: { latitude: 17.71, longitude: 73.41, accuracy: 900, capturedAtISO: '2026-11-16T10:00:00Z' } }), (e: unknown) => e instanceof ServiceError && e.code === 'DELIVERY_UNAVAILABLE');
     assert.deepEqual((requests.at(-1)?.body as Record<string, unknown>).p_location, { latitude: 17.71, longitude: 73.41, accuracy: 900, captured_at: '2026-11-16T10:00:00Z' }, 'phone fix is sent as-is');
-    // The typed-address checkout must send exactly what it always has: saved attempts retry with this payload.
-    placeError = { code: 'PT409', message: 'restaurant is not accepting orders', details: null, hint: null };
-    await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined, location: { latitude: 17.71, longitude: 73.41, accuracy: 20, capturedAtISO: '2026-11-16T10:00:00Z' } }));
-    assert.deepEqual(requests.at(-1)?.body, { p_business_slug: slug, p_items: [{ menu_item_id: item.id, quantity: 1 }], p_delivery: { name: 'Priya', phone: '+919876543210', address_line: 'ignored' }, p_location: { latitude: 17.71, longitude: 73.41, accuracy: 20, captured_at: '2026-11-16T10:00:00Z' }, p_idempotency_key: '64800000-0000-4000-8000-000000000001', p_accepted_pricing: pricing });
     const calls = requests.length;
     await assert.rejects(customer.placeOrder({ ...input, savedAddress: { id, version: 0 } }), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS');
-    await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined }), (e: unknown) => e instanceof ServiceError && e.code === 'LOCATION_REQUIRED', 'typed address still needs GPS');
+    await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined as never }), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS', 'the typed-address path is gone: a saved address is required');
     assert.equal(requests.length, calls, 'refused before any request');
     customer.dispose();
   } finally { globalThis.fetch = originalFetch; }

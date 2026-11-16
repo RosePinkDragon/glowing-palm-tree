@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
@@ -13,11 +13,10 @@ export interface PricingTerms {
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
 }
 /**
- * With savedAddress (#48) the server checks that address's pin and snapshots the reviewed
- * version; delivery.addressLine is not sent and location (the phone, optional) only measures
- * how far away the customer is. Without it, the typed address and a fresh GPS fix are required.
+ * An order goes to a saved address (#48): the server checks that address's pin and snapshots the
+ * reviewed version. location (the phone, optional) only measures how far away the customer is.
  */
-export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix | null; idempotencyKey: string; savedAddress?: { id: string; version: number } }
+export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: { name: string; phone: string }; location: LocationFix | null; idempotencyKey: string; savedAddress: { id: string; version: number } }
 /** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
@@ -446,25 +445,18 @@ export function createMarketServices(options: ServiceOptions) {
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'Order was saved, but its details could not be loaded.');
     return mapOrder(data as OrderRow, slug);
   };
-  const checkDeliveryEligibility = async (location: LocationFix): Promise<boolean> => {
-    const { data, error } = await requireClient().rpc('check_delivery_eligibility', { p_business_slug: slug, p_location: { latitude: location.latitude, longitude: location.longitude, accuracy: location.accuracy, captured_at: location.capturedAtISO } });
-    fail(error, 'Could not check delivery eligibility');
-    if (typeof data?.eligible !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not return delivery eligibility.');
-    return data.eligible;
-  };
   const placeOrder = async (input: PlaceOrderInput): Promise<Order> => {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
     const saved = input.savedAddress;
-    if (saved && (typeof saved.id !== 'string' || !orderIdPattern.test(saved.id) || !Number.isSafeInteger(saved.version) || saved.version < 1)) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
-    if (!saved && !input.location) throw new ServiceError('LOCATION_REQUIRED', 'A recent, accurate location is required.');
+    if (!saved || typeof saved.id !== 'string' || !orderIdPattern.test(saved.id) || !Number.isSafeInteger(saved.version) || saved.version < 1) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
     const fix = input.location && { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO };
-    const p_delivery = saved ? { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version } : { name: input.delivery.name, phone: input.delivery.phone, address_line: input.delivery.addressLine };
+    const p_delivery = { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version };
     // Retries must send this exact payload: the server's request hash covers delivery and location.
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
-    if (saved && error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
+    if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
@@ -588,7 +580,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

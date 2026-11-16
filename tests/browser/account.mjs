@@ -246,7 +246,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.evaluate(() => { window.__failCartWrites = false; }); await cancel();
   await page.getByRole('button', { name: 'Retry saved cart', exact: true }).click();
   // An unresolved submitted checkout blocks reorder, without rewriting its frozen key/snapshot.
-  const attempt = { version: 1, businessId: slug, userId, idempotencyKey: 'frozen-reorder-fixture', lines: [base], delivery: target.delivery ?? { name: 'Synthetic', phone: '9000000000', addressLine: 'Synthetic address' }, location: { latitude: 17.7, longitude: 73.4, accuracy: 5, capturedAtISO: '2026-11-15T00:00:00Z' }, pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 } };
+  const attempt = { version: 2, businessId: slug, userId, idempotencyKey: 'frozen-reorder-fixture', lines: [base], delivery: target.delivery ?? { name: 'Synthetic', phone: '9000000000' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 1 }, location: { latitude: 17.7, longitude: 73.4, accuracy: 5, capturedAtISO: '2026-11-15T00:00:00Z' }, pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 } };
   const frozen = JSON.stringify(attempt);
   await page.evaluate(({ key, value }) => { localStorage.setItem(key, value); window.dispatchEvent(new StorageEvent('storage', { key, newValue: value })); }, { key: checkoutKey, value: frozen });
   const pendingCart = await raw(); await reorder(); await page.getByText(/Recover your order awaiting confirmation before reordering/).waitFor();
