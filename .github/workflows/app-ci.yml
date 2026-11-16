@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: node --test --test-isolation=none .github/scripts/delivery-policy.test.mjs .github/scripts/pr-preflight.test.mjs
+      - run: node --test --test-isolation=none .github/scripts/delivery-policy.test.mjs .github/scripts/pr-preflight.test.mjs .github/scripts/migration-policy.test.mjs
 
   postgis-rls:
     runs-on: ubuntu-latest

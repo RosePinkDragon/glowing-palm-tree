@@ -33,6 +33,33 @@ A formal GitHub approval requires a distinct eligible reviewer; agent review rep
 4. Through a trusted administrative database setup, create the appropriate `business_memberships` for authenticated admin users and verify each admin can access only their business. Do not distribute service credentials to clients.
 5. Before enabling ordering, confirm each business's delivery area. The owner's decision (16 Nov 2026) is 12 km around each restaurant's kitchen point. On a database whose restaurants already exist, the migrations set both kitchen points and both 12 km areas, replacing any earlier area: check `select slug, ordering_enabled, accepting_orders, service_area_source, service_area_version from public.businesses;` before `db push` so a live boundary isn't changed by surprise. A project built fresh (restaurants added after migrating) needs `kitchen_location` and `set_delivery_radius` run for each restaurant. If a kitchen point is moved later, run `set_delivery_radius` again; the area does not follow it. For a new restaurant (for example in Dapoli), set its `kitchen_location` and then run `select public.set_delivery_radius('<slug>', <metres>, '<who decided, and when>');` as the service role, which records the source, version and verification time. A drawn boundary can still replace a circle by setting `service_area` and those three fields directly. Confirm actual menu items and prices, delivery fees, minimum orders, and cash-on-delivery terms with the businesses. Replace demo data, review `is_demo` and `ordering_enabled`, and test the server-enforced checkout and geographic boundary before enabling real orders.
 
+## Migration policy (pre-release baseline)
+
+Tracked by issue #131. Status: `supabase/migrations/` currently holds a chain of 17 migrations that has not been squashed; the squash is pending completion of #48's schema work. No migration for this application has been applied to any persistent or shared database. Local disposable PostgreSQL/PostGIS runs in tests do not count.
+
+The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). It is not yet a CI gate; a follow-up should run it in the trusted delivery-policy workflow.
+
+| Mode | Meaning | Guard |
+| --- | --- | --- |
+| `pre-release-open` (current) | Squash not yet done; feature PRs may still add migration files. | Warns on added migration files. |
+| `pre-release-baseline` | One baseline exists and is not yet applied anywhere persistent. Fold schema changes into it. | Fails when a PR adds a file under `supabase/migrations/`. Override with a `Migration-Policy-Override: <reason>` line in the PR body (or `MIGRATION_POLICY_OVERRIDE=<reason>` in the environment), for example when a shared database has already applied the baseline; then move to `frozen`. |
+| `frozen` | Baseline applied to a persistent or shared environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file; adding new files is allowed. No override. |
+
+In `pre-release-baseline` mode, editing or deleting existing migration files is allowed (the squash needs it). The squash PR flips `pre-release-open` to `pre-release-baseline`; the PR that records the first persistent deployment flips `pre-release-baseline` to `frozen`. Because the mode is read from `main`, a flip takes effect once that PR merges.
+
+Rules:
+
+- Before the first persistent deployment, schema changes are folded into the single baseline once it exists. This concerns repository migration files, not avoiding schema changes.
+- Freeze trigger: the moment the baseline is applied to any persistent or shared environment (staging included), or at release cutover, whichever is first. Set `mode` to `frozen` and record the baseline migration version and the commit SHA in `supabase/migration-policy.json` (`baseline`: `{ "version": "...", "commit": "..." }`) in the same PR.
+- Never rewrite, reorder or delete migration history that any shared or persistent database has applied, and never reset a database holding real data to comply with this policy. If anything has been applied, stop rewriting and append forward-only migrations.
+- The two `dukan-dar` Supabase projects are separate Prisma-managed databases. Never link, push to or otherwise change them. Verify the intended project ref and its migration history are new and empty before any database write.
+
+Release-readiness gate before switching to forward-only:
+
+1. Deploy the single baseline to the new, empty Supabase project (step 2 above).
+2. Verify seed and reference data, security (RLS, tenant isolation, grants, Supabase advisers), roles and memberships, the `menu-photos` storage bucket, Realtime publications, and the critical flows (checkout, order transitions, notifications).
+3. Record the baseline version and commit, set `mode` to `frozen`.
+
 ## Firebase, analytics, and notifications
 
 1. Create one Firebase project for the environment and register four web apps, one per target. In Firebase Console → Project settings → General → Your apps, select each web app and copy its public config into the matching Vercel project's `EXPO_PUBLIC_FIREBASE_API_KEY`, `PROJECT_ID`, `MESSAGING_SENDER_ID`, and `APP_ID` variables. The prefix for each is `EXPO_PUBLIC_FIREBASE_`. Firebase client config is public; control access through provider settings and security rules. Supabase provides authentication for these apps.

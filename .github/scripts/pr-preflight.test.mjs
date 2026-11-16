@@ -170,3 +170,61 @@ test('every metadata request explicitly uses the validated github.com origin hos
     else process.env.GH_HOST = previousHost;
   }
 });
+
+function withPolicy(f, mode) {
+  mkdirSync(join(f.upstream, 'supabase/migrations'), { recursive: true });
+  writeFileSync(join(f.upstream, 'supabase/migrations/20260101000000_base.sql'), 'select 1;\n');
+  writeFileSync(join(f.upstream, 'supabase/migration-policy.json'), JSON.stringify({ mode }));
+  f.git(['add', '.'], f.upstream);
+  f.git(['commit', '-m', 'policy'], f.upstream);
+  f.git(['fetch', 'origin', 'main']);
+  f.git(['merge', '--ff-only', 'FETCH_HEAD']);
+}
+const policyPath = 'supabase/migration-policy.json';
+const setPolicy = (f, text) => { writeFileSync(join(f.cwd, policyPath), text); f.git(['add', '.']); f.git(['commit', '-m', 'edit policy']); };
+test('migration policy: no policy on main skips the guard (bootstrap)', t => {
+  const f = fixture(t);
+  f.commit([policyPath, 'supabase/migrations/20270101000000_new.sql']);
+  assert.equal(f.run().warnings.length, 0);
+});
+test('migration policy: baseline mode blocks a new migration unless the open PR body overrides it', t => {
+  const f = fixture(t);
+  withPolicy(f, 'pre-release-baseline');
+  f.commit(['supabase/migrations/20270101000000_new.sql']);
+  assert.throws(() => f.run(), /do not add migration files/);
+  f.state.prs = [[pr({ number: 90, head: { ref: branch, repo: { full_name: repository } }, body: 'Issue: #77\nMigration-Policy-Override: shared staging applied baseline' })]];
+  assert.equal(f.run().warnings.length, 0);
+});
+test('migration policy: open mode warns; frozen on main rejects edits', t => {
+  const f = fixture(t);
+  withPolicy(f, 'pre-release-open');
+  f.commit(['supabase/migrations/20270101000000_new.sql']);
+  assert.equal(f.run().warnings.length, 1);
+  const g = fixture(t);
+  withPolicy(g, 'frozen');
+  g.commit(['supabase/migrations/20260101000000_base.sql']);
+  assert.throws(() => g.run(), /frozen/);
+});
+test('migration policy: head cannot loosen main (flip mode, delete, malformed, null)', t => {
+  const flip = fixture(t);
+  withPolicy(flip, 'frozen');
+  flip.commit(['supabase/migrations/20260101000000_base.sql']);
+  setPolicy(flip, JSON.stringify({ mode: 'pre-release-open' }));
+  assert.throws(() => flip.run(), /frozen/);
+  const del = fixture(t);
+  withPolicy(del, 'pre-release-open');
+  del.git(['rm', policyPath]); del.git(['commit', '-m', 'drop policy']);
+  assert.throws(() => del.run(), /missing or invalid/);
+  for (const text of ['{not json', 'null', '[]']) {
+    const bad = fixture(t);
+    withPolicy(bad, 'pre-release-open');
+    setPolicy(bad, text);
+    assert.throws(() => bad.run(), /missing or invalid/);
+  }
+});
+test('migration policy: warns when head changes the mode', t => {
+  const f = fixture(t);
+  withPolicy(f, 'pre-release-open');
+  setPolicy(f, JSON.stringify({ mode: 'pre-release-baseline' }));
+  assert.match(f.run().warnings.join(), /changes from pre-release-open to pre-release-baseline/);
+});

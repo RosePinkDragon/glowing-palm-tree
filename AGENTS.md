@@ -40,6 +40,7 @@ run `npm run pr:preflight -- --issue N --base main` successfully on the committe
 The command fetches current main and checks ancestry, the complete main-relative diff,
 and live open PRs; resolve failures before publishing. Updating the exact existing
 head-branch PR is allowed; another open PR for the same issue blocks a new slice.
+Preflight also enforces the Supabase migration policy in `docs/RELEASE.md`.
 
 A PR may change at most 15 reviewable files, counting additions, modifications,
 deletions, and renames. Exclude only `.gitignore`, files whose basename is README

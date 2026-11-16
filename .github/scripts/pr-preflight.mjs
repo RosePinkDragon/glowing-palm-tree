@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { BRANCH, evaluate, linkedIssue } from './delivery-policy.mjs';
+import { POLICY_FILE, checkMigrationPolicy, parseOverride } from './migration-policy.mjs';
 
 // Arguments are passed directly to executables; command output is never included in errors.
 function execute(command, args, cwd) {
@@ -43,7 +44,7 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
     const renamed = /^R[0-9]+$/.test(status);
     const second = renamed ? tokens.shift() : undefined;
     if (!/^(?:[AMDTUXB]|R[0-9]+)$/.test(status) || !first || (renamed && !second)) throw new Error('Unable to parse complete main-relative diff.');
-    files.push(renamed ? { filename: second, previous_filename: first } : { filename: first });
+    files.push(renamed ? { filename: second, previous_filename: first, status: 'R' } : { filename: first, status: status[0] });
   }
   const issue = json(run, ['api', `repos/${repository}/issues/${issueNumber}`]);
   const result = evaluate({ head: { ref: branch }, body: `Issue: #${issueNumber}` }, issue, files, repository);
@@ -67,11 +68,37 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
     if (sameHead && pr.base.ref !== 'main') throw new Error('The existing PR must target main before it can be updated.');
     if (sameIssue && !sameHead) throw new Error(`Open PR #${pr.number} belongs to this issue; merge the predecessor before publishing another slice.`);
   }
-  return { branch, repository, issue: issueNumber, base: 'main', count: result.count };
+  // Migration policy is read from main (not the PR head), so a PR cannot loosen its own rules.
+  // Absent on main: bootstrap, skip. Present on main but missing or invalid on head: fail.
+  const readPolicy = ref => {
+    if (!run('git', ['ls-tree', '--name-only', ref, '--', POLICY_FILE])) return undefined;
+    let value;
+    try { value = JSON.parse(run('git', ['show', `${ref}:${POLICY_FILE}`])); } catch { value = null; }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value;
+  };
+  const basePolicy = readPolicy('refs/remotes/origin/main');
+  let warnings = [];
+  if (basePolicy === null) throw new Error(`${POLICY_FILE} on main is invalid; fix main first.`);
+  if (basePolicy) {
+    const headPolicy = readPolicy('HEAD');
+    if (!headPolicy) throw new Error(`${POLICY_FILE} is missing or invalid on this branch but present on main; restore it.`);
+    const own = pulls.find(pr => pr.head.ref === branch && pr.head.repo.full_name.toLowerCase() === repository.toLowerCase());
+    const override = (process.env.MIGRATION_POLICY_OVERRIDE ?? '').trim() || parseOverride(own?.body);
+    const verdict = checkMigrationPolicy({
+      mode: basePolicy.mode, override,
+      files: files.map(file => ({ status: file.status, path: file.filename, previous: file.previous_filename })),
+    });
+    if (verdict.errors.length) throw new Error(verdict.errors.join('\n'));
+    warnings = verdict.warnings;
+    if (headPolicy.mode !== basePolicy.mode) warnings.push(`Migration policy mode changes from ${basePolicy.mode} to ${headPolicy.mode}; judged under ${basePolicy.mode} (main).`);
+  }
+  return { branch, repository, issue: issueNumber, base: 'main', count: result.count, warnings };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const result = preflight(process.argv.slice(2));
+    for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
     console.log(`Preflight passed: ${result.branch} -> main; ${result.count}/15 reviewable files for issue #${result.issue}.`);
   } catch (error) {
     console.error(error.message);
