@@ -49,12 +49,14 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
   if (!origin.current.identity && market.authReady && market.session) origin.current.identity = market.identity.current;
   const currentReference = market.authReady && market.session && origin.current.identity && sameIdentity(origin.current.identity, market.identity.current) ? orderReference : undefined;
   const support = useSupportOrders(market, currentReference);
+  // Never show the raw id: the matching order's number once loaded, else the short reference.
+  const openedReference = currentReference ? orderName(support.orders.find(candidate => candidate.id === currentReference) ?? { id: currentReference }) : '';
   const [expanded, setExpanded] = useState<string | null>(null);
   const config = supportConfig[businessId];
   const order = support.selected;
   return <View style={{ gap: 24, width: '100%', maxWidth: 720, alignSelf: 'center' }}>
     <View style={{ gap: 8 }}><SupportHeading>Help &amp; support</SupportHeading><MarketText variant="muted">Questions about your order? Get in touch with {name}.</MarketText></View>
-    {currentReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{currentReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
+    {currentReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{openedReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
     <MarketCard>
       <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 20, lineHeight: 28, fontWeight: '700' }}>Contact the restaurant</Text>
       {!market.authReady ? <MarketStatus kind="loading" title="Checking your account" /> : !market.session ? <><MarketText>Sign in to see your active orders. You can still read common questions and contact information here.</MarketText><MarketButton label="Sign in to see orders" variant="secondary" onPress={() => go('/login')} /></> : null}

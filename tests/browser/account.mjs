@@ -111,6 +111,8 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await page.getByText('You opened Help for this order reference:', { exact: true }).waitFor();
   await selected.getByText(ref(25), { exact: true }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('id'), orderId(25));
+  assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).locator('xpath=following-sibling::*[1]').innerText(), ref(25), 'the opened-from line shows the order number');
+  assert.equal(await page.getByText(orderId(25), { exact: true }).count(), 0, 'the raw order id is never shown');
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   const drawer = page.getByRole('dialog');
   await drawer.getByRole('button', { name: 'Help & support', exact: true }).click();

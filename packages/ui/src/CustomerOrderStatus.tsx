@@ -13,7 +13,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
  * Ammu Sammu puts a status pill and headline on the page; Kokani Dine Inn uses a dark band.
  */
 export type ReorderAction = (order: Order, restoreFocus: () => void) => void;
-export const orderName = (order: Order) => order.orderNumber ?? order.id.slice(-6);
+export const orderName = (order: Pick<Order, 'id' | 'orderNumber'>) => order.orderNumber ?? order.id.slice(-6);
 
 const indiaParts = (iso: string) => {
   const date = new Date(iso);
