@@ -40,7 +40,7 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
   }[tone];
   return <View {...(status ? { role: 'status' as const, 'aria-label': status } : {})}
-    style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, paddingHorizontal: 10, minHeight: 24, borderRadius: 12, backgroundColor: look.bg, borderWidth: look.border ? 1 : 0, borderColor: look.border }}>
+    style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, minHeight: 24, borderRadius: 12, backgroundColor: look.bg, borderWidth: look.border ? 1 : 0, borderColor: look.border }}>
     {dot ? <View aria-hidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: look.dot }} /> : null}
     {star ? <Text accessible={false} aria-hidden style={{ fontSize: 11, color: look.text }}>★</Text> : null}
     <Text style={{ color: look.text, fontSize: 12, lineHeight: 18, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{label}</Text>

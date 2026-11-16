@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';

@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { formatINRFromPaise } from '@market/core';
 import { ServiceError, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
