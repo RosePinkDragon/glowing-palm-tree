@@ -30,7 +30,8 @@ export function parseRupees(value: string): number | null {
   const paise = BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
   return paise <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(paise) : null;
 }
-export function rupeesInput(paise: number): string { return `${Math.floor(paise / 100)}.${String(paise % 100).padStart(2, '0')}`; }
+/** Price field text: whole rupees ("320") unless the price has paise ("1.01"). */
+export function rupeesInput(paise: number): string { return paise % 100 === 0 ? String(paise / 100) : `${Math.floor(paise / 100)}.${String(paise % 100).padStart(2, '0')}`; }
 
 // ---- Orders queue (#100) ----
 /** Filter labels follow the owners' design; the New filter is the `placed` status. */

@@ -9,6 +9,8 @@ test('rupees are converted exactly and invalid or unsafe amounts rejected', () =
   assert.equal(parseRupees('90071992547409.91'), Number.MAX_SAFE_INTEGER);
   for (const value of ['', '-1', '1.001', '1e2', '.5', '90071992547409.92']) assert.equal(parseRupees(value), null);
   assert.equal(rupeesInput(101), '1.01');
+  assert.equal(rupeesInput(32000), '320', 'whole prices edit without paise');
+  assert.equal(rupeesInput(0), '0');
 });
 test('queue groups final statuses and offers only legal transitions', () => {
   const orders = [{ status: 'delivered' }, { status: 'cancelled' }, { status: 'placed' }] as Order[];

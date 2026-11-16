@@ -140,8 +140,8 @@ const prepareCart = async (page, add = true) => {
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   failCatalog = false;
   await second.getByRole('button', { name: 'Retry loading', exact: true }).click();
-  await second.getByText('Delivery: ₹20.00 · Total: ₹170.00', { exact: true }).filter({ visible: true }).waitFor();
-  assert.equal(await second.getByText('Delivery: ₹20.00 · Total: ₹170.00', { exact: true }).filter({ visible: true }).count(), 1);
+  await second.getByText('Delivery: ₹20 · Total: ₹170', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await second.getByText('Delivery: ₹20 · Total: ₹170', { exact: true }).filter({ visible: true }).count(), 1);
   await second.screenshot({ path: 'dist/browser/customer-confirmed-mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
   console.log('PASS: cross-tab lost-response recovery reuses exact key/payload, survives catalog failure and confirms one server order');
@@ -898,7 +898,7 @@ const prepareCart = async (page, add = true) => {
       await view.getByRole('heading', { name: 'History' }).waitFor();
       assert.equal(await view.getByText('Placed', { exact: true }).count(), 1, 'the placed step has no owner name');
       assert.equal(await view.getByText(/^Placed by /).count(), 0);
-      await view.getByText('₹280.00').first().waitFor(); await view.getByText('₹310.00').first().waitFor();
+      await view.getByText('₹280').first().waitFor(); await view.getByText('₹310').first().waitFor();
       assert.equal(await view.getByRole('link', { name: /^Call /, exact: true }).getAttribute('href'), 'tel:+919876543210');
       assert.equal(await view.getByRole('link', { name: 'Open in Maps', exact: true }).getAttribute('href'), 'https://www.google.com/maps/search/?api=1&query=17.7,73.4');
       for (const control of [view.getByRole('link', { name: /^Call /, exact: true }), view.getByRole('link', { name: 'Open in Maps', exact: true }), page.getByRole('button', { name: 'Cancel order', exact: true }), page.getByRole('button', { name: 'Start preparing', exact: true })]) { const box = await control.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'details targets are at least 48px'); }
@@ -948,7 +948,7 @@ const prepareCart = async (page, add = true) => {
       const keepBox = await keep.boundingBox(); assert.ok(keepBox.y >= 0 && keepBox.y + keepBox.height <= 300, 'Keep is reachable by scrolling');
       assert.equal(await hint.locator('xpath=ancestor::div[1]/preceding-sibling::*[local-name()="svg"][@aria-hidden="true"]').count(), 1, 'the call-hint icon is hidden from assistive tech');
       await page.setViewportSize(fullSize);
-      await page.getByText("Rahul More's order for ₹180.00 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
+      await page.getByText("Rahul More's order for ₹180 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
       await page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true }).waitFor();
       await page.screenshot({ path: `/tmp/review101/${slug}-cancel.png` });
       await page.getByRole('button', { name: 'Keep the order', exact: true }).click();

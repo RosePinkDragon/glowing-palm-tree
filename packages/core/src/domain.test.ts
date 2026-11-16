@@ -79,7 +79,11 @@ test('order status transitions allow only the defined forward and cancellation p
 
 test('INR formatting uses paise and rejects unsafe amounts', () => {
   assert.equal(formatINRFromPaise(12550), '₹125.50');
-  assert.equal(formatINRFromPaise(0), '₹0.00');
+  assert.equal(formatINRFromPaise(0), '₹0');
+  assert.equal(formatINRFromPaise(43000), '₹430', 'whole rupees drop the paise');
+  assert.equal(formatINRFromPaise(188000), '₹1,880');
+  assert.equal(formatINRFromPaise(188050), '₹1,880.50', 'bill amounts keep paise when they have them');
+  assert.equal(formatINRFromPaise(5), '₹0.05');
   assert.equal(formatINRFromPaise(Number.MAX_SAFE_INTEGER), '₹9,00,71,99,25,47,409.91');
   errorCode(() => formatINRFromPaise(Number.MAX_SAFE_INTEGER + 1), 'INVALID_AMOUNT');
 });

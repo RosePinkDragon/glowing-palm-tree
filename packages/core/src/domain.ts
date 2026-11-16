@@ -181,6 +181,10 @@ export function cartSubtotalPaise(cart: readonly CartLine[]): number {
   return subtotal;
 }
 
+/**
+ * Indian rupees for display (owner decision, 16 Nov 2026): whole rupees (₹430, ₹1,880) unless the
+ * amount has paise, which only bill amounts carry after GST and other tax calculations (₹1,880.50).
+ */
 export function formatINRFromPaise(paise: number): string {
   if (!Number.isSafeInteger(paise) || paise < 0) {
     throw new DomainValidationError('INVALID_AMOUNT', 'Amount must be a non-negative safe integer in paise.', {
@@ -195,7 +199,7 @@ export function formatINRFromPaise(paise: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(rupees);
-  return `${formattedRupees}.${paiseRemainder}`;
+  return paise % 100 === 0 ? formattedRupees : `${formattedRupees}.${paiseRemainder}`;
 }
 
 export function validateDeliveryDetails(input: DeliveryDetails): DeliveryDetails {

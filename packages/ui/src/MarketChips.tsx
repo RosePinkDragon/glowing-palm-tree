@@ -25,6 +25,7 @@ export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 
  * A small status or label pill. Tones: brand (featured, order status), positive (Live),
  * neutral (currently unavailable), quiet (Paused, Connecting), outline (Sample), danger (Cancelled).
  * Pass `status` to make it a live status region with its own accessible name.
+ * Place it in a row or content-sized parent: it sizes to its content and lets the parent align it.
  */
 export function MarketPill({ label, tone, dot = false, star = false, status }: {
   label: string; tone: PillTone; dot?: boolean; star?: boolean; status?: string;
