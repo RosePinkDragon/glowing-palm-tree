@@ -9,7 +9,7 @@ import { MarketChip } from './MarketChips';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { scopeWord, acceptPickedDate, amountFontSize, minPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
-const rupees = (paise: number) => { try { return formatINRFromPaise(paise).replace(/\.00$/, ''); } catch { return '₹0'; } };
+const rupees = (paise: number) => { try { return formatINRFromPaise(paise); } catch { return '₹0'; } };
 
 function Bold({ children, size, color }: { children: ReactNode; size: number; color?: string }) {
   const { colors } = useMarketTheme();

@@ -121,13 +121,13 @@ try {
     await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Memory-only private name');
     await page.getByLabel('Delivery address', { exact: true }).filter({ visible: true }).fill('Private address');
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByText('₹150.00 × 1 = ₹150.00', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
     assert.equal(await page.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), '');
     const raw = await saved(page, slugs[index]); assert.equal(raw.lines.length, 1); assert.equal(raw.ownerId, null);
     assert.equal(JSON.stringify(raw).includes('Private address'), false);
     // Guest → login preserves this restaurant's draft, and survives another restart.
     await login(page); await goCart(page); await page.reload({ waitUntil: 'networkidle' });
-    await page.getByText('₹150.00 × 1 = ₹150.00', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
     assert.equal((await saved(page, slugs[index])).ownerId, users[0].id);
   }
   assert.equal((await saved(pages[0], slugs[0])).lines[0].item.businessId, slugs[0]);
@@ -136,14 +136,14 @@ try {
 
   // Existing tabs share additions instead of overwriting each other's quantities.
   const other = await open(0, '/cart');
-  await other.getByText('₹150.00 × 1 = ₹150.00', { exact: true }).filter({ visible: true }).waitFor();
+  await other.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
   const plus = page => page.getByRole('button', { name: 'Add one Ammu meal', exact: true });
   await Promise.all([plus(pages[0]).click(), plus(other).click()]);
-  await pages[0].getByText('₹150.00 × 3 = ₹450.00', { exact: true }).filter({ visible: true }).waitFor();
-  await other.getByText('₹150.00 × 3 = ₹450.00', { exact: true }).filter({ visible: true }).waitFor();
+  await pages[0].getByText('₹150 × 3 = ₹450', { exact: true }).filter({ visible: true }).waitFor();
+  await other.getByText('₹150 × 3 = ₹450', { exact: true }).filter({ visible: true }).waitFor();
   menus[0][0] = { ...menus[0][0], price_paise: 17500, name: 'Current Ammu meal' };
   await pages[0].reload({ waitUntil: 'networkidle' });
-  await pages[0].getByText('₹175.00 × 3 = ₹525.00', { exact: true }).filter({ visible: true }).waitFor();
+  await pages[0].getByText('₹175 × 3 = ₹525', { exact: true }).filter({ visible: true }).waitFor();
   await assertEventually(async () => (await saved(pages[0], slugs[0])).lines[0].item.name === 'Current Ammu meal');
   menus[0] = [];
   await pages[0].reload({ waitUntil: 'networkidle' });
@@ -226,8 +226,8 @@ try {
   await customer.waitForFunction(() => document.activeElement?.textContent === 'Review revised order');
   const quoteHeadingBox = await customer.getByRole('heading', { name: 'Review revised order', exact: true }).boundingBox();
   assert.ok(quoteHeadingBox.y >= 0 && quoteHeadingBox.y < 844, 'revised quote scrolls into the viewport');
-  await customer.getByText('Delivery fee: ₹20.00 → ₹25.00', { exact: true }).filter({ visible: true }).waitFor();
-  await customer.getByText('Total: ₹170.00 → ₹175.00', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('Delivery fee: ₹20 → ₹25', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('Total: ₹170 → ₹175', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(pricingRequests.length, 1, 'no second request before explicit acceptance');
   assert.equal(await customer.evaluate(slug => localStorage.getItem(`market:checkout:${slug}`), slugs[0]), null);
   assert.equal(await customer.getByRole('button', { name: 'Place order', exact: true }).isDisabled(), true);
@@ -258,7 +258,7 @@ try {
   orderLoadFails = false; businesses[0].delivery_fee_paise = 9900; menus[0][0].price_paise = 99000;
   await customer.reload({ waitUntil: 'networkidle' });
   await customer.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
-  await customer.getByText('Delivery: ₹25.00 · Total: ₹175.00', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('Delivery: ₹25 · Total: ₹175', { exact: true }).filter({ visible: true }).waitFor();
   for (const request of pricingRequests.slice(3)) assert.deepEqual(request, pricingRequests[2], 'all uncertain retries retain the accepted snapshot after catalog changes');
   assert.equal(pricingRequests.length, 6);
   await enabled(quoteTab.getByRole('button', { name: 'Accept revised total and place order', exact: true }));
@@ -274,7 +274,7 @@ try {
   await customer.goto(servers[0].url, { waitUntil: 'networkidle' }); await add(customer); await goCart(customer); await fillCheckout();
   pricingMode = 'quote'; pricingReply = { ...pricingReply, delivery_fee_paise: 2000, min_order_paise: 20000, total_paise: 17000 };
   await customer.getByRole('button', { name: 'Place order', exact: true }).click();
-  await customer.getByText('Minimum order: ₹0.00 → ₹200.00', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('Minimum order: ₹0 → ₹200', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await customer.getByRole('button', { name: 'Accept revised total and place order', exact: true }).isDisabled(), true);
   await customer.getByText('The revised subtotal is below the minimum order. Edit your cart before ordering.', { exact: true }).filter({ visible: true }).waitFor();
   await account(customer); await customer.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -285,7 +285,7 @@ try {
   await customer.getByRole('button', { name: 'Sign in', exact: true }).click();
   await customer.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   assert.equal(await customer.getByText('Review revised order', { exact: true }).count(), 0);
-  assert.equal(await customer.getByText(/Unit price:|Minimum order: ₹0.00 →/).count(), 0);
+  assert.equal(await customer.getByText(/Unit price:|Minimum order: ₹0 →/).count(), 0);
   console.log('PASS: minimum-only revision below minimum blocks acceptance; quote details disappear for guest and switched account');
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
 } finally {

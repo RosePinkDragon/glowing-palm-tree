@@ -114,7 +114,7 @@ try {
       await text('3 dishes').waitFor(); await text('3 dishes · 1 off').waitFor(); await text('0 dishes').waitFor(); await text('No dishes in this category yet.').waitFor();
       assert.equal(await page.getByRole('img', { name: 'Non-vegetarian', exact: true }).count(), 2);
       assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 4);
-      await text('₹320.00').waitFor(); await text(feature).waitFor(); await text('Currently unavailable').waitFor(); await text('Sample').waitFor(); await text('No photo').waitFor();
+      await text('₹320').waitFor(); await text(feature).waitFor(); await text('Currently unavailable').waitFor(); await text('Sample').waitFor(); await text('No photo').waitFor();
       assert.equal(await toggle('Kothimbir vadi').isChecked(), false); assert.equal(await toggle('Fish thali').isChecked(), true);
       assert.equal(await page.getByLabel('Order within category').count(), 0);
       assert.deepEqual(await order(['Fish thali', 'Veg thali', 'Chicken thali']), ['Fish thali', 'Veg thali', 'Chicken thali']);
@@ -216,7 +216,7 @@ try {
       const dialog = page.getByRole('dialog').last();
       await dialog.getByRole('button', { name: 'Change photo', exact: true }).waitFor();
       assert.equal(await dialog.getByLabel('Dish name', { exact: true }).inputValue(), 'Fish thali');
-      assert.equal(await dialog.getByLabel('Price in rupees', { exact: true }).inputValue(), '320.00');
+      assert.equal(await dialog.getByLabel('Price in rupees', { exact: true }).inputValue(), '320');
       assert.equal(await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).getAttribute('aria-pressed'), 'true');
       assert.equal(await dialog.getByRole('switch', { name: 'Available to order', exact: true }).isChecked(), true);
       assert.equal(await dialog.getByRole('switch', { name: feature, exact: true }).isChecked(), true);

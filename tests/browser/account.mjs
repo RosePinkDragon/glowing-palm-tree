@@ -411,7 +411,7 @@ try {
       await paging.evaluate(node => node.click());
       await page.waitForTimeout(50);
       assert.equal(queries.length, heldCount, 'disabled paging cannot supersede an in-flight refresh');
-      assert.equal(await page.getByText('1 × History meal 25 · ₹100.00', { exact: true }).count(), 1);
+      assert.equal(await page.getByText('1 × History meal 25 · ₹100', { exact: true }).count(), 1);
       release?.();
       await page.waitForFunction(() => { const button = Array.from(document.querySelectorAll('[role="button"]')).find(node => /^(Load|Retry) older orders$/.test(node.textContent)); return button && button.getAttribute('aria-disabled') !== 'true'; });
       await page.getByRole('button', { name: /^(Load|Retry) older orders$/ }).scrollIntoViewIfNeeded();
@@ -423,14 +423,14 @@ try {
       assert.equal(await page.getByRole('button', { name: /^Track order/ }).count(), 1);
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       await page.goto(server.url + '/orders/' + orderId(1), { waitUntil: 'networkidle' });
-      await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
+      await page.getByText('1 × History meal 1 · ₹100', { exact: true }).waitFor();
       assert.ok(queries.some(url => url.searchParams.get('id') === 'eq.' + orderId(1)));
       failDetail = true;
       await page.reload({ waitUntil: 'networkidle' });
       await page.getByText('Detail fixture unavailable', { exact: false }).waitFor();
       failDetail = false;
       await page.getByRole('button', { name: 'Retry orders', exact: true }).click();
-      await page.getByText('1 × History meal 1 · ₹100.00', { exact: true }).waitFor();
+      await page.getByText('1 × History meal 1 · ₹100', { exact: true }).waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
       for (const [label, text] of [['Saved addresses', 'Saved addresses are not available yet.'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {
@@ -467,7 +467,7 @@ try {
       release?.();
       await page.waitForTimeout(100);
       assert.equal(await page.getByText('Phone not added', { exact: true }).count(), 0);
-      assert.equal(await page.getByText('1 × History meal 25 · ₹100.00', { exact: true }).filter({ visible: true }).count(), 0);
+      assert.equal(await page.getByText('1 × History meal 25 · ₹100', { exact: true }).filter({ visible: true }).count(), 0);
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByLabel('Email', { exact: true }).waitFor();
       assert.deepEqual(errors, []);
