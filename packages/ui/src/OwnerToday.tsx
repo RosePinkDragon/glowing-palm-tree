@@ -3,7 +3,8 @@ import { Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise } from '@market/core';
 import { ServiceError, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
-import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
+import { MarketButton, MarketStatus, MarketText } from './components';
+import { MarketSection } from './MarketList';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { scopeWord, acceptPickedDate, amountFontSize, minPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
@@ -120,14 +121,13 @@ export function OwnerToday({ services }: { services: MarketServices }) {
         <Tile label={deliveredLabel(shown)} value={summary.deliveredCount} />
         <Tile label={cancelledLabel(shown)} value={summary.cancelledCount} />
       </View>
-      <MarketCard>
-        <Text accessibilityRole="header" aria-level={2} style={{ color: colors.primary, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>MOST ORDERED</Text>
+      <MarketSection title="Most ordered">
         {summary.topDishes.length ? summary.topDishes.map((dish, index) => <View key={`${dish.name}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <View style={{ flex: 1 }}><MarketText>{dish.name}</MarketText></View>
           <Bold size={16}>{`× ${dish.quantity}`}</Bold>
           <View aria-hidden style={{ width: 90, height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: 'hidden' }}><View style={{ width: `${Math.max(4, Math.round(dish.quantity / topQuantity * 100))}%`, height: '100%', backgroundColor: colors.primary }} /></View>
         </View>) : <MarketText variant="muted">No dishes ordered</MarketText>}
-      </MarketCard>
+      </MarketSection>
       <MarketText variant="muted">{summaryFooter}</MarketText>
     </View> : null}
   </View>;

@@ -1,8 +1,9 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import { Linking, Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
+import { MarketLine, MarketSection } from './MarketList';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
 import type { OwnerOrdersState } from './OwnerOrders';
@@ -36,21 +37,6 @@ function LinkButton({ label, name, href, tone = 'secondary', external }: { label
       style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
     {failed ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>Could not open this link on this device.</Text> : null}
   </View>;
-}
-
-function Section({ title, children }: { title?: string; children: ReactNode }) {
-  const { colors } = useMarketTheme();
-  const fonts = useMarketFonts();
-  return <View style={{ backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 10 }}>
-    {title ? <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1, textTransform: 'uppercase', ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{title}</Text> : null}
-    {children}
-  </View>;
-}
-function Row({ left, right, bold }: { left: ReactNode; right?: ReactNode; bold?: boolean }) {
-  const { colors } = useMarketTheme();
-  const fonts = useMarketFonts();
-  const style = { color: colors.ink, fontSize: 15, lineHeight: 22, ...(bold && fonts.bodyBold ? { fontFamily: fonts.bodyBold } : bold ? { fontWeight: '700' as const } : {}) };
-  return <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}><Text style={[style, { flex: 1 }]}>{left}</Text>{right !== undefined ? <Text style={style}>{right}</Text> : null}</View>;
 }
 
 /**
@@ -96,7 +82,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       {terminal ? <MarketText variant="muted">{order.status === 'cancelled' ? 'This order was cancelled. No further actions.' : 'This order was delivered. No further actions.'}</MarketText> : null}
     </View>
     {notices}
-    <Section>
+    <MarketSection>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{order.delivery.name}</Text>
@@ -109,19 +95,19 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
         <MarketText>{order.delivery.addressLine}</MarketText>
         {maps ? <LinkButton external label="Open in Maps" href={maps} /> : null}
       </View>
-    </Section>
-    <Section title="Items">
-      {order.lines.map((line, index) => <View key={`${line.menuItemId}-${index}`} style={{ gap: 4 }}><Row left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} /></View>)}
+    </MarketSection>
+    <MarketSection title="Items">
+      {order.lines.map((line, index) => <View key={`${line.menuItemId}-${index}`} style={{ gap: 4 }}><MarketLine left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} /></View>)}
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: 'dashed', paddingTop: 10, gap: 4 }}>
-        <Row left="Items" right={formatINRFromPaise(order.subtotalPaise)} />
-        <Row left="Delivery" right={formatINRFromPaise(order.deliveryFeePaise)} />
+        <MarketLine left="Items" right={formatINRFromPaise(order.subtotalPaise)} />
+        <MarketLine left="Delivery" right={formatINRFromPaise(order.deliveryFeePaise)} />
       </View>
-      <View style={{ padding: 12, borderRadius: 12, backgroundColor: colors.tint }}><Row bold left="Collect in cash" right={formatINRFromPaise(order.totalPaise)} /></View>
-    </Section>
-    <Section title="History">
-      {historyNewestFirst(order.history).map((entry, index) => <Row key={index} left={historyLine(entry)} right={clockTime(entry.createdAtISO)} />)}
+      <View style={{ padding: 12, borderRadius: 12, backgroundColor: colors.tint }}><MarketLine bold left="Collect in cash" right={formatINRFromPaise(order.totalPaise)} /></View>
+    </MarketSection>
+    <MarketSection title="History">
+      {historyNewestFirst(order.history).map((entry, index) => <MarketLine key={index} left={historyLine(entry)} right={clockTime(entry.createdAtISO)} />)}
       {!order.history?.length ? <MarketText variant="muted">No history available.</MarketText> : null}
-    </Section>
+    </MarketSection>
     {confirming ? <AccessiblePanel sheet title={`Cancel order ${reference}?`} onClose={closeSheet}>
       <MarketText>{`${order.delivery.name}'s order for ${formatINRFromPaise(order.totalPaise)} will be cancelled, and it will show as cancelled in their app. This can't be undone.`}</MarketText>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>

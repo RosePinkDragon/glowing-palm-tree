@@ -320,7 +320,7 @@ const prepareCart = async (page, add = true) => {
   // Owners' Settings follows p. 10: owner card from the membership name, alert and privacy switches, Log out.
   await admin.getByRole('heading', { name: 'Suresh Pawar', exact: true }).waitFor();
   await admin.getByText(`${user.email} · Owner`, { exact: true }).filter({ visible: true }).waitFor();
-  for (const heading of ['RESTAURANT', 'NEW ORDER ALERTS ON THIS PHONE', 'PRIVACY']) await admin.getByRole('heading', { name: heading, exact: true }).waitFor();
+  for (const heading of ['Restaurant', 'New order alerts on this phone', 'Privacy']) await admin.getByRole('heading', { name: heading, exact: true }).waitFor();
   const notifications = admin.getByRole('switch', { name: 'Notifications', exact: true });
   await notifications.waitFor(); assert.equal(await notifications.isChecked(), false);
   assert.equal(await admin.getByRole('switch', { name: 'Share app usage', exact: true }).isChecked(), false);
@@ -992,7 +992,7 @@ const prepareCart = async (page, add = true) => {
       const today = text => page.getByText(text, { exact: true }).filter({ visible: true });
       await today('₹4,260').waitFor();
       for (const text of ['Collected', '11 orders delivered today', 'Still to collect now', '₹2,210', '6 open orders · all dates', 'Placed today', 'Delivered today', 'Cancelled today', 'Veg thali', '× 12', "Days run midnight to midnight, India time. Cancelled orders aren't counted in cash."]) await today(text).waitFor();
-      await page.getByRole('heading', { name: 'MOST ORDERED', level: 2 }).waitFor();
+      await page.getByRole('heading', { name: 'Most ordered', level: 2 }).waitFor();
       assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'today sends no p_date');
       assert.equal(await page.getByRole('button', { name: `Today, ${dayName(istToday)}`, exact: true }).getAttribute('aria-pressed'), 'true');
       for (const name of [`Today, ${dayName(istToday)}`, 'Yesterday', 'Pick a date']) { const box = await page.getByRole('button', { name, exact: true }).boundingBox(); assert.ok(box.height >= 48, 'chips are at least 48px tall'); }

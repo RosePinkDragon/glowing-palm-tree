@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { MarketSwitch } from './MarketSwitch';
+import { MarketGroup, MarketRow } from './MarketList';
 import { messageOf, type useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { ownerInitials } from './owner-navigation';
@@ -30,30 +31,19 @@ export function OwnerSettings({ market }: { market?: Market }) {
   const body = (size = 15) => ({ color: colors.ink, fontSize: size, lineHeight: Math.round(size * 1.45), ...(fonts.body ? { fontFamily: fonts.body } : {}) });
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const muted = { ...body(13), color: colors.muted };
-  const section = (title: string, children: ReactNode) => <View style={{ gap: 8 }}>
-    <Text accessibilityRole="header" aria-level={2} style={{ ...muted, ...bold, letterSpacing: 1.2 }}>{title.toUpperCase()}</Text>
-    <View style={{ backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>{children}</View>
-  </View>;
-  const row = (key: string, title: string, detail: string | undefined, end?: ReactNode, last = false) => <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: last ? 0 : 1, borderBottomColor: colors.border }}>
-    <View style={{ flex: 1, gap: 2 }}>
-      <Text style={{ ...body(15), ...bold }}>{title}</Text>
-      {detail ? <Text style={muted}>{detail}</Text> : null}
-    </View>
-    {end}
-  </View>;
   const soon = <Text style={{ ...muted, ...bold }}>Coming soon</Text>;
   const status = (message: string | undefined) => message ? <Text role="status" accessibilityLiveRegion="polite" style={{ ...muted, paddingHorizontal: 4 }}>{message}</Text> : null;
 
   if (!market || !session || !settings) return <View style={{ gap: 20 }}>
-    {section('Your account', row('sample', 'Sign-in is not available in sample mode.', undefined, undefined, true))}
+    <MarketGroup title="Your account"><MarketRow title="Sign-in is not available in sample mode." /></MarketGroup>
     <Text style={{ ...muted, textAlign: 'center' }}>{`${name} owners' app`}</Text>
   </View>;
 
   const contact = session.user.phone ? `+${session.user.phone}` : session.user.email ?? 'Signed in';
   const displayName = ownerName ?? contact;
   const loadingName = ownerName === undefined;
-  const switchRow = (key: string, title: string, detail: string, value: boolean, onChange: (next: boolean) => void, last = false) =>
-    row(key, title, detail, <MarketSwitch label={title} hint={detail} value={value} disabled={!settings.ready} busy={settings.busy} onValueChange={onChange} />, last);
+  const switchRow = (title: string, detail: string, value: boolean, onChange: (next: boolean) => void) =>
+    <MarketRow title={title} detail={detail} end={<MarketSwitch label={title} hint={detail} value={value} disabled={!settings.ready} busy={settings.busy} onValueChange={onChange} />} />;
 
   return <View style={{ gap: 20 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
@@ -67,17 +57,17 @@ export function OwnerSettings({ market }: { market?: Market }) {
       </View>
     </View>
     {!market.services.persistenceAvailable() ? <Text style={muted}>This session is stored only for this visit because device storage is unavailable.</Text> : null}
-    {section('Restaurant', <>
-      {row('details', 'Restaurant details', 'Phone numbers, delivery fee, minimum order', soon)}
-      {row('owners', 'Owners', `Who can manage ${name}`, soon, true)}
-    </>)}
-    {section('New order alerts on this phone', <>
-      {switchRow('push', 'Notifications', 'Even when the app is closed', settings.prefs.push, next => settings.setPush(next))}
-      {row('ring', 'Ring for new orders', 'Loud sound until someone opens it', soon)}
-      {row('test', 'Play a test alert', undefined, soon, true)}
-    </>)}
+    <MarketGroup title="Restaurant">
+      <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />
+      <MarketRow title="Owners" detail={`Who can manage ${name}`} end={soon} />
+    </MarketGroup>
+    <MarketGroup title="New order alerts on this phone">
+      {switchRow('Notifications', 'Even when the app is closed', settings.prefs.push, next => settings.setPush(next))}
+      <MarketRow title="Ring for new orders" detail="Loud sound until someone opens it" end={soon} />
+      <MarketRow title="Play a test alert" end={soon} />
+    </MarketGroup>
     {status(settings.pushMessage)}
-    {section('Privacy', switchRow('analytics', 'Share app usage', 'Anonymous data that helps us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next), true))}
+    <MarketGroup title="Privacy">{switchRow('Share app usage', 'Anonymous data that helps us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next))}</MarketGroup>
     {status(settings.analyticsMessage)}
     <Pressable accessibilityRole="button" disabled={settings.busy} onPress={() => { setSignOutError(''); void settings.signOut().catch(e => setSignOutError(messageOf(e))); }}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.tint : colors.surface, opacity: settings.busy ? 0.6 : 1 })}>
