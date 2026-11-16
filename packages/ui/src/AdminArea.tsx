@@ -10,11 +10,13 @@ import { OwnerToday } from './OwnerToday';
 import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
 import { useMarketTheme } from './theme';
 import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
+import { OwnerSettings } from './OwnerSettings';
+import type { useMarket } from './useMarket';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 // Tabs render only after the server confirms owner access; the access states keep the account card (and sign out) available.
 /** `ordersSlot` (above the order list) is #58's open/closed switch seam; `onNewOrders` is #54's alert seam. */
-export function AdminArea({ services, banner, account, ordersSlot, onNewOrders }: { services: MarketServices; banner?: ReactNode; account?: ReactNode; ordersSlot?: ReactNode; onNewOrders?: (orders: Order[]) => void }) {
+export function AdminArea({ services, market, banner, account, ordersSlot, onNewOrders }: { services: MarketServices; market?: ReturnType<typeof useMarket>; banner?: ReactNode; account?: ReactNode; ordersSlot?: ReactNode; onNewOrders?: (orders: Order[]) => void }) {
   const { name } = useMarketTheme();
   const [access, setAccess] = useState<'loading' | 'allowed' | 'denied' | 'error'>('loading');
   const [accessError, setAccessError] = useState('');
@@ -43,23 +45,8 @@ export function AdminArea({ services, banner, account, ordersSlot, onNewOrders }
       {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot ?? <OwnerOrderingSwitch services={services} />} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <OwnerToday services={services} /> : null}
-      {tab === 'settings' ? <OwnerSettings account={account} /> : null}
+      {tab === 'settings' ? <OwnerSettings market={market} /> : null}
     </OwnerScreen>
     <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} badges={{ orders: queue.newCount }} />
-  </View>;
-}
-// Real account controls first; restaurant settings (#60) and owner management (#59) are announced, not interactive.
-function OwnerSettings({ account }: { account?: ReactNode }) {
-  const { name } = useMarketTheme();
-  return <View style={{ gap: 20 }}>
-    {account ?? <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>Sign-in is not available in sample mode.</MarketText></MarketCard>}
-    <MarketCard>
-      <MarketText variant="eyebrow">Restaurant</MarketText>
-      {[['Restaurant details', 'Phone numbers, delivery fee and minimum order'], ['Owners', `Who can manage ${name}`]].map(([title, detail]) => <View key={title} style={{ gap: 2 }}>
-        <MarketText>{title}</MarketText>
-        <MarketText variant="muted">{`${detail} · Coming soon`}</MarketText>
-      </View>)}
-    </MarketCard>
-    <MarketText variant="muted">{`${name} owners' app`}</MarketText>
   </View>;
 }

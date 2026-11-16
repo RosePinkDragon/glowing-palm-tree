@@ -680,3 +680,27 @@ test('owner day summary maps the RPC, validates the day and reports lost access'
     await assert.rejects(service.getDailySummary('2026-11-10'), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
   } finally { service.dispose(); globalThis.fetch = original; }
 });
+
+test('owner display name reads only the signed-in owner row and falls back to null', async () => {
+  const original = globalThis.fetch;
+  let reply: unknown = { display_name: 'Suresh Pawar' }; let query: URLSearchParams | undefined;
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'name-owner', role: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.signature`;
+  globalThis.fetch = async input => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'name-owner', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'name-owner' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-name', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true });
+    assert.equal(url.pathname, '/rest/v1/business_memberships'); query = url.searchParams;
+    return Response.json(reply);
+  };
+  const memory = new Map<string, string>();
+  const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://name.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: key => memory.get(key) ?? null, setItem: (key, value) => { memory.set(key, value); }, removeItem: key => { memory.delete(key); } } });
+  try {
+    await service.auth.signIn('owner@example.test', 'password');
+    assert.equal(await service.getOwnerDisplayName(), 'Suresh Pawar');
+    assert.equal(query?.get('select'), 'display_name');
+    assert.equal(query?.get('user_id'), 'eq.name-owner'); assert.equal(query?.get('business_id'), 'eq.tenant-name');
+    reply = null; assert.equal(await service.getOwnerDisplayName(), null);
+    reply = { display_name: '  ' }; assert.equal(await service.getOwnerDisplayName(), null);
+  } finally { service.dispose(); globalThis.fetch = original; }
+});

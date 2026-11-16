@@ -35,3 +35,11 @@ export function ownerTabAccessibilityLabel(id: OwnerTabId, count?: number | null
   const badge = formatBadgeCount(count);
   return badge ? `${ownerTabLabel(id)}, ${badge} new` : ownerTabLabel(id);
 }
+
+/** Initials for the owner card: first letters of the first and last words. */
+export function ownerInitials(name: string): string {
+  const words = name.trim().split(/[\s@._-]+/).filter(Boolean);
+  if (!words.length) return '?';
+  const letters = words.length > 1 ? [words[0], words[words.length - 1]] : [words[0]];
+  return letters.map(word => Array.from(word)[0]!.toLocaleUpperCase('en-IN')).join('');
+}

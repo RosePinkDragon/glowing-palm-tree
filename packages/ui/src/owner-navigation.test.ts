@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultOwnerTab, formatBadgeCount, isOwnerTabId, ownerTabAccessibilityLabel, ownerTabIds, ownerTabLabel, ownerTabs, selectOwnerTab } from './owner-navigation.ts';
+import { defaultOwnerTab, formatBadgeCount, isOwnerTabId, ownerTabAccessibilityLabel, ownerTabIds, ownerTabLabel, ownerTabs, selectOwnerTab, ownerInitials } from './owner-navigation.ts';
 
 test('owner tabs are Orders, Menu, Today and Settings in a stable order', () => {
   assert.deepEqual([...ownerTabIds], ['orders', 'menu', 'today', 'settings']);
@@ -33,4 +33,13 @@ test('tab accessible names keep the visible label and speak a shown badge', () =
   assert.equal(ownerTabAccessibilityLabel('orders', 2), 'Orders, 2 new');
   assert.equal(ownerTabAccessibilityLabel('orders', 120), 'Orders, 99+ new');
   assert.equal(ownerTabAccessibilityLabel('settings'), 'Settings');
+});
+
+test('owner card initials use the first and last words, or the account identifier', () => {
+  assert.equal(ownerInitials('Suresh Pawar'), 'SP');
+  assert.equal(ownerInitials('Asha Kumari Kadam'), 'AK');
+  assert.equal(ownerInitials('ravi'), 'R');
+  assert.equal(ownerInitials('owner@example.test'), 'OT');
+  assert.equal(ownerInitials('सुरेश पवार'), 'सप');
+  assert.equal(ownerInitials('   '), '?');
 });
