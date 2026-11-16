@@ -8,7 +8,6 @@ import { useMarketFonts, useMarketTheme } from './theme';
 import { acceptPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
 const rupees = (paise: number) => { try { return formatINRFromPaise(paise).replace(/\.00$/, ''); } catch { return '₹0'; } };
-const chipNames: Record<TodayChip, string> = { today: 'Today', yesterday: 'Yesterday', date: 'Pick a date' };
 
 function Bold({ children, size, color }: { children: ReactNode; size: number; color?: string }) {
   const { colors } = useMarketTheme();
@@ -77,14 +76,17 @@ export function OwnerToday({ services }: { services: MarketServices }) {
   }, [services, date]);
   useEffect(() => { if (demo) return; void load(); return () => { request.current++; }; }, [load, demo, attempt]);
   const shown = summary?.dateISO ?? date ?? istDateISO();
+  // Light text on the dark cash card; bars scale to the most-ordered dish.
+  const soft = 'rgba(255,255,255,0.78)';
+  const topQuantity = Math.max(1, ...(summary?.topDishes.map(dish => dish.quantity) ?? [1]));
   return <View style={{ gap: 16 }}>
     <View role="group" aria-label="Choose a day" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {todayChips.map(value => {
         const active = chip === value;
         return <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'date' && active ? `Pick a date, ${shortDateLabel(picked)} selected` : chipLabel(value, picked)} aria-pressed={active}
           onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }}
-          style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 24, borderWidth: 1, borderColor: active ? colors.ink : colors.border, backgroundColor: active ? colors.ink : colors.surface }}>
-          <Text style={{ color: active ? colors.surface : colors.ink, fontSize: 15, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{value === 'date' && active ? `${chipNames.date}: ${shortDateLabel(picked)}` : chipLabel(value, picked)}</Text>
+          style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: active ? colors.ink : colors.border, backgroundColor: active ? colors.ink : colors.surface }}>
+          <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)}</Text>
         </Pressable>;
       })}
     </View>
@@ -94,19 +96,21 @@ export function OwnerToday({ services }: { services: MarketServices }) {
     {state === 'denied' ? <MarketStatus kind="error" title="Owner access needed" message={error || 'Your admin access changed. Sign in again to see the summary.'} /> : null}
     {state === 'error' ? <MarketStatus kind="error" title="Could not load the summary" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => setAttempt(n => n + 1)} />} /> : null}
     {state === 'ready' && summary ? <View style={{ gap: 16 }} aria-live="polite">
-      <MarketCard>
-        <MarketText variant="eyebrow">Cash</MarketText>
-        <View>
-          <Text style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>{collectedHeading(shown)}</Text>
-          <Bold size={34}>{rupees(summary.collectedPaise)}</Bold>
-          <MarketText variant="muted">{deliveredNote(summary.deliveredCount, shown)}</MarketText>
+      <View style={{ backgroundColor: colors.ink, borderRadius: 18, padding: 18, gap: 12 }}>
+        <Text style={{ color: soft, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>CASH</Text>
+        <View style={{ flexDirection: 'row', gap: 16 }}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>{shown === istDateISO() ? 'Collected' : collectedHeading(shown)}</Text>
+            <Bold size={30} color={colors.surface}>{rupees(summary.collectedPaise)}</Bold>
+            <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{deliveredNote(summary.deliveredCount, shown)}</Text>
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>Still to collect now</Text>
+            <Bold size={30} color={colors.surface}>{rupees(summary.outstandingPaise)}</Bold>
+            <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{outstandingNote(summary.outstandingCount)}</Text>
+          </View>
         </View>
-        <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 }}>
-          <Text style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>Still to collect now</Text>
-          <Bold size={26} color={colors.primary}>{rupees(summary.outstandingPaise)}</Bold>
-          <MarketText variant="muted">{outstandingNote(summary.outstandingCount)}</MarketText>
-        </View>
-      </MarketCard>
+      </View>
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <Tile label={placedLabel(shown)} value={summary.placedCount} />
         <Tile label={deliveredLabel(shown)} value={summary.deliveredCount} />
@@ -114,9 +118,10 @@ export function OwnerToday({ services }: { services: MarketServices }) {
       </View>
       <MarketCard>
         <Text accessibilityRole="header" aria-level={2} style={{ color: colors.primary, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>MOST ORDERED</Text>
-        {summary.topDishes.length ? summary.topDishes.map((dish, index) => <View key={`${dish.name}-${index}`} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+        {summary.topDishes.length ? summary.topDishes.map((dish, index) => <View key={`${dish.name}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <View style={{ flex: 1 }}><MarketText>{dish.name}</MarketText></View>
           <Bold size={16}>{`× ${dish.quantity}`}</Bold>
+          <View aria-hidden style={{ width: 90, height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: 'hidden' }}><View style={{ width: `${Math.max(4, Math.round(dish.quantity / topQuantity * 100))}%`, height: '100%', backgroundColor: colors.primary }} /></View>
         </View>) : <MarketText variant="muted">No dishes ordered</MarketText>}
       </MarketCard>
       <MarketText variant="muted">{summaryFooter}</MarketText>

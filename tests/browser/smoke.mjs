@@ -961,7 +961,7 @@ const prepareCart = async (page, add = true) => {
       await ownerTabs.getByRole('button', { name: /^Today/ }).click();
       const today = text => page.getByText(text, { exact: true }).filter({ visible: true });
       await today('₹4,260').waitFor();
-      for (const text of ['Collected today', '11 orders delivered today', 'Still to collect now', '₹2,210', '6 open orders · all dates', 'Placed today', 'Delivered today', 'Cancelled today', 'Veg thali', '× 12', "Days run midnight to midnight, India time. Cancelled orders aren't counted in cash."]) await today(text).waitFor();
+      for (const text of ['Collected', '11 orders delivered today', 'Still to collect now', '₹2,210', '6 open orders · all dates', 'Placed today', 'Delivered today', 'Cancelled today', 'Veg thali', '× 12', "Days run midnight to midnight, India time. Cancelled orders aren't counted in cash."]) await today(text).waitFor();
       await page.getByRole('heading', { name: 'MOST ORDERED', level: 2 }).waitFor();
       assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'today sends no p_date');
       assert.equal(await page.getByRole('button', { name: `Today, ${dayName(istToday)}`, exact: true }).getAttribute('aria-pressed'), 'true');
@@ -993,10 +993,10 @@ const prepareCart = async (page, add = true) => {
       let releaseSlow; summaryGate = { '2026-11-05': new Promise(resolve => { releaseSlow = resolve; }) };
       await input.fill('2026-11-05');
       await page.getByRole('button', { name: new RegExp(`^Today, ${dayName(istToday)}`) }).click();
-      await today('Collected today').waitFor(); releaseSlow(); summaryGate = null;
+      await today('Collected').waitFor(); releaseSlow(); summaryGate = null;
       await page.waitForTimeout(150);
       assert.equal(await today('Collected on 5 Nov').count(), 0, 'a stale response is ignored');
-      await today('Collected today').waitFor();
+      await today('Collected').waitFor();
       // Error with Retry, then recovery.
       summaryFail = true;
       await page.getByRole('button', { name: 'Yesterday', exact: true }).click();
@@ -1007,7 +1007,7 @@ const prepareCart = async (page, add = true) => {
       await ownerTabs.getByRole('button', { name: /^Orders/ }).click();
       await page.getByRole('button', { name: 'New, 2', exact: true }).waitFor();
       await ownerTabs.getByRole('button', { name: /^Today/ }).click();
-      await today('Collected today').waitFor();
+      await today('Collected').waitFor();
       assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'returning to the tab starts on today');
       assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
       console.log(`PASS: ${slug} owners' Today tab (#61): India-time chips, rpc/daily_summary params, labels, picked date, empty, stale-response guard, error/Retry`);
