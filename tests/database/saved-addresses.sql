@@ -31,6 +31,15 @@ select public.test_assert(not has_column_privilege('authenticated','public.custo
   and not has_column_privilege('authenticated','public.customer_addresses','version','update') and not has_column_privilege('authenticated','public.customer_addresses','updated_at','update'),'owner, version and timestamps are server-controlled');
 select public.test_assert(not has_function_privilege('anon','public.list_addresses(text)','execute') and has_function_privilege('authenticated','public.list_addresses(text)','execute'),'list_addresses is for signed-in callers only');
 select public.test_assert(not has_function_privilege('authenticated','public.prepare_customer_address()','execute'),'trigger function is not an RPC');
+select public.test_assert(not has_function_privilege('authenticated','public.set_delivery_radius(text,integer,text)','execute') and not has_function_privilege('anon','public.set_delivery_radius(text,integer,text)','execute')
+  and has_function_privilege('service_role','public.set_delivery_radius(text,integer,text)','execute'),'delivery areas are set by trusted setup only');
+do $$ begin
+  begin perform public.set_delivery_radius('kokani-dine-inn',12000,'test'); raise exception 'radius without a kitchen accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.set_delivery_radius('ammu-sammu',499,'test'); raise exception 'tiny radius accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.set_delivery_radius('ammu-sammu',50001,'test'); raise exception 'huge radius accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.set_delivery_radius('ammu-sammu',12000,'  '); raise exception 'blank source accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.set_delivery_radius('no-such-restaurant',12000,'test'); raise exception 'unknown restaurant accepted'; exception when invalid_parameter_value then null; end;
+end $$;
 select public.test_assert(to_regprocedure('public.place_order(text,jsonb,jsonb,jsonb,uuid)') is null,'no extra place_order overload');
 select public.test_assert(not exists(select 1 from pg_publication_tables where tablename='customer_addresses'),'addresses stay out of realtime (DELETE events bypass RLS)');
 
