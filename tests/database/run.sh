@@ -128,6 +128,18 @@ SQL
   done
   for pid in "${number_pids[@]}"; do wait "$pid" || { echo 'Numbering race failed' >&2; exit 1; }; done
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=5 and count(distinct order_number)=5 from public.orders where idempotency_key::text like '64700000-0000-4000-8000-00000000010%'),'concurrent distinct requests have unique numbers and replay creates one'); select public.test_assert((select sum(last_number)=$number_before+5 from public.order_number_counters),'concurrent replay consumes no extra counter')"
+  # #48 upgrade path: existing businesses and legacy GPS orders, then the saved-address
+  # and kitchen-point migrations. Legacy orders must satisfy the new evidence check,
+  # and the kitchen points must land on the existing rows (as in production).
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116160000_saved_addresses.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116180000_kitchen_locations.sql
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ declare ns text; n integer; begin
+    if not exists (select 1 from public.orders where saved_address_id is null and location_accuracy is not null) then raise exception 'upgrade test has no legacy orders'; end if;
+    if exists (select 1 from pg_constraint where conname='order_address_evidence' and not convalidated) then raise exception 'evidence check not validated'; end if;
+    select n2.nspname into strict ns from pg_extension e join pg_namespace n2 on n2.oid=e.extnamespace where e.extname='postgis';
+    execute format('select count(*) filter (where kitchen_location is not null and %1\$I.st_distance(kitchen_location::%1\$I.geography, %1\$I.st_setsrid(%1\$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1\$I.geography) < 1) from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into n;
+    if n <> 2 then raise exception 'kitchen points not set on existing restaurants: %', n; end if;
+  end \$\$"
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
