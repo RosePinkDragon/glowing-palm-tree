@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, findNodeHandle, Linking, Platform, Pressable, Text, View } from 'react-native';
-import { formatINRFromPaise, type BusinessSlug } from '@market/core';
+import { formatINRFromPaise, type BusinessSlug, type Order } from '@market/core';
 import { useIsFocused } from '@react-navigation/native';
 import type { useMarket } from './useMarket';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
 import { useMarketTheme } from './theme';
 import { supportConfig, supportLinks } from './support-model';
 import { useSupportOrders } from './useSupportOrders';
+import { orderName } from './CustomerOrderStatus';
 import { sameIdentity, type Identity } from './checkout-state';
 
 function SupportHeading({ children }: { children: string }) {
@@ -48,12 +49,25 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
   if (!origin.current.identity && market.authReady && market.session) origin.current.identity = market.identity.current;
   const currentReference = market.authReady && market.session && origin.current.identity && sameIdentity(origin.current.identity, market.identity.current) ? orderReference : undefined;
   const support = useSupportOrders(market, currentReference);
+  // The opened order may be delivered or cancelled, so it is not in the active list: read that one own-row order by id.
+  const [opened, setOpened] = useState<Order | null>(null);
+  const activeMatch = currentReference ? support.orders.find(candidate => candidate.id === currentReference) : undefined;
+  const { services } = market;
+  useEffect(() => {
+    setOpened(null);
+    if (!currentReference || activeMatch) return;
+    let stale = false;
+    void services.getCustomerOrder(currentReference).then(found => { if (!stale && found?.id === currentReference) setOpened(found); }).catch(() => undefined);
+    return () => { stale = true; };
+  }, [currentReference, services, !!activeMatch]);
+  // Never show the raw id: the order number once known, else the short reference.
+  const openedReference = currentReference ? orderName(activeMatch ?? opened ?? { id: currentReference }) : '';
   const [expanded, setExpanded] = useState<string | null>(null);
   const config = supportConfig[businessId];
   const order = support.selected;
   return <View style={{ gap: 24, width: '100%', maxWidth: 720, alignSelf: 'center' }}>
     <View style={{ gap: 8 }}><SupportHeading>Help &amp; support</SupportHeading><MarketText variant="muted">Questions about your order? Get in touch with {name}.</MarketText></View>
-    {currentReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{currentReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
+    {currentReference ? <View style={{ gap: 4 }}><MarketText variant="muted">You opened Help for this order reference:</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{openedReference}</Text><MarketText variant="muted">Share this reference when asking about that order. The selected active order below is labeled separately.</MarketText></View> : null}
     <MarketCard>
       <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 20, lineHeight: 28, fontWeight: '700' }}>Contact the restaurant</Text>
       {!market.authReady ? <MarketStatus kind="loading" title="Checking your account" /> : !market.session ? <><MarketText>Sign in to see your active orders. You can still read common questions and contact information here.</MarketText><MarketButton label="Sign in to see orders" variant="secondary" onPress={() => go('/login')} /></> : null}
@@ -62,7 +76,7 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
       {market.session && support.ready && !order && !support.error ? <MarketText>No active orders right now. You can still contact the restaurant with a question.</MarketText> : null}
       {order ? <View nativeID="support-order" style={{ gap: 10 }}>
         <MarketText variant="eyebrow">Selected active order</MarketText>
-        <View style={{ gap: 3 }}><MarketText variant="muted">Order reference</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{order.id}</Text></View>
+        <View style={{ gap: 3 }}><MarketText variant="muted">Order reference</MarketText><Text selectable style={{ color: colors.ink, fontSize: 14, lineHeight: 22 }}>{orderName(order)}</Text></View>
         <View role="status" accessibilityLiveRegion="polite"><MarketText>Status: {order.status.replaceAll('_', ' ')}</MarketText></View>
         {order.lines.map((line, i) => <MarketText key={`${line.menuItemId}-${i}`}>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText>)}
         <MarketText>Total: {formatINRFromPaise(order.totalPaise)}</MarketText>
@@ -71,7 +85,7 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
       <ContactActions businessId={businessId} />
       <MarketText variant="muted">{config.notice}</MarketText>
       {market.session ? <MarketButton label="Refresh active orders" variant="secondary" disabled={support.loading || support.moreLoading} onPress={() => void support.refresh()} /> : null}
-      {support.orders.length > 1 ? <View style={{ gap: 8 }}><MarketText variant="muted">Choose another active order</MarketText>{support.orders.map(candidate => <Pressable key={candidate.id} accessibilityRole="button" accessibilityLabel={`Select order reference ${candidate.id}`} accessibilityState={{ selected: candidate.id === order?.id }} aria-pressed={candidate.id === order?.id} onPress={() => support.select(candidate.id)} style={{ minHeight: 48, padding: 12, borderWidth: 1, borderRadius: 12, borderColor: colors.primary, backgroundColor: candidate.id === order?.id ? colors.tint : colors.surface }}><Text style={{ color: colors.ink, fontWeight: '700' }}>{candidate.id}</Text><MarketText variant="muted">{candidate.status.replaceAll('_', ' ')} · {formatINRFromPaise(candidate.totalPaise)}</MarketText></Pressable>)}</View> : null}
+      {support.orders.length > 1 ? <View style={{ gap: 8 }}><MarketText variant="muted">Choose another active order</MarketText>{support.orders.map(candidate => <Pressable key={candidate.id} accessibilityRole="button" accessibilityLabel={`Select order reference ${orderName(candidate)}`} accessibilityState={{ selected: candidate.id === order?.id }} aria-pressed={candidate.id === order?.id} onPress={() => support.select(candidate.id)} style={{ minHeight: 48, padding: 12, borderWidth: 1, borderRadius: 12, borderColor: colors.primary, backgroundColor: candidate.id === order?.id ? colors.tint : colors.surface }}><Text style={{ color: colors.ink, fontWeight: '700' }}>{orderName(candidate)}</Text><MarketText variant="muted">{candidate.status.replaceAll('_', ' ')} · {formatINRFromPaise(candidate.totalPaise)}</MarketText></Pressable>)}</View> : null}
       {support.moreError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{support.moreError}</Text> : null}
       {support.cursor ? <MarketButton label={support.moreLoading ? 'Loading more active orders…' : support.moreError ? 'Retry more active orders' : 'Load more active orders'} variant="secondary" disabled={support.loading || support.moreLoading} onPress={() => void support.loadMore()} /> : null}
       <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{support.selectionNotice}</MarketText></View>

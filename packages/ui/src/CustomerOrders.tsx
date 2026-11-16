@@ -72,7 +72,7 @@ export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: 
   const offer = !!shown && activeOrder(shown) && market.preferences.ready && !market.preferences.prefs.push;
   const updates = { offer, on: market.preferences.prefs.push, busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage };
   return <View style={{ gap: 16 }}>
-    {shown ? <OrderStatusView order={shown} restaurant={name} phone={market.businessReady ? phone : undefined} updates={updates} onReorder={onReorder} /> : null}
+    {shown ? <OrderStatusView key={shown.id} order={shown} restaurant={name} phone={market.businessReady ? phone : undefined} updates={updates} onReorder={onReorder} /> : null}
     {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}
     {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
     {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}
