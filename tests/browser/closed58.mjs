@@ -172,7 +172,7 @@ try {
       console.log(`PASS: ${slug} older open refresh cannot override closure; disconnected/failed refresh is distinct from closure; explicit reconnect restores live updates`);
 
       await page.goto(`${server.url}/orders/${orderId}`, { waitUntil: 'networkidle' });
-      await button('Reorder order 000002').click(); await dialog.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
+      await button('Order this again for order 000002').click(); await dialog.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
       const beforeReorder = await saved(); await setOpen(false);
       await dialog.getByText(text, { exact: true }).waitFor();
       assert.equal(await dialog.getByRole('button', { name: 'Add to cart', exact: true }).count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Replace cart', exact: true }).count(), 0);
@@ -193,7 +193,7 @@ try {
       assert.ok(uncertain); await setOpen(false); assert.equal(await attempt(), uncertain);
       assert.equal(await button('Retry order recovery').isEnabled(), true, 'closure cannot disable an existing-order recovery');
       mode = 'placed'; await button('Retry order recovery').click();
-      await visible(page.getByText('Status: placed', { exact: true })).waitFor();
+      await visible(page.getByText('Your order is with the restaurant', { exact: true })).waitFor();
       assert.equal(requests.length, beforeRecovery + 1); assert.deepEqual(requests.at(-1), sent, 'recovery resends the original frozen request despite closing');
       await assertEventually(async () => await attempt() === null);
       assert.equal(JSON.parse(await saved()).lines.length, 0);

@@ -258,7 +258,7 @@ try {
   orderLoadFails = false; businesses[0].delivery_fee_paise = 9900; menus[0][0].price_paise = 99000;
   await customer.reload({ waitUntil: 'networkidle' });
   await customer.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
-  await customer.getByText('Delivery: ₹25 · Total: ₹175', { exact: true }).filter({ visible: true }).waitFor();
+  await customer.getByText('₹175 cash on delivery', { exact: true }).filter({ visible: true }).waitFor();
   for (const request of pricingRequests.slice(3)) assert.deepEqual(request, pricingRequests[2], 'all uncertain retries retain the accepted snapshot after catalog changes');
   assert.equal(pricingRequests.length, 6);
   await enabled(quoteTab.getByRole('button', { name: 'Accept revised total and place order', exact: true }));

@@ -4,15 +4,18 @@ import { formatINRFromPaise, type Order } from '@market/core';
 import type { useMarket } from './useMarket';
 import { sameIdentity, type Identity } from './checkout-state';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
+import { callLink } from './admin-model';
+import { OrderStatusView, orderName, shortTime, type ReorderAction } from './CustomerOrderStatus';
 import { DietMark } from './DietMark';
 import { useMarketTheme } from './theme';
 import { restorePanelFocus } from './AccessiblePanel';
 
 type Market = ReturnType<typeof useMarket>;
-export type ReorderAction = (order: Order, restoreFocus: () => void) => void;
+export type { ReorderAction } from './CustomerOrderStatus';
 export const activeOrder = (order: Order) => order.status !== 'delivered' && order.status !== 'cancelled';
 const label = (order: Order) => order.status.replaceAll('_', ' ');
-export function OrderCard({ order, details = false, onTrack, onReorder }: { order: Order; details?: boolean; onTrack?: () => void; onReorder?: ReorderAction }) {
+/** A past or current order in the Orders list and account drawer; the order page is OrderStatusView. */
+export function OrderCard({ order, onTrack, onReorder }: { order: Order; onTrack?: () => void; onReorder?: ReorderAction }) {
   const trigger = useRef<ComponentRef<typeof Pressable>>(null);
   const { colors } = useMarketTheme();
   const restoreFocus = () => {
@@ -20,14 +23,15 @@ export function OrderCard({ order, details = false, onTrack, onReorder }: { orde
     else setTimeout(() => { const handle = findNodeHandle(trigger.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }, 0);
   };
   return <MarketCard>
-    <MarketText variant="heading">Order {order.id.slice(0, 8)}</MarketText>
+    <MarketText variant="heading">{`Order ${orderName(order)}`}</MarketText>
     <MarketText>Status: {label(order)}</MarketText>
-    <MarketText variant="muted">{new Date(order.createdAtISO).toLocaleString()}</MarketText>
+    <MarketText variant="muted">{shortTime(order.createdAtISO)}</MarketText>
     {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText><DietMark diet={line.diet} /></View>)}
     <MarketText>Delivery: {formatINRFromPaise(order.deliveryFeePaise)} · Total: {formatINRFromPaise(order.totalPaise)}</MarketText>
-    {details ? <><MarketText variant="muted">{order.delivery.name} · {order.delivery.addressLine}</MarketText>{order.history?.map((event, i) => <MarketText key={`${event.createdAtISO}-${i}`} variant="muted">{event.status.replaceAll('_', ' ')} · {new Date(event.createdAtISO).toLocaleString()}</MarketText>)}</> : null}
-    {onTrack ? <MarketButton label={`${activeOrder(order) ? 'Track order' : 'View order'} ${order.id.slice(-6)}`} variant={activeOrder(order) ? 'primary' : 'secondary'} onPress={onTrack} /> : null}
-    {!activeOrder(order) && onReorder ? <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`Reorder order ${order.id.slice(-6)}`} onPress={() => onReorder(order, restoreFocus)} style={{ minHeight: 48, paddingHorizontal: 22, paddingVertical: 12, justifyContent: 'center', alignItems: 'center', borderRadius: 14, backgroundColor: colors.primary }}><Text style={{ color: colors.onPrimary, fontSize: 15, lineHeight: 22, fontWeight: '700' }}>Reorder</Text></Pressable> : null}
+    {onTrack ? <MarketButton label={`${activeOrder(order) ? 'Track order' : 'View order'} ${orderName(order)}`} variant={activeOrder(order) ? 'primary' : 'secondary'} onPress={onTrack} /> : null}
+    {!activeOrder(order) && onReorder ? <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`Reorder order ${orderName(order)}`} onPress={() => onReorder(order, restoreFocus)} style={{ minHeight: 48, paddingHorizontal: 22, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 999, backgroundColor: colors.primary }}>
+      <Text style={{ color: colors.onPrimary, fontSize: 15, lineHeight: 22, fontWeight: '700' }}>Reorder</Text>
+    </Pressable> : null}
   </MarketCard>;
 }
 export function CustomerHistory({ market, go, onReorder }: { market: Market; go: (path: string) => void; onReorder?: ReorderAction }) {
@@ -45,6 +49,8 @@ export function CustomerHistory({ market, go, onReorder }: { market: Market; go:
   </View>;
 }
 export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: { market: Market; id: string; receipt: Order | null; onReorder?: ReorderAction; onHelp?: () => void }) {
+  const { name } = useMarketTheme();
+  const phone = callLink(market.business?.contactPhone ?? '');
   const request = useRef(0);
   const [retry, setRetry] = useState(0);
   const [snapshot, setSnapshot] = useState<{ identity: Identity; id: string; order: Order | null; loading: boolean; resolved: boolean; error: string } | null>(null);
@@ -62,12 +68,16 @@ export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: 
   const current = snapshot?.id === id && sameIdentity(snapshot.identity, market.identity.current) ? snapshot : null;
   const saved = receipt?.id === id ? receipt : null;
   const shown = current?.order ?? (!current?.resolved ? saved : null);
-  return <View style={{ gap: 16 }}><MarketText variant="heading">Order status</MarketText><MarketButton label="Refresh orders" variant="secondary" onPress={() => { setRetry(n => n + 1); void market.refreshOrders(); }} />
-    {shown ? <OrderCard order={shown} details onReorder={onReorder} /> : null}
+  // The consent offer appears only while the order is in progress and updates are off (existing consent flow).
+  const offer = !!shown && activeOrder(shown) && market.preferences.ready && !market.preferences.prefs.push;
+  const updates = { offer, on: market.preferences.prefs.push, busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage };
+  return <View style={{ gap: 16 }}>
+    {shown ? <OrderStatusView order={shown} restaurant={name} phone={market.businessReady ? phone : undefined} updates={updates} onReorder={onReorder} /> : null}
     {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}
     {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
     {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}
     {current?.resolved && !shown && !current.error ? <MarketStatus kind="empty" title="We can't show this order" message="It may belong to another account or restaurant, or no longer be available." /> : null}
+    <MarketButton label="Refresh orders" variant="secondary" onPress={() => { setRetry(n => n + 1); void market.refreshOrders(); }} />
     {onHelp ? <MarketButton label="Help & support" variant="secondary" onPress={onHelp} /> : null}
   </View>;
 }

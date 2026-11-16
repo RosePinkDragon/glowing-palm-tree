@@ -19,6 +19,8 @@ export type OrdersConnection = 'connecting' | 'live' | 'paused' | 'sample';
  * keep arriving (and the tab badge keeps counting) while another tab is open. `onNewOrders` is the seam for
  * #54's new-order alert: it receives orders first seen after the initial load.
  */
+/** The server order number (#47), or a short id reference for orders from before numbering. */
+export const ownerReference = (order: Order) => order.orderNumber ?? orderReference(order.id);
 export function useOwnerOrders(services: MarketServices, enabled: boolean, onNewOrders?: (orders: Order[]) => void) {
   const demo = services.mode === 'demo';
   const [orders, setOrders] = useState<Order[]>([]);
@@ -69,7 +71,7 @@ export function useOwnerOrders(services: MarketServices, enabled: boolean, onNew
     if (inFlight.current.has(order.id)) return undefined;
     inFlight.current.add(order.id); setBusyIds(new Set(inFlight.current));
     setNotice(''); setSuccess(''); request.current++;
-    const reference = orderReference(order.id);
+    const reference = ownerReference(order);
     try {
       // The server confirms the change only when the version still matches.
       const updated = await services.transitionOrder(order.id, status, order.version);
@@ -114,7 +116,7 @@ function Strong({ children, size = 16, color, align }: { children: ReactNode; si
 function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Order; now: number; busy: boolean; demo: boolean; onAccept: () => void; onDetails: () => void }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  const reference = orderReference(order.id);
+  const reference = ownerReference(order);
   const isNew = order.status === 'placed';
   return <View role="group" aria-label={`Order ${reference}, ${isNew ? 'New' : statusLabel(order.status)}`} style={{ backgroundColor: colors.surface, borderRadius: 20, borderWidth: isNew ? 2 : 1, borderColor: isNew ? colors.primary : colors.border, overflow: 'hidden' }}>
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: isNew ? colors.tint : colors.background }}>
@@ -150,7 +152,7 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
   const selectedOrder = queue.orders.find(order => order.id === selected);
   // Closing returns to the list that holds the order (it may have moved on) and to its Details button.
   const refocus = useRef<string | null>(null);
-  const closeDetails = () => { if (selectedOrder) { queue.setFilter(filterForStatus(selectedOrder.status)); refocus.current = orderReference(selectedOrder.id); } setSelected(null); restorePanelFocus(trigger.current); };
+  const closeDetails = () => { if (selectedOrder) { queue.setFilter(filterForStatus(selectedOrder.status)); refocus.current = ownerReference(selectedOrder); } setSelected(null); restorePanelFocus(trigger.current); };
   // A status step moves the card to another filter list, so the captured button is gone: find it again.
   useEffect(() => {
     const reference = refocus.current;

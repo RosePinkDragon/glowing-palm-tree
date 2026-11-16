@@ -156,8 +156,9 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
       return count ? cart?.textContent?.startsWith(`Cart (${count})`) : !cart;
     }, { count: lines.reduce((n, line) => n + line.quantity, 0) });
   };
-  const detail = async () => { await page.goto(server.url + '/orders/' + target.id, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Reorder order 000024', exact: true }).waitFor(); };
-  const reorder = () => page.getByRole('button', { name: 'Reorder order 000024', exact: true }).click();
+  const detail = async () => { await page.goto(server.url + '/orders/' + target.id, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Order this again for order 000024', exact: true }).waitFor(); };
+  // The account drawer's card says Reorder; the order page says Order this again (#47).
+  const reorder = () => page.getByRole('button', { name: /^(Reorder order|Order this again for order) 000024$/ }).click();
   const panelFocused = () => page.waitForFunction(() => document.activeElement?.tagName === 'H1' && document.activeElement?.textContent === 'Reorder');
   const choice = async () => { await reorder(); await page.getByRole('button', { name: 'Replace cart', exact: true }).waitFor(); await panelFocused(); };
   const cancel = async () => { await page.getByRole('button', { name: 'Cancel', exact: true }).click(); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); };
@@ -206,11 +207,11 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await cancel(); assert.equal(await raw(), existing, 'Cancel leaves existing cart byte-for-byte unchanged');
-  await choice(); await page.keyboard.press('Escape'); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
+  await choice(); await page.keyboard.press('Escape'); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Order this again for order 000024');
   assert.equal(await raw(), existing, 'Escape leaves existing cart unchanged');
   await choice(); await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
   await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' });
-  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Order this again for order 000024');
   assert.equal(await raw(), existing, 'browser back dismissal leaves the cart unchanged');
   await choice(); await page.getByRole('button', { name: 'Add to cart', exact: true }).evaluate(button => { button.click(); button.click(); });
   await page.getByText(/Reorder added to your cart at current menu prices/).filter({ visible: true }).waitFor();
@@ -243,7 +244,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.evaluate(key => { localStorage.removeItem(key); window.dispatchEvent(new StorageEvent('storage', { key, newValue: null })); }, checkoutKey);
   // A second tab changes the reviewed cart. Both visible events and delayed events must fail closed.
   const other = await context.newPage(); await other.goto(server.url + '/orders/' + target.id, { waitUntil: 'networkidle' });
-  await other.getByRole('button', { name: 'Reorder order 000024', exact: true }).waitFor();
+  await other.getByRole('button', { name: 'Order this again for order 000024', exact: true }).waitFor();
   await choice();
   const addInOther = () => other.evaluate(key => { const value = JSON.parse(localStorage.getItem(key)); value.revision++; value.lines[0].quantity++; localStorage.setItem(key, JSON.stringify(value)); }, key);
   await addInOther(); await page.getByRole('button', { name: 'Review current cart', exact: true }).waitFor();
@@ -423,14 +424,14 @@ try {
       assert.equal(await page.getByRole('button', { name: /^Track order/ }).count(), 1);
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       await page.goto(server.url + '/orders/' + orderId(1), { waitUntil: 'networkidle' });
-      await page.getByText('1 × History meal 1 · ₹100', { exact: true }).waitFor();
+      await page.getByText('1 × History meal 1', { exact: false }).first().waitFor();
       assert.ok(queries.some(url => url.searchParams.get('id') === 'eq.' + orderId(1)));
       failDetail = true;
       await page.reload({ waitUntil: 'networkidle' });
       await page.getByText('Detail fixture unavailable', { exact: false }).waitFor();
       failDetail = false;
       await page.getByRole('button', { name: 'Retry orders', exact: true }).click();
-      await page.getByText('1 × History meal 1 · ₹100', { exact: true }).waitFor();
+      await page.getByText('1 × History meal 1', { exact: false }).first().waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
       for (const [label, text] of [['Saved addresses', 'Saved addresses are not available yet.'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {

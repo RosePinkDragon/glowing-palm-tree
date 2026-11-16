@@ -25,3 +25,48 @@ export async function readHistoryPages(read: (options?: OrderPageOptions) => Pro
   } while (nextCursor && (pages < depth || !coversTail()));
   return { orders, nextCursor, pages };
 }
+
+/** Customer timeline deliberately consumes only public status/timestamp history. */
+export const trackingStages = [
+  { status: 'placed', label: 'Order placed' },
+  { status: 'accepted', label: 'Accepted by the restaurant' },
+  { status: 'preparing', label: 'Being prepared' },
+  { status: 'out_for_delivery', label: 'Out for delivery' },
+  { status: 'delivered', label: 'Delivered' },
+] as const;
+export function trackingTimeline(order: Order) {
+  const current = trackingStages.findIndex(stage => stage.status === order.status);
+  return trackingStages.map((stage, index) => ({ ...stage,
+    time: order.history?.find(event => event.status === stage.status)?.createdAtISO ?? (stage.status === 'placed' ? order.createdAtISO : null),
+    state: (order.status === 'cancelled' ? 'stopped' : index < current ? 'complete' : index === current ? 'current' : 'pending') as 'stopped' | 'complete' | 'current' | 'pending',
+  }));
+}
+export function terminalTime(order: Order): string | null {
+  return order.history?.find(event => event.status === order.status)?.createdAtISO ?? null;
+}
+export function deliveryMinutes(order: Order): number | null {
+  const arrival = terminalTime(order);
+  const elapsed = arrival ? Date.parse(arrival) - Date.parse(order.createdAtISO) : NaN;
+  return Number.isFinite(elapsed) && elapsed >= 0 ? Math.round(elapsed / 60000) : null;
+}
+/** Status pill/band eyebrow, headline and one-line detail (customer p. 5, 25, 26). */
+export function statusCopy(order: Order, restaurant: string, header: 'pill' | 'band', at: (iso: string) => { time: string; date: string; today: boolean }, total: string, voice: 'restaurant' | 'we' = 'restaurant'): { eyebrow: string; title: string; detail: string } {
+  // "at 12:04 pm" today, "on 16 Nov at 12:04 pm" on another day.
+  const moment = (p: { time: string; date: string; today: boolean }) => p.today ? `at ${p.time}` : `on ${p.date} at ${p.time}`;
+  const kitchen = voice === 'we' ? 'our kitchen' : 'the kitchen';
+  const when = (status: Order['status']) => { const iso = order.history?.find(event => event.status === status)?.createdAtISO; return iso ? at(iso) : null; };
+  const accepted = when('accepted');
+  const acceptedLine = accepted ? `${restaurant} accepted your order ${moment(accepted)}.` : `${restaurant} accepted your order.`;
+  switch (order.status) {
+    case 'placed': return { eyebrow: 'Order placed', title: 'Your order is with the restaurant', detail: `Waiting for ${restaurant} to accept it. We'll tell you when they do.` };
+    case 'accepted': return { eyebrow: 'Accepted', title: 'The restaurant accepted your order', detail: `${acceptedLine} They'll start cooking soon.` };
+    case 'preparing': return { eyebrow: 'In the kitchen', title: 'Your food is being prepared', detail: `${acceptedLine} We'll tell you when it leaves the kitchen.` };
+    case 'out_for_delivery': { const left = when('out_for_delivery');
+      return { eyebrow: 'On its way', title: header === 'band' ? 'Out for delivery' : 'Your food is on its way', detail: `${left ? `Your order left ${kitchen} ${moment(left)}.` : `Your order has left ${kitchen}.`} Please keep ${total} ready in cash.` }; }
+    case 'delivered': { const arrived = when('delivered'), minutes = deliveryMinutes(order);
+      return { eyebrow: 'Delivered', title: header === 'band' ? 'Enjoy your meal' : 'Delivered. Enjoy!',
+        detail: arrived ? `Arrived on ${arrived.date} at ${arrived.time}${minutes !== null ? `, ${minutes} minutes after you ordered` : ''}.` : 'Your order was delivered.' }; }
+    case 'cancelled': { const ended = when('cancelled');
+      return { eyebrow: 'Cancelled', title: 'This order was cancelled', detail: `${restaurant} cancelled it${ended ? ` ${moment(ended)}` : ''}. You don't need to pay anything.` }; }
+  }
+}
