@@ -58,7 +58,7 @@ try {
       }
       if (url.pathname === '/rest/v1/menu_items') return json([item]);
       if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
-      if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
+      if (url.pathname === '/rest/v1/rpc/list_addresses') return json([{ id: '48200000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 0.5, longitude: 0.5, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 }]);
       if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? placed ?? historical : [placed ?? historical]);
       if (url.pathname === '/rest/v1/rpc/place_order') {
         const body = request.postDataJSON(); requests.push(body);
@@ -70,7 +70,7 @@ try {
         if (mode === 'lost') return route.abort('failed');
         assert.equal(mode, 'placed');
         const terms = body.p_accepted_pricing;
-        placed = { ...historical, status: 'placed', subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line, order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })) };
+        placed = { ...historical, status: 'placed', subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line ?? 'Flat 3, Bharne Naka', order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })) };
         return json({ outcome: 'placed', id: orderId });
       }
       throw new Error(`Unexpected closed-state fixture ${request.method()} ${url.pathname}`);
@@ -98,9 +98,8 @@ try {
       else await closed().waitFor();
     };
     const fillCheckout = async () => {
-      await field('Name').fill('Synthetic checkout name'); await field('Mobile number').fill('9876543210'); await field('Delivery address').fill('Synthetic checkout address');
-      await button('Check my delivery location').click();
-      await visible(page.getByText('Delivery location confirmed. Refresh if your location changes.', { exact: true })).waitFor();
+      await field('Name').fill('Synthetic checkout name'); await field('Mobile number').fill('9876543210');
+      await visible(page.getByText('Deliver to Home', { exact: true })).waitFor();
     };
     try {
       await page.goto(server.url, { waitUntil: 'domcontentloaded' });
@@ -132,10 +131,10 @@ try {
       assert.deepEqual(contents(await saved()), contents(guestCart), 'closing inside dish details preserves the saved draft');
       await setOpen(true); await dialog.getByRole('button', { name: /^Add · / }).waitFor();
       await page.keyboard.press('Escape'); await cart().click();
-      await field('Name').fill('Retained guest name'); await field('Delivery address').fill('Retained guest address');
+      await field('Name').fill('Retained guest name');
       await setOpen(false);
       assert.equal(await button(`Add one ${item.name}`).count(), 0); assert.equal(await button('Place order').count(), 0);
-      assert.equal(await field('Name').inputValue(), 'Retained guest name'); assert.equal(await field('Delivery address').inputValue(), 'Retained guest address');
+      assert.equal(await field('Name').inputValue(), 'Retained guest name');
       assert.deepEqual(contents(await saved()), contents(guestCart));
       await setOpen(true); assert.equal(requests.length, 0, 'reopening never submits');
       const publicTopic = [...channels.keys()][0];
@@ -149,7 +148,7 @@ try {
       await setOpen(true); mode = 'closed'; await button('Place order').click();
       await closed().waitFor(); await assertEventually(async () => await attempt() === null);
       assert.equal(requests.length, 1); assert.deepEqual(contents(await saved()), contents(signedCart));
-      assert.equal(await field('Delivery address').inputValue(), 'Synthetic checkout address');
+      await visible(page.getByText('Deliver to Home', { exact: true })).waitFor();
       assert.equal(await visible(page.getByText(/Please check your details and try again/)).count(), 0, 'closed refusal uses the branded notice');
       await setOpen(true); assert.equal(requests.length, 1);
       console.log(`PASS: ${slug} unknown/closed/open guests, keyboard dish details, live cart/form preservation, auth-stable subscription and typed closure refusal`);

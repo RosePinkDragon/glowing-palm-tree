@@ -86,6 +86,7 @@ try {
         if (action === 'remove') menu[0].image_url = null;
         return json({ saved: true, cleanupComplete: action === 'cleanup' });
       }
+      if (url.pathname === '/rest/v1/rpc/list_addresses') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }); // signed-in carts read saved addresses (#48)
       throw new Error(`Unhandled photo fixture: ${req.method()} ${url.pathname}`);
     });
     try {
