@@ -133,12 +133,19 @@ SQL
   # and the kitchen points must land on the existing rows (as in production).
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116160000_saved_addresses.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116180000_kitchen_locations.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116190000_delivery_radius.sql
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ declare ns text; n integer; begin
     if not exists (select 1 from public.orders where saved_address_id is null and location_accuracy is not null) then raise exception 'upgrade test has no legacy orders'; end if;
     if exists (select 1 from pg_constraint where conname='order_address_evidence' and not convalidated) then raise exception 'evidence check not validated'; end if;
     select n2.nspname into strict ns from pg_extension e join pg_namespace n2 on n2.oid=e.extnamespace where e.extname='postgis';
     execute format('select count(*) filter (where kitchen_location is not null and %1\$I.st_distance(kitchen_location::%1\$I.geography, %1\$I.st_setsrid(%1\$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1\$I.geography) < 1) from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into n;
     if n <> 2 then raise exception 'kitchen points not set on existing restaurants: %', n; end if;
+    -- Owner decision: 12 km from each kitchen. 11.9 km out is inside in every direction, 12.1 km is outside.
+    execute format('select count(*) filter (where service_area_verified_at is not null and service_area_version=''radius-12000m'' and service_area_source like ''Owner decision 16 Nov 2026%%''
+        and (select bool_and(%1\$I.st_covers(service_area::%1\$I.geography, %1\$I.st_project(kitchen_location::%1\$I.geography, 11900, a)) and not %1\$I.st_covers(service_area::%1\$I.geography, %1\$I.st_project(kitchen_location::%1\$I.geography, 12100, a)))
+          from unnest(array[0, pi()/4, pi()/2, 3*pi()/4, pi(), 5*pi()/4, 3*pi()/2, 7*pi()/4]) a))
+      from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into n;
+    if n <> 2 then raise exception '12 km delivery areas not set on existing restaurants: %', n; end if;
   end \$\$"
 done
 # Installation order differs from the staged regression suites: apply every
