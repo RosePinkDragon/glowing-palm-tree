@@ -100,6 +100,8 @@ SQL
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into public.menu_items(id,business_id,name,category,price_paise,diet) values ('24300000-0000-4000-8000-000000000099','10000000-0000-4000-8000-000000000001','Backfill',' Demo ',100,'egg')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114142756_menu_categories.sql
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -v before_migration=1 -U postgres -d "$db" < tests/database/order-numbers.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116103753_order_tracking_numbers.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
   # Earlier owner transitions from the checkout suite, plus one by an owner who
@@ -108,6 +110,24 @@ SQL
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116000000_owner_history_names.sql
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*) = 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.changed_by = '49800000-0000-4000-8000-0000000000ff' and a.actor_name = 'Former owner' and a.actor_id is null), 'removed owner backfills as Former owner') ; select public.test_assert(exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id join public.business_memberships m on m.business_id = o.business_id and m.user_id = h.changed_by where a.actor_name = m.display_name and a.actor_id = h.changed_by), 'current owners backfill with their membership name')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
+  # Real concurrent RPCs: four unique keys plus two first attempts at one key.
+  set_open true
+  number_before=$(docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select sum(last_number) from public.order_number_counters")
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  number_race() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -v key="$1" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1)),'{"name":"Number race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),:'key'::uuid,jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',b.delivery_fee_paise,'min_order_paise',b.min_order_paise,'subtotal_paise',m.price_paise,'total_paise',m.price_paise+b.delivery_fee_paise)) from public.menu_items m join public.businesses b on b.id=m.business_id where m.id='20000000-0000-4000-8000-000000000001';
+SQL
+  }
+  number_pids=()
+  for suffix in 1 2 3 4 5 5; do
+    number_race "64700000-0000-4000-8000-00000000010${suffix}" & number_pids+=("$!")
+  done
+  for pid in "${number_pids[@]}"; do wait "$pid" || { echo 'Numbering race failed' >&2; exit 1; }; done
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=5 and count(distinct order_number)=5 from public.orders where idempotency_key::text like '64700000-0000-4000-8000-00000000010%'),'concurrent distinct requests have unique numbers and replay creates one'); select public.test_assert((select sum(last_number)=$number_before+5 from public.order_number_counters),'concurrent replay consumes no extra counter')"
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
@@ -126,5 +146,6 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-reorder.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/daily-summary.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder and daily-summary tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary and order-number tests passed, including all migrations before seed in both PostGIS schemas.'

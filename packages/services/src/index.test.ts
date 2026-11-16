@@ -63,13 +63,15 @@ test('photo service refuses customer and demo writes before making upload reques
 });
 test('maps database menu and complete order into domain values', () => {
   assert.deepEqual(mapMenu({ diet: null, id: 'm', name: 'Dish', description: null, category_id: 'category-main', menu_categories: { name: 'Main', sort_order: 0 }, price_paise: 1200, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null }, slug), { id: 'm', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, diet: null, pricePaise: 1200, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 });
-  const order = mapOrder({ id: 'o', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ diet: 'egg', menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);
+  const order = mapOrder({ id: 'o', order_number: 'KDI-20261110000', status: 'placed', version: 1, subtotal_paise: 1200, delivery_fee_paise: 100, total_paise: 1300, customer_name: 'Name', customer_phone: 'Phone', delivery_address_line: 'Address', created_at: '2026-01-01', order_items: [{ diet: 'egg', menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 1200, line_total_paise: 1200 }], order_status_history: [{ status: 'accepted', created_at: '2026-01-02' }, { status: 'placed', created_at: '2026-01-01' }] }, slug);
+  assert.equal(order.orderNumber, 'KDI-20261110000');
   assert.equal(order.lines[0].unitPricePaise, 1200);
   assert.equal(order.lines[0].diet, 'egg');
   assert.equal(order.delivery.addressLine, 'Address');
   assert.deepEqual(order.history?.map(entry => entry.status), ['placed', 'accepted']);
   assert.equal('location' in order, false, 'no pin stored');
   const base = { id: 'o', status: 'placed' as const, version: 1, subtotal_paise: 0, delivery_fee_paise: 0, total_paise: 0, customer_name: 'N', customer_phone: 'P', delivery_address_line: 'A', created_at: '2026-01-01', order_items: [] };
+  assert.equal(mapOrder(base, slug).orderNumber, undefined, 'legacy rows never invent a number');
   assert.deepEqual(mapOrder({ ...base, latitude: 17.7, longitude: 73.4 }, slug).location, { latitude: 17.7, longitude: 73.4 });
   assert.equal('location' in mapOrder({ ...base, latitude: 17.7, longitude: null }, slug), false, 'a partial pin is ignored');
 });
