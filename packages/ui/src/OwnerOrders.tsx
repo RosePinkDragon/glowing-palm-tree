@@ -69,7 +69,7 @@ export function useOwnerOrders(services: MarketServices, enabled: boolean, onNew
     if (inFlight.current.has(order.id)) return undefined;
     inFlight.current.add(order.id); setBusyIds(new Set(inFlight.current));
     setNotice(''); setSuccess(''); request.current++;
-    const reference = orderReference(order.id);
+    const reference = (order.orderNumber ?? orderReference(order.id));
     try {
       // The server confirms the change only when the version still matches.
       const updated = await services.transitionOrder(order.id, status, order.version);
@@ -114,7 +114,7 @@ function Strong({ children, size = 16, color, align }: { children: ReactNode; si
 function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Order; now: number; busy: boolean; demo: boolean; onAccept: () => void; onDetails: () => void }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  const reference = orderReference(order.id);
+  const reference = (order.orderNumber ?? orderReference(order.id));
   const isNew = order.status === 'placed';
   return <View role="group" aria-label={`Order ${reference}, ${isNew ? 'New' : statusLabel(order.status)}`} style={{ backgroundColor: colors.surface, borderRadius: 20, borderWidth: isNew ? 2 : 1, borderColor: isNew ? colors.primary : colors.border, overflow: 'hidden' }}>
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: isNew ? colors.tint : colors.background }}>
@@ -150,7 +150,7 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
   const selectedOrder = queue.orders.find(order => order.id === selected);
   // Closing returns to the list that holds the order (it may have moved on) and to its Details button.
   const refocus = useRef<string | null>(null);
-  const closeDetails = () => { if (selectedOrder) { queue.setFilter(filterForStatus(selectedOrder.status)); refocus.current = orderReference(selectedOrder.id); } setSelected(null); restorePanelFocus(trigger.current); };
+  const closeDetails = () => { if (selectedOrder) { queue.setFilter(filterForStatus(selectedOrder.status)); refocus.current = (selectedOrder.orderNumber ?? orderReference(selectedOrder.id)); } setSelected(null); restorePanelFocus(trigger.current); };
   // A status step moves the card to another filter list, so the captured button is gone: find it again.
   useEffect(() => {
     const reference = refocus.current;

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Platform, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 // A brand family replaces the synthetic weight: each loaded family is already a specific weight.
@@ -60,4 +62,18 @@ export function MarketNavigation({ items }: { items: { label: string; onPress: (
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   return <View accessibilityRole="navigation" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{items.map(item => <Pressable key={item.label} accessibilityRole="button" accessibilityState={Platform.OS === 'web' ? undefined : { selected: !!item.selected }} aria-current={Platform.OS === 'web' && item.selected ? 'page' : undefined} onPress={item.onPress} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: item.selected ? colors.tint : 'transparent' }}><Text style={branded({ color: item.selected ? colors.primary : colors.muted, fontWeight: '700' as const }, fonts.bodyBold)}>{item.label}</Text></Pressable>)}</View>;
+}
+
+/** A link styled as a 48px button. Web gets a real anchor (tel:/https:); native opens the URL through Linking. */
+export function MarketLinkButton({ label, name, href, tone = 'secondary', external, icon }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary'; external?: boolean; icon?: MarketIconName }) {
+  const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const [failed, setFailed] = useState(false);
+  const primary = tone === 'primary';
+  const web = Platform.OS === 'web';
+  return <View style={{ gap: 4 }}>
+    <Text accessibilityRole="link" accessibilityLabel={name ?? label} {...(web ? ({ href, ...(external ? { hrefAttrs: { target: '_blank', rel: 'noopener noreferrer' } } : {}) } as object) : { onPress: () => { setFailed(false); Linking.openURL(href).catch(() => setFailed(true)); } })}
+      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{icon ? <><MarketIcon inline name={icon} color={primary ? colors.onPrimary : colors.ink} size={16} />{' '}</> : null}{label}</Text>
+    {failed ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>Could not open this link on this device.</Text> : null}
+  </View>;
 }

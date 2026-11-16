@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Order } from '@market/core';
-import { mergeHistory, readHistoryPages } from './order-history.ts';
+import { deliveryMinutes, terminalTime, trackingHeadlines, trackingTimeline, mergeHistory, readHistoryPages } from './order-history.ts';
 
 const order = (id: string, version = 1) => ({ id, version } as Order);
 test('append deduplicates boundaries and never regresses an observed order version', () => {
@@ -40,4 +40,20 @@ test('new leading orders cannot remove the previously loaded tail on refresh', a
   assert.equal(calls, 3);
   assert.deepEqual(result.orders.map(row => row.id), ids);
   assert.equal(result.nextCursor, null);
+});
+
+test('tracking stages preserve public timestamps, mark current/future stages and handle terminal histories', () => {
+  const placed = '2026-11-16T06:30:00Z', accepted = '2026-11-16T06:32:00Z', delivered = '2026-11-16T07:05:00Z';
+  const live = { ...order('a', 3), createdAtISO: placed, status: 'preparing', history: [{ status: 'accepted', createdAtISO: accepted, actorName: 'Private owner' }] } as Order;
+  const stages = trackingTimeline(live);
+  assert.deepEqual(stages.map(s => s.state), ['complete', 'complete', 'current', 'pending', 'pending']);
+  assert.deepEqual(stages.map(s => s.time), [placed, accepted, null, null, null]);
+  assert.equal(JSON.stringify(stages).includes('Private owner'), false);
+  const done = { ...live, status: 'delivered', history: [...live.history!, { status: 'delivered', createdAtISO: delivered }] } as Order;
+  assert.equal(terminalTime(done), delivered); assert.equal(deliveryMinutes(done), 35);
+  assert.equal(trackingHeadlines.delivered, 'Your food has arrived');
+  assert.equal(deliveryMinutes({ ...done, history: [] }), null);
+  const cancelled = { ...live, status: 'cancelled', history: [{ status: 'cancelled', createdAtISO: accepted }] } as Order;
+  assert.equal(terminalTime(cancelled), accepted);
+  assert.ok(trackingTimeline(cancelled).every(s => s.state === 'stopped'));
 });

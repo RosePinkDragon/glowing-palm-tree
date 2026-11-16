@@ -4,7 +4,9 @@ import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
+const trackingOnly = process.argv.includes('--tracking');
 const selectedBrand = process.argv.find(arg => arg.startsWith('--brand='))?.slice(8);
+if (!trackingOnly) {
 let customerServer, adminServer, browser, context;
 try {
 customerServer = await serveWeb('apps/ammu-sammu-customer/dist/web');
@@ -20,10 +22,10 @@ const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: '
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const token = part({ alg: 'HS256', typ: 'JWT' }) + '.' + part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.' + Buffer.from('synthetic-fixture-signature').toString('base64url');
 const session = { access_token: token, refresh_token: 'fixture-refresh', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
-const business = { id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
+const business = { contact_phone: '+919876543210', id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
 const item = { id: itemId, business_id: businessId, name: 'Fixture meal', description: 'Synthetic browser test item', category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 15000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
 let savedOrder;
-if (categoriesOnly) savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Synthetic', customer_phone: '123', delivery_address_line: 'Synthetic address', created_at: new Date().toISOString(), order_items: [], order_status_history: [] };
+if (categoriesOnly) savedOrder = { order_number: 'AMS-2026110001', id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Synthetic', customer_phone: '123', delivery_address_line: 'Synthetic address', created_at: new Date().toISOString(), order_items: [], order_status_history: [] };
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
 let heldOrderResponses = [];
@@ -74,7 +76,7 @@ await context.route(origin + '/**', async route => {
   if (url.pathname === '/rest/v1/rpc/place_order') {
     const body = req.postDataJSON(); requests.push(body);
     if (!savedOrder) {
-      savedOrder = { id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line, created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemId, name: item.name, quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: new Date().toISOString() }] };
+      savedOrder = { order_number: 'AMS-2026110001', id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line, created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemId, name: item.name, quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: new Date().toISOString() }] };
       return route.abort('failed'); // Server committed; response was lost.
     }
     return json({ outcome: 'placed', id: orderId });
@@ -136,7 +138,7 @@ const prepareCart = async (page, add = true) => {
   await second.reload({ waitUntil: 'networkidle' });
   await second.getByText(/Fixture catalog failure/).filter({ visible: true }).waitFor();
   await second.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
-  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   failCatalog = false;
   await second.getByRole('button', { name: 'Retry loading', exact: true }).click();
@@ -166,13 +168,13 @@ const prepareCart = async (page, add = true) => {
   // Real paths survive reload and back; missing orders are distinct from loading.
   assert.equal(new URL(second.url()).pathname, '/orders/' + orderId);
   await second.reload({ waitUntil: 'networkidle' });
-  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   failOrders = true;
   await second.reload({ waitUntil: 'networkidle' });
   await second.getByText('Could not load your orders', { exact: true }).filter({ visible: true }).waitFor();
   failOrders = false;
   await second.getByRole('button', { name: 'Retry orders', exact: true }).click();
-  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   await second.goto(customerServer.url + '/orders/90000000-0000-4000-8000-000000000009', { waitUntil: 'networkidle' });
   await second.getByText("We can't show this order", { exact: true }).filter({ visible: true }).waitFor();
   // Drawer traps keyboard focus, dismisses with Escape and restores its opener.
@@ -200,7 +202,7 @@ const prepareCart = async (page, add = true) => {
     return accepted;
   }, orderId);
   assert.equal(acceptedTap, true);
-  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   await second.goBack();
   assert.equal(new URL(second.url()).pathname, '/cart');
   assert.equal(await second.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Draft stays');
@@ -219,12 +221,12 @@ const prepareCart = async (page, add = true) => {
   await second.getByLabel('Email', { exact: true }).filter({ visible: true }).waitFor();
   holdOrders = false; releaseOrders();
   await second.waitForTimeout(100);
-  assert.equal(await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).count(), 0);
+  assert.equal(await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).count(), 0);
   await second.goto(customerServer.url + '/orders/' + orderId, { waitUntil: 'networkidle' });
   await second.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email);
   await second.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
   await second.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await second.getByText('Order ' + orderId.slice(0, 8), { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(new URL(second.url()).pathname, '/orders/' + orderId);
   await second.setViewportSize({ width: 1440, height: 900 });
   await second.screenshot({ path: 'dist/browser/customer-order-desktop.png', fullPage: true });
@@ -249,21 +251,21 @@ const prepareCart = async (page, add = true) => {
   assert.deepEqual((await ownerTabs.getByRole('button').allTextContents()).map(text => text.replace(/^\d+|\d+$/g, '')), ['Orders', 'Menu', 'Today', 'Settings']);
   assert.equal(await ownerTab('Orders').getAttribute('aria-current'), 'page');
   await admin.getByRole('heading', { name: 'Orders', exact: true }).waitFor();
-  await admin.getByRole('button', { name: 'Accept order #000001', exact: true }).waitFor();
-  await admin.getByRole('button', { name: 'Details for #000001', exact: true }).click();
-  await focused(admin, 'Order #000001');
+  await admin.getByRole('button', { name: 'Accept order AMS-2026110001', exact: true }).waitFor();
+  await admin.getByRole('button', { name: 'Details for AMS-2026110001', exact: true }).click();
+  await focused(admin, 'Order AMS-2026110001');
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
-  await focused(admin, 'Cancel order #000001?');
+  await focused(admin, 'Cancel order AMS-2026110001?');
   await admin.getByRole('button', { name: 'Keep the order', exact: true }).click();
   await focused(admin, 'Cancel order');
   assert.equal(mutations.length, 0);
   await admin.getByRole('button', { name: 'Accept order', exact: true }).click();
-  await admin.getByText('Order #000001 updated to Accepted.', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Order AMS-2026110001 updated to Accepted.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[0].p_status, 'accepted');
   await admin.getByRole('button', { name: 'Start preparing', exact: true }).waitFor();
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
   await admin.getByRole('button', { name: 'Cancel the order', exact: true }).click();
-  await admin.getByText('Order #000001 updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Order AMS-2026110001 updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[1].p_status, 'cancelled');
   assert.equal(await admin.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0, 'cancelled orders have no actions');
   await admin.getByRole('button', { name: 'Close', exact: true }).click();
@@ -314,7 +316,7 @@ const prepareCart = async (page, add = true) => {
   assert.equal(await admin.getByText("Today's summary is coming soon").count(), 0, 'the placeholder is gone');
   assert.equal(await ownerTab('Today').getAttribute('aria-current'), 'page');
   assert.equal(await ownerTab('Menu').getAttribute('aria-current'), null);
-  assert.equal(await admin.getByRole('button', { name: 'Details for #000001' }).count(), 0, 'order cards are only on the Orders tab');
+  assert.equal(await admin.getByRole('button', { name: 'Details for AMS-2026110001' }).count(), 0, 'order cards are only on the Orders tab');
   await ownerTab('Settings').click();
   await admin.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
   // Owners' Settings follows p. 10: owner card from the membership name, alert and privacy switches, Log out.
@@ -379,7 +381,7 @@ const prepareCart = async (page, add = true) => {
       const categoryWrites = [], reorderCalls = [];
       let categoryReloadGate = null, failCategoryReload = false;
       const joined = dish => ({ ...dish, menu_categories: groups.find(group => group.id === dish.category_id) });
-      const historical = { ...savedOrder, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
+      const historical = { ...savedOrder, order_number: `${slug === 'ammu-sammu' ? 'AMS' : 'KDI'}-2026110001`, status: 'placed', business_id: businessId, order_items: dishes.map(dish => ({ menu_item_id: dish.id, name: dish.name, diet: dish.diet, quantity: 1, unit_price_paise: dish.price_paise, line_total_paise: dish.price_paise })) };
       await dietContext.addInitScript(({ slug, session }) => {
         if (localStorage.getItem('diet-fixture-initialized')) return;
         localStorage.setItem('diet-fixture-initialized', 'yes');
@@ -511,7 +513,7 @@ const prepareCart = async (page, add = true) => {
       }
       await adminPage.setViewportSize({ width: 390, height: 844 });
       console.log(`PASS: ${slug} owner shell brand logo/fonts isolation and responsive bottom tabs`);
-      await adminPage.getByRole('button', { name: /^Details for #/ }).click();
+      await adminPage.getByRole('button', { name: `Details for ${historical.order_number}`, exact: true }).click();
       await assertMarks(adminPage);
       await adminPage.getByRole('button', { name: 'Close', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
@@ -731,9 +733,9 @@ const prepareCart = async (page, add = true) => {
     const istDay = offset => new Date(Date.now() + 19800000 + offset * 86400000).toISOString().slice(0, 10);
     let realtimeFail = false, gate = null, orderGets = 0, summaryFail = false, summaryGate = null; const summaryCalls = [];
     const ids = n => `40000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
-    const ref = n => `#${n.toString(16).toUpperCase().padStart(6, '0')}`;
+    const ref = n => `${slug === 'ammu-sammu' ? 'AMS' : 'KDI'}-202611${String(n).padStart(4, '0')}`;
     const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
-    const row = (n, status, customer, address, minutes, lines) => ({ id: ids(n), business_id: businessId, customer_id: userId, status, version: 1, subtotal_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0), delivery_fee_paise: 3000, total_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0) + 3000, customer_name: customer, customer_phone: '9876543210', delivery_address_line: address, created_at: ago(minutes), order_items: lines.map(([name, quantity, unit], i) => ({ menu_item_id: `20000000-0000-4000-8000-00000000010${i}`, name, quantity, unit_price_paise: unit, line_total_paise: quantity * unit })), order_status_history: [{ status: 'placed', created_at: ago(minutes) }] });
+    const row = (n, status, customer, address, minutes, lines) => ({ order_number: ref(n), id: ids(n), business_id: businessId, customer_id: userId, status, version: 1, subtotal_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0), delivery_fee_paise: 3000, total_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0) + 3000, customer_name: customer, customer_phone: '9876543210', delivery_address_line: address, created_at: ago(minutes), order_items: lines.map(([name, quantity, unit], i) => ({ menu_item_id: `20000000-0000-4000-8000-00000000010${i}`, name, quantity, unit_price_paise: unit, line_total_paise: quantity * unit })), order_status_history: [{ status: 'placed', created_at: ago(minutes) }] });
     let db = [
       row(0x1A1, 'placed', 'Priya Kadam', 'Station Road, Khed, Ratnagiri, Maharashtra 415709', 2, [['Veg thali', 2, 15000], ['Sol kadhi', 1, 10000]]),
       row(0x1A2, 'placed', 'Amit Jadhav', 'Bharne Naka', 6, [['Chicken thali', 1, 25000], ['Ukadiche modak (4 pcs)', 2, 12000]]),
@@ -848,7 +850,7 @@ const prepareCart = async (page, add = true) => {
       await tabs.getByRole('button', { name: 'Orders, 2 new', exact: true }).waitFor();
       await tabs.getByRole('button', { name: /^Today/ }).click(); await tabs.getByRole('button', { name: /^Orders/ }).click();
       await accept(0x1A7).waitFor(); await accept(0x1A6).waitFor();
-      assert.equal(await page.getByRole('group', { name: /^Order #/ }).count(), 2, 'no duplicate cards');
+      assert.equal(await page.getByRole('group', { name: /^Order (AMS|KDI)-/ }).count(), 2, 'no duplicate cards');
       assert.equal(joined.size, 1, 'exactly one orders subscription after tab switches');
       assert.equal(activeSubscriptions(), 1);
       await page.close();
@@ -868,7 +870,7 @@ const prepareCart = async (page, add = true) => {
       await pill('Live').waitFor();
       await accept(0x1A8).waitFor();
       assert.equal(await page.getByText('Live updates paused.', { exact: false }).count(), 0);
-      assert.equal(await page.getByRole('group', { name: /^Order #/ }).count(), 3, 'reconnect keeps every card once');
+      assert.equal(await page.getByRole('group', { name: /^Order (AMS|KDI)-/ }).count(), 3, 'reconnect keeps every card once');
       assert.equal(activeSubscriptions(), 1, 'reconnect leaves exactly one subscription');
       // ---- Order details (#101) ----
       await mkdir('/tmp/review101', { recursive: true });
@@ -1049,3 +1051,131 @@ if (!categoriesOnly) await import('./account.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
 if (!categoriesOnly) await import('./owner-menu.mjs');
 if (!categoriesOnly) await import('./owner58.mjs');
+
+}
+if (!categoriesOnly) await tracking47();
+
+/** Customer tracking (#47), exercising the shared screen through each built brand. */
+async function tracking47() {
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  await mkdir('dist/browser', { recursive: true });
+  try {
+    for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
+      if (selectedBrand && slug !== selectedBrand) continue;
+      const server = await serveWeb(`apps/${slug}-customer/dist/web`);
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+      const origin = 'https://market-fixture.supabase.co';
+      const businessId = slug === 'ammu-sammu' ? '10000000-0000-4000-8000-000000000001' : '10000000-0000-4000-8000-000000000002';
+      const userId = '30000000-0000-4000-8000-000000000001', orderId = '40000000-0000-4000-8000-000000000047';
+      const prefix = slug === 'ammu-sammu' ? 'AMS' : 'KDI', brandName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
+      const reference = `${prefix}-20261110000`;
+      const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'tracking@example.test', app_metadata: {}, user_metadata: {}, identities: [], created_at: '2026-11-01T00:00:00Z' };
+      const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+      const token = `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ sub: userId, role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000047', exp: Math.floor(Date.now() / 1000) + 3600 })}.${part('synthetic-signature')}`;
+      const session = { access_token: token, refresh_token: 'tracking-refresh', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user };
+      const placed = '2026-11-16T06:30:00Z';
+      let contactPhone = '+919876543210';
+      let order = { id: orderId, order_number: reference, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Tracking customer', customer_phone: '+919000000000', delivery_address_line: 'House 5, Station Road, Khed', latitude: 17.719, longitude: 73.397, created_at: placed, order_items: [{ menu_item_id: '20000000-0000-4000-8000-000000000001', diet: 'veg', name: 'Tracking thali', quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: placed }] };
+      const joined = new Map(), errors = [], unexpected = [];
+      let orderReads = 0, navigations = 0;
+      await ctx.addInitScript(({ slug, session }) => {
+        localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:customer`, JSON.stringify(session));
+        window.__trackingPermissionRequests = 0;
+        if ('Notification' in window) Notification.requestPermission = () => { window.__trackingPermissionRequests++; return Promise.resolve('denied'); };
+      }, { slug, session });
+      await ctx.routeWebSocket(/.*/, socket => {
+        const entry = { socket, array: true, closed: false };
+        socket.onClose(() => { entry.closed = true; });
+        socket.onMessage(message => {
+          const data = JSON.parse(String(message)); entry.array = Array.isArray(data);
+          const [join, ref, topic, event, payload] = entry.array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
+          if (event === 'phx_join' && topic.includes('orders:')) joined.set(topic, entry);
+          if (event === 'phx_leave') joined.delete(topic);
+          if (['phx_join', 'phx_leave', 'heartbeat'].includes(event)) {
+            const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+            socket.send(JSON.stringify(entry.array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
+          }
+        });
+      });
+      const liveSubscriptions = () => [...joined.values()].filter(entry => !entry.closed).length;
+      const pushStatus = (status, createdAt) => {
+        order = { ...order, status, version: order.version + 1, order_status_history: [...order.order_status_history, { status, created_at: createdAt }] };
+        for (const [topic, entry] of joined) if (!entry.closed) {
+          const payload = { ids: [1], data: { schema: 'public', table: 'orders', type: 'UPDATE', commit_timestamp: createdAt, columns: [], record: { id: orderId, status }, old_record: null, errors: null } };
+          entry.socket.send(JSON.stringify(entry.array ? [null, null, topic, 'postgres_changes', payload] : { topic, event: 'postgres_changes', payload, ref: null }));
+        }
+      };
+      await ctx.route('**/*', route => { const url = new URL(route.request().url()); if (url.origin === origin || url.hostname === '127.0.0.1') return route.fallback(); return route.abort(); });
+      await ctx.route(origin + '/**', async route => {
+        const url = new URL(route.request().url());
+        const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        if (url.pathname === '/auth/v1/token') return json(session);
+        if (url.pathname === '/auth/v1/user') return json(user);
+        if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name: brandName, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: contactPhone });
+        if (url.pathname === '/rest/v1/menu_items' || url.pathname === '/rest/v1/menu_categories') return json([]);
+        if (url.pathname === '/rest/v1/orders') { orderReads++; return json(url.searchParams.has('id') ? order : [order]); }
+        unexpected.push(route.request().method() + ' ' + url.pathname); return json([]);
+      });
+      try {
+        const page = await ctx.newPage(); page.on('pageerror', error => errors.push(error.message));
+        page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
+        await page.goto(`${server.url}/orders/${orderId}`, { waitUntil: 'networkidle' });
+        const visible = text => page.getByText(text, { exact: true }).filter({ visible: true });
+        await visible(`Order ${reference}`).waitFor();
+        await visible('Your order is with the restaurant').waitFor();
+        for (const stage of ['Order placed · Current', 'Accepted by the restaurant · Pending', 'Being prepared · Pending', 'Out for delivery · Pending', 'Delivered · Pending']) await visible(stage).waitFor();
+        assert.equal(await visible('Good food starts here.').count(), 0);
+        assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
+        assert.equal(await page.evaluate(() => window.__trackingPermissionRequests), 0, 'tracking never requests notification consent automatically');
+        await page.getByRole('button', { name: 'Turn on order updates', exact: true }).click();
+        await visible('Notifications are not available yet.').waitFor();
+        assert.equal(liveSubscriptions(), 1, 'one order subscription serves the tracking screen');
+        const initialNavigations = navigations, initialReads = orderReads;
+        pushStatus('accepted', '2026-11-16T06:32:00Z');
+        await visible('The restaurant accepted your order').waitFor();
+        await page.getByText(/16 Nov.*12:02/).filter({ visible: true }).waitFor();
+        pushStatus('preparing', '2026-11-16T06:35:00Z');
+        await visible('Your food is being prepared').waitFor();
+        await visible('Being prepared · Current').waitFor();
+        await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `dist/browser/${slug}-tracking-mobile.png`, fullPage: true });
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.screenshot({ path: `dist/browser/${slug}-tracking-desktop.png`, fullPage: true });
+        pushStatus('out_for_delivery', '2026-11-16T06:50:00Z');
+        await visible('Your food is on its way').waitFor();
+        pushStatus('delivered', '2026-11-16T07:05:00Z');
+        await visible('Your food has arrived').waitFor();
+        await visible('Paid in cash: ₹170').waitFor();
+        await page.getByText(/^Arrived .*Took 35 minutes$/).filter({ visible: true }).waitFor();
+        await visible('Tracking customer · House 5, Station Road, Khed').waitFor();
+        await visible('Order this again').waitFor();
+        assert.equal(await page.getByRole('button', { name: 'Turn on order updates', exact: true }).count(), 0, 'no consent prompt on terminal order');
+        assert.equal(navigations, initialNavigations, 'all transitions arrived without page navigation/reload');
+        assert.ok(orderReads > initialReads); assert.equal(liveSubscriptions(), 1);
+        await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `dist/browser/${slug}-tracking-delivered.png`, fullPage: true });
+        // A separate cancelled order exercises the other terminal presentation.
+        order = { ...order, id: '40000000-0000-4000-8000-000000000048', order_number: `${prefix}-20261110001`, status: 'cancelled', version: 2, order_status_history: [{ status: 'placed', created_at: placed }, { status: 'cancelled', created_at: '2026-11-16T06:34:00Z' }] };
+        await page.goto(`${server.url}/orders/${order.id}`, { waitUntil: 'networkidle' });
+        await visible('The restaurant cancelled your order').waitFor();
+        await visible('You don’t need to pay anything. Nothing is owed.').waitFor();
+        await page.getByText(/^Cancelled .*12:04/).filter({ visible: true }).waitFor();
+        await visible('Order again').waitFor();
+        assert.equal(await visible('Total: ₹170').evaluate(el => getComputedStyle(el).textDecorationLine), 'line-through');
+        assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
+        await visible(`Order ${prefix}-20261110001`).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `dist/browser/${slug}-tracking-cancelled.png`, fullPage: true });
+        // Missing contact stays honest, and refresh/reload never manufactures a dialer target.
+        contactPhone = null;
+        await page.reload({ waitUntil: 'networkidle' });
+        await visible('Restaurant phone is unavailable. Please try Help & support.').waitFor();
+        assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).count(), 0);
+        assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
+        console.log(`PASS: ${slug} #47 tracking number, five stages/times, one realtime subscription, live transitions, delivered cash/duration/address, cancellation, call/missing phone, consent gesture and narrow/wide screenshots`);
+      } catch (error) {
+        await ctx.pages()[0]?.screenshot({ path: `dist/browser/${slug}-tracking-failure.png`, fullPage: true }).catch(() => {});
+        throw error;
+      } finally { await ctx.close(); await server.close(); }
+    }
+  } finally { await browser.close(); }
+}

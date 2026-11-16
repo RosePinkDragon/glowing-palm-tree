@@ -25,3 +25,32 @@ export async function readHistoryPages(read: (options?: OrderPageOptions) => Pro
   } while (nextCursor && (pages < depth || !coversTail()));
   return { orders, nextCursor, pages };
 }
+
+/** Customer timeline deliberately consumes only public status/timestamp history. */
+export const trackingStages = [
+  { status: 'placed', label: 'Order placed' },
+  { status: 'accepted', label: 'Accepted by the restaurant' },
+  { status: 'preparing', label: 'Being prepared' },
+  { status: 'out_for_delivery', label: 'Out for delivery' },
+  { status: 'delivered', label: 'Delivered' },
+] as const;
+export function trackingTimeline(order: Order) {
+  const current = trackingStages.findIndex(stage => stage.status === order.status);
+  return trackingStages.map((stage, index) => ({ ...stage,
+    time: order.history?.find(event => event.status === stage.status)?.createdAtISO ?? (stage.status === 'placed' ? order.createdAtISO : null),
+    state: order.status === 'cancelled' ? 'stopped' : index < current ? 'complete' : index === current ? 'current' : 'pending',
+  }));
+}
+export function terminalTime(order: Order): string | null {
+  return order.history?.find(event => event.status === order.status)?.createdAtISO ?? null;
+}
+export function deliveryMinutes(order: Order): number | null {
+  const arrival = terminalTime(order);
+  const elapsed = arrival ? Date.parse(arrival) - Date.parse(order.createdAtISO) : NaN;
+  return Number.isFinite(elapsed) && elapsed >= 0 ? Math.round(elapsed / 60000) : null;
+}
+export const trackingHeadlines: Record<Order['status'], string> = {
+  placed: 'Your order is with the restaurant', accepted: 'The restaurant accepted your order',
+  preparing: 'Your food is being prepared', out_for_delivery: 'Your food is on its way',
+  delivered: 'Your food has arrived', cancelled: 'The restaurant cancelled your order',
+};

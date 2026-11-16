@@ -1,14 +1,14 @@
 import { useRef, useState } from 'react';
-import { Linking, Platform, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order } from '@market/core';
-import { MarketButton, MarketStatus, MarketText } from './components';
+import { MarketButton, MarketLinkButton, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
 import { MarketLine, MarketSection } from './MarketList';
 import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
 import type { OwnerOrdersState } from './OwnerOrders';
-import { MarketIcon, type MarketIconName } from './MarketIcons';
+import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 type Tone = 'primary' | 'secondary' | 'danger';
@@ -21,20 +21,6 @@ export function ActionButton({ label, name, tone = 'secondary', grow, disabled, 
   return <Pressable accessibilityRole="button" accessibilityLabel={name ?? label} accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ flex: grow ? 1 : undefined, minHeight: 48, minWidth: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: filled ? fill : colors.border, backgroundColor: filled ? fill : colors.surface, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 })}>
     <Text style={{ color: filled ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
   </Pressable>;
-}
-
-/** A link styled as a 48px button. Web gets a real anchor (tel:/https:); native opens the URL through Linking. */
-function LinkButton({ label, name, href, tone = 'secondary', external, icon }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary'; external?: boolean; icon?: MarketIconName }) {
-  const { colors } = useMarketTheme();
-  const fonts = useMarketFonts();
-  const [failed, setFailed] = useState(false);
-  const primary = tone === 'primary';
-  const web = Platform.OS === 'web';
-  return <View style={{ gap: 4 }}>
-    <Text accessibilityRole="link" accessibilityLabel={name ?? label} {...(web ? ({ href, ...(external ? { hrefAttrs: { target: '_blank', rel: 'noopener noreferrer' } } : {}) } as object) : { onPress: () => { setFailed(false); Linking.openURL(href).catch(() => setFailed(true)); } })}
-      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{icon ? <><MarketIcon inline name={icon} color={primary ? colors.onPrimary : colors.ink} size={16} />{' '}</> : null}{label}</Text>
-    {failed ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>Could not open this link on this device.</Text> : null}
-  </View>;
 }
 
 /**
@@ -57,7 +43,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       : <MarketStatus kind="empty" title="This order is no longer available" message="It may have been removed. Go back to the Orders list." />}
   </AccessiblePanel>;
 
-  const reference = orderReference(order.id);
+  const reference = (order.orderNumber ?? orderReference(order.id));
   const busy = queue.busyIds.has(order.id);
   const locked = busy || queue.demo;
   const next = nextAction(order.status);
@@ -84,12 +70,12 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
           <Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{order.delivery.name}</Text>
           <MarketText variant="muted">{order.delivery.phone}</MarketText>
         </View>
-        {call ? <View style={{ minWidth: 96 }}><LinkButton tone="primary" icon="phone" label="Call" name={`Call ${order.delivery.name}`} href={call} /></View> : null}
+        {call ? <View style={{ minWidth: 96 }}><MarketLinkButton tone="primary" icon="phone" label="Call" name={`Call ${order.delivery.name}`} href={call} /></View> : null}
       </View>
       {!call ? <MarketText variant="muted">This phone number can't be dialled. Check it before calling.</MarketText> : null}
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}><MarketIcon name="pin" color={colors.muted} nudge={3} /><View style={{ flex: 1 }}><MarketText>{order.delivery.addressLine}</MarketText></View></View>
-        {maps ? <LinkButton external icon="map" label="Open in Maps" href={maps} /> : null}
+        {maps ? <MarketLinkButton external icon="map" label="Open in Maps" href={maps} /> : null}
       </View>
     </MarketSection>
     <MarketSection title="Items">

@@ -172,7 +172,7 @@ try {
       console.log(`PASS: ${slug} older open refresh cannot override closure; disconnected/failed refresh is distinct from closure; explicit reconnect restores live updates`);
 
       await page.goto(`${server.url}/orders/${orderId}`, { waitUntil: 'networkidle' });
-      await button('Reorder order 000002').click(); await dialog.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
+      await button('Order this again for order 000002').click(); await dialog.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
       const beforeReorder = await saved(); await setOpen(false);
       await dialog.getByText(text, { exact: true }).waitFor();
       assert.equal(await dialog.getByRole('button', { name: 'Add to cart', exact: true }).count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Replace cart', exact: true }).count(), 0);
