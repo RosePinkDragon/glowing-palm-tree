@@ -163,6 +163,14 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     if (Platform.OS === 'web') node?.focus?.();
     else { const handle = findNodeHandle(updatesStatus.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
   }, [offer, on]);
+  // A different order is a different visit: forget any earlier tap.
+  const orderId = useRef(order.id);
+  useEffect(() => {
+    if (orderId.current === order.id) return;
+    orderId.current = order.id;
+    tapped.current = false;
+    setAsked(false);
+  }, [order.id]);
   const message = asked ? updates.message : '';
   const showCard = active && offer;
   const copy = statusCopy(order, restaurant, statusHeader, indiaParts, formatINRFromPaise(order.totalPaise), voice);
@@ -179,8 +187,8 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     <Text accessibilityRole="header" aria-level={1} style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>{`Order ${orderName(order)}`}</Text>
     <StatusHeader order={order} eyebrow={copy.eyebrow} title={copy.title} detail={copy.detail} />
     {order.status !== 'delivered' ? <Timeline order={order} /> : null}
-    {/* One wrapper: the tinted card (while offered) and the always-mounted live region share it. An empty wrapper cancels its slot in the parent's gap. */}
-    <View style={showCard ? { gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint } : message ? undefined : { marginTop: -16 }}>
+    {/* One wrapper: the tinted card (while offered) and the always-mounted live region share it. While empty it is absolutely positioned, so it takes no slot in the parent's gap. */}
+    <View style={showCard ? { gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint } : message ? undefined : { position: 'absolute' }}>
       {showCard ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <MarketIcon name="bell" color={colors.updatesIcon} />
         <View style={{ flex: 1 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>Get updates on this order</Text><Text style={{ color: colors.muted, fontSize: 14 }}>A notification at every step</Text></View>
