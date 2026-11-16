@@ -1,13 +1,13 @@
 import { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { formatINRFromPaise, type Order } from '@market/core';
+import { addressTitle, formatINRFromPaise, type Order } from '@market/core';
 import { MarketButton, MarketLinkButton, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
 import { MarketLine, MarketSection } from './MarketList';
 import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
-import { ownerReference, type OwnerOrdersState } from './OwnerOrders';
+import { ownerReference, RemoteOrderFlag, type OwnerOrdersState } from './OwnerOrders';
 import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
@@ -74,7 +74,15 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       </View>
       {!call ? <MarketText variant="muted">This phone number can't be dialled. Check it before calling.</MarketText> : null}
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 10 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}><MarketIcon name="pin" color={colors.muted} nudge={3} /><View style={{ flex: 1 }}><MarketText>{order.delivery.addressLine}</MarketText></View></View>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}><MarketIcon name="pin" color={colors.muted} nudge={3} /><View style={{ flex: 1, gap: 2 }}>
+          {order.address ? <>
+            <MarketText variant="muted">{addressTitle(order.address)}</MarketText>
+            <MarketText>{order.address.house}</MarketText>
+            <MarketText>{order.address.streetArea}</MarketText>
+            {order.address.landmark ? <MarketText variant="muted">{`Landmark: ${order.address.landmark}`}</MarketText> : null}
+          </> : <MarketText>{order.delivery.addressLine}</MarketText>}
+        </View></View>
+        <RemoteOrderFlag order={order} hint />
         {maps ? <MarketLinkButton external icon="map" label="Open in Maps" href={maps} /> : null}
       </View>
     </MarketSection>
