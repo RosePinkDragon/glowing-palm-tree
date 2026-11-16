@@ -12,22 +12,23 @@ create table public.test_number_backfill_expected as
 with rows as (select id,business_id,created_at,to_char(created_at at time zone 'Asia/Kolkata','YYYYMM') ym,
   row_number() over(partition by business_id,to_char(created_at at time zone 'Asia/Kolkata','YYYYMM') order by created_at,id) n from public.orders)
 select id,business_id,created_at,ym,n,(case business_id when '10000000-0000-4000-8000-000000000001'::uuid then 'AMS' else 'KDI' end)||'-'||ym||lpad(n::text,greatest(4,length(n::text)),'0') expected from rows;
+\elif :{?backfill_only}
+-- Upgrade-only (retired with the staged loop in S4): the migration backfilled historical orders deterministically.
+begin;
+select public.test_assert(not exists(select 1 from public.test_number_backfill_expected e join public.orders o using(id) where o.order_number<>e.expected or o.created_at<>e.created_at), 'deterministic historical backfill preserves timestamp and id');
+select public.test_assert((select count(*)=10002 and max(length(order_number))=15 from public.orders where order_number like 'AMS-200111%'), 'backfill beyond 9999 is not truncated');
+select public.test_assert(not exists(select 1 from (select business_id,ym,max(n) n from public.test_number_backfill_expected group by business_id,ym) e left join public.order_number_counters c on c.business_id=e.business_id and c.year_month=e.ym where c.last_number is distinct from e.n),'counter seeds equal highest backfilled sequence');
+rollback;
 \else
 begin;
 create or replace function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %',message; end if; end $$;
--- Applies both to staged upgrades and to clean installs in both PostGIS schemas.
-do $$ begin
-  if to_regclass('public.test_number_backfill_expected') is not null then
-    perform public.test_assert(not exists(select 1 from public.test_number_backfill_expected e join public.orders o using(id) where o.order_number<>e.expected or o.created_at<>e.created_at), 'deterministic historical backfill preserves timestamp and id');
-    perform public.test_assert((select count(*)=10002 and max(length(order_number))=15 from public.orders where order_number like 'AMS-200111%'), 'backfill beyond 9999 is not truncated');
-    perform public.test_assert(not exists(select 1 from (select business_id,ym,max(n) n from public.test_number_backfill_expected group by business_id,ym) e left join public.order_number_counters c on c.business_id=e.business_id and c.year_month=e.ym where c.last_number is distinct from e.n),'counter seeds equal highest backfilled sequence');
-  end if;
-end $$;
 select public.test_assert(not has_table_privilege('authenticated','public.order_number_counters','select,insert,update,delete') and not has_table_privilege('anon','public.order_number_counters','select,insert,update,delete'),'counter table inaccessible to clients');
 select public.test_assert((select relrowsecurity from pg_class where oid='public.order_number_counters'::regclass),'counter RLS enabled');
 select public.test_assert(not has_function_privilege('authenticated','public.assign_order_number()','execute'),'allocator is not a client RPC');
 select public.test_assert(to_regprocedure('public.place_order(text,jsonb,jsonb,jsonb,uuid)') is null and has_function_privilege('authenticated','public.place_order(text,jsonb,jsonb,jsonb,uuid,jsonb)','execute'),'only accepted-pricing RPC remains');
 insert into auth.users(id) values ('34700000-0000-4000-8000-000000000001') on conflict do nothing;
+-- The numbering customer's saved address, inside the fictional square installed below.
+insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source) values ('34700000-0000-4000-8000-000000000001','home','Number house','Synthetic Road',0.5,0.5,'pin');
 create function public.test_number_insert(slug text, placed timestamptz) returns text language plpgsql as $$
 declare result text;
 begin
@@ -66,7 +67,7 @@ end $$;
 update public.menu_items set available=true,is_demo=false where id='20000000-0000-4000-8000-000000000001';
 select set_config('test.number.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,true);
 select set_config('test.number.quote',(select jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',id,'quantity',1,'unit_price_paise',price_paise,'line_total_paise',price_paise)),'delivery_fee_paise',0,'min_order_paise',0,'subtotal_paise',price_paise,'total_paise',price_paise)::text from public.menu_items where id='20000000-0000-4000-8000-000000000001'),true);
-create function public.test_number_place(k uuid, quote jsonb) returns jsonb language sql as $$ select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Number","phone":"123","address_line":"Test"}',current_setting('test.number.fix')::jsonb,k,quote) $$;
+create function public.test_number_place(k uuid, quote jsonb) returns jsonb language sql as $$ select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',public.test_delivery('Number'),current_setting('test.number.fix')::jsonb,k,quote) $$;
 select set_config('test.number.counter',(select coalesce(sum(last_number),0)::text from public.order_number_counters),true);
 set role authenticated;
 select set_config('request.jwt.claim.sub','34700000-0000-4000-8000-000000000001',true);

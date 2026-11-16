@@ -23,3 +23,6 @@ grant select on storage.buckets to anon,authenticated;
 grant all on storage.buckets to service_role;
 -- Exercise the Supabase publication branch too.
 create publication supabase_realtime;
+-- Shared assertion helper for every suite (created before any migration, so it also exists mid-chain).
+create function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %', message; end if; end $$;
+grant execute on function public.test_assert(boolean,text) to anon, authenticated;
