@@ -167,6 +167,7 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/daily-summary.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/saved-addresses.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/restaurant-settings.sql
   # #48: an address edit made while checkout holds the address waits for it, and
   # the order keeps exactly the version it locked. Committed fixture, last step.
   docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
@@ -213,5 +214,6 @@ select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009'
 update public.customer_addresses set house='Edited during checkout' where id='74800000-0000-4000-8000-000000000001';
 SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
+  source tests/database/restaurant-settings-races.sh
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary, order-number and saved-address tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary, order-number, saved-address and restaurant-settings tests passed, including all migrations before seed in both PostGIS schemas.'
