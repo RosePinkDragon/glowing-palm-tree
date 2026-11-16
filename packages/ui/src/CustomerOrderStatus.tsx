@@ -3,7 +3,6 @@ import { AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, View } fr
 import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketLinkButton, MarketText } from './components';
 import { MarketLine, MarketSection } from './MarketList';
-import { MarketPill } from './MarketChips';
 import { MarketIcon } from './MarketIcons';
 import { restorePanelFocus } from './AccessiblePanel';
 import { statusCopy, terminalTime, trackingTimeline } from './order-history';
@@ -28,6 +27,17 @@ const indiaParts = (iso: string) => {
 /** "12:40 pm" today, otherwise "28 Oct, 8:05 pm". */
 export const shortTime = (iso: string) => { const p = indiaParts(iso); return p.today ? p.time : `${p.date}, ${p.time}`; };
 
+/** Amber status pill in letter-spaced capitals (grey once cancelled), customer p. 5 and 25. */
+function StatusPill({ label, cancelled }: { label: string; cancelled: boolean }) {
+  const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const text = cancelled ? colors.muted : colors.warning;
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, minHeight: 24, borderRadius: 12, backgroundColor: cancelled ? colors.neutralTint : colors.warningTint }}>
+    {cancelled ? null : <View aria-hidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.warning }} />}
+    <Text style={{ color: text, fontSize: 12, lineHeight: 18, letterSpacing: 1.2, textTransform: 'uppercase', ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{label}</Text>
+  </View>;
+}
+
 function StatusHeader({ order, eyebrow, title, detail }: { order: Order; eyebrow: string; title: string; detail: string }) {
   const { colors, statusHeader } = useMarketTheme();
   const fonts = useMarketFonts();
@@ -51,7 +61,7 @@ function StatusHeader({ order, eyebrow, title, detail }: { order: Order; eyebrow
     {body(colors.muted, 'center')}
   </View>;
   return <View role="status" accessibilityLiveRegion="polite" style={{ gap: 10, alignItems: 'flex-start' }}>
-    <MarketPill caps label={eyebrow} tone={order.status === 'cancelled' ? 'quiet' : 'warning'} dot={order.status !== 'cancelled'} />
+    <StatusPill label={eyebrow} cancelled={order.status === 'cancelled'} />
     {heading(colors.ink, 30)}
     {body(colors.muted)}
   </View>;
