@@ -707,3 +707,77 @@ test('owner display name reads only the signed-in owner row and falls back to nu
     reply = { display_name: ' Suresh ' }; assert.equal(await service.getOwnerDisplayName(), 'Suresh');
   } finally { service.dispose(); globalThis.fetch = original; }
 });
+
+test('saved-address orders map their snapshot; typed-address and partial rows do not invent one (#48)', () => {
+  const base = { id: 'o', status: 'placed' as const, version: 1, subtotal_paise: 0, delivery_fee_paise: 0, total_paise: 0, customer_name: 'N', customer_phone: 'P', delivery_address_line: '12, Station Road', created_at: '2026-01-01', order_items: [], latitude: 17.7, longitude: 73.4 };
+  const snapshot = { saved_address_id: '74800000-0000-4000-8000-000000000001', address_label: 'other', address_custom_label: 'Aai', address_house: '12', address_street_area: 'Station Road', address_landmark: null, address_location_source: 'pin', placed_from_distance_m: 2400 };
+  const order = mapOrder({ ...base, ...snapshot }, slug);
+  assert.deepEqual(order.address, { label: 'other', customLabel: 'Aai', house: '12', streetArea: 'Station Road', locationSource: 'pin' });
+  assert.equal(order.placedFromDistanceM, 2400);
+  assert.equal(mapOrder({ ...base, ...snapshot, placed_from_distance_m: null }, slug).placedFromDistanceM, null, 'unknown phone distance stays unknown');
+  assert.equal(mapOrder({ ...base, ...snapshot, placed_from_distance_m: -1 }, slug).placedFromDistanceM, null);
+  assert.equal('address' in mapOrder(base, slug), false, 'typed-address order');
+  assert.equal('address' in mapOrder({ ...base, ...snapshot, address_label: 'office' }, slug), false, 'unknown label is not trusted');
+  assert.equal('address' in mapOrder({ ...base, ...snapshot, address_house: null }, slug), false, 'partial snapshot is not trusted');
+});
+
+test('saved addresses: list with server area/distance, versioned save, delete, and saved-pin checkout (#48)', async () => {
+  const originalFetch = globalThis.fetch;
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', session_id: 'customer-session-1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+  const id = '74800000-0000-4000-8000-000000000001';
+  const requests: { method: string; path: string; query: string; body: unknown }[] = [];
+  let listed: unknown = [{ id, label: 'home', custom_label: null, house: '12', street_area: 'Station Road', landmark: 'Near temple', latitude: 17.7, longitude: 73.4, location_source: 'pin', version: 3, updated_at: '2026-11-16T10:00:00Z', in_area: true, distance_m: 1800 }];
+  let updated: unknown = { id, version: 4 };
+  let placeError: Record<string, unknown> | null = null;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
+    requests.push({ method: init?.method ?? 'GET', path: url.pathname, query: url.search, body: init?.body ? JSON.parse(String(init.body)) : null });
+    if (url.pathname.endsWith('/rpc/list_addresses')) return Response.json(listed);
+    if (url.pathname.endsWith('/rpc/place_order')) return placeError ? Response.json(placeError, { status: 400 }) : Response.json({ outcome: 'placed', id: '40000000-0000-4000-8000-000000000001' });
+    if (url.pathname.endsWith('/customer_addresses') && init?.method === 'POST') return Response.json({ id, version: 1 }, { status: 201 });
+    if (url.pathname.endsWith('/customer_addresses') && init?.method === 'PATCH') return Response.json(updated === null ? [] : [updated]);
+    if (url.pathname.endsWith('/customer_addresses') && init?.method === 'DELETE') return new Response(null, { status: 204 });
+    throw new Error(`Unexpected request ${init?.method} ${url}`);
+  };
+  try {
+    const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+    await customer.auth.signIn('customer@example.test', 'password');
+    assert.deepEqual(await customer.listAddresses(), [{ id, label: 'home', house: '12', streetArea: 'Station Road', landmark: 'Near temple', latitude: 17.7, longitude: 73.4, locationSource: 'pin', version: 3, updatedAtISO: '2026-11-16T10:00:00Z', inArea: true, distanceM: 1800 }]);
+    assert.deepEqual(requests.at(-1)?.body, { p_business_slug: slug }, 'area and distance are for this restaurant');
+    listed = [{ id, label: 'home' }];
+    await assert.rejects(customer.listAddresses(), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_RESPONSE');
+
+    const draft = { label: 'other' as const, customLabel: ' Aai ', house: ' 12 ', streetArea: 'Station Road', latitude: 17.7, longitude: 73.4, locationSource: 'gps' as const };
+    assert.deepEqual(await customer.saveAddress(draft), { id, version: 1 });
+    assert.deepEqual(requests.at(-1)?.body, { label: 'other', custom_label: 'Aai', house: '12', street_area: 'Station Road', landmark: null, latitude: 17.7, longitude: 73.4, location_source: 'gps' }, 'owner and version are never sent');
+    const before = requests.length;
+    await assert.rejects(customer.saveAddress({ ...draft, house: ' ' }), (e: unknown) => e instanceof Error && 'fields' in e && 'house' in (e as { fields: object }).fields);
+    assert.equal(requests.length, before, 'invalid drafts make no request');
+    assert.deepEqual(await customer.saveAddress(draft, { id, version: 3 }), { id, version: 4 });
+    assert.match(requests.at(-1)?.query ?? '', /id=eq\.74800000-0000-4000-8000-000000000001/);
+    assert.match(requests.at(-1)?.query ?? '', /version=eq\.3/, 'edit only the version that was opened');
+    updated = null;
+    await assert.rejects(customer.saveAddress(draft, { id, version: 3 }), (e: unknown) => e instanceof ServiceError && e.code === 'ADDRESS_CHANGED');
+    await customer.deleteAddress(id);
+    assert.equal(requests.at(-1)?.method, 'DELETE');
+    await assert.rejects(customer.deleteAddress('nope'), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS');
+
+    const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'category-main', categorySortOrder: 0, pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
+    const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 100, total_paise: 100 };
+    const input = { pricing, lines: [{ item, quantity: 1 }], delivery: { name: 'Priya', phone: '+919876543210', addressLine: 'ignored' }, location: null, idempotencyKey: '64800000-0000-4000-8000-000000000001', savedAddress: { id, version: 3 } };
+    placeError = { code: 'PT412', message: 'saved address changed', details: null, hint: null };
+    await assert.rejects(customer.placeOrder(input), (e: unknown) => e instanceof ServiceError && e.code === 'ADDRESS_CHANGED');
+    const sent = requests.at(-1)?.body as Record<string, unknown>;
+    assert.deepEqual(sent.p_delivery, { name: 'Priya', phone: '+919876543210', address_id: id, address_version: 3 }, 'no typed address with a saved one');
+    assert.equal(sent.p_location, null, 'no phone fix is fine');
+    placeError = { code: '22023', message: 'delivery unavailable', details: null, hint: null };
+    await assert.rejects(customer.placeOrder({ ...input, location: { latitude: 17.71, longitude: 73.41, accuracy: 900, capturedAtISO: '2026-11-16T10:00:00Z' } }), (e: unknown) => e instanceof ServiceError && e.code === 'OUTSIDE_DELIVERY_AREA');
+    assert.deepEqual((requests.at(-1)?.body as Record<string, unknown>).p_location, { latitude: 17.71, longitude: 73.41, accuracy: 900, captured_at: '2026-11-16T10:00:00Z' }, 'phone fix is sent as-is');
+    const calls = requests.length;
+    await assert.rejects(customer.placeOrder({ ...input, savedAddress: { id, version: 0 } }), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS');
+    await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined }), (e: unknown) => e instanceof ServiceError && e.code === 'LOCATION_REQUIRED', 'typed address still needs GPS');
+    assert.equal(requests.length, calls, 'refused before any request');
+    customer.dispose();
+  } finally { globalThis.fetch = originalFetch; }
+});
