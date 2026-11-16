@@ -1048,6 +1048,7 @@ const prepareCart = async (page, add = true) => {
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
 
 if (!categoriesOnly) await import('./account.mjs');
+if (!categoriesOnly) await import('./addresses48.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
 if (!categoriesOnly) await import('./owner-menu.mjs');
 if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); }

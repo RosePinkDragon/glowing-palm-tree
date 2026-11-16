@@ -36,6 +36,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/addresses",
+      "destination": "/index.html"
+    },
+    {
       "source": "/help",
       "destination": "/index.html"
     },

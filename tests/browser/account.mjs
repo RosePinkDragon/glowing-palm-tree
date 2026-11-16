@@ -322,6 +322,7 @@ try {
       if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
       if (url.pathname === '/rest/v1/businesses') return json(business);
       if (url.pathname === '/rest/v1/menu_items') { const hold = fixture.holdMenu; fixture.holdMenu = null; if (hold) { hold.arrived(); await hold.gate; } return json(fixture.menu); }
+      if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]);
       if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
       if (url.pathname === '/rest/v1/orders') {
         queries.push(url);
@@ -434,7 +435,7 @@ try {
       await page.getByText('1 × History meal 1', { exact: false }).first().waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
-      for (const [label, text] of [['Saved addresses', 'Saved addresses are not available yet.'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {
+      for (const [label, text] of [['Saved addresses', 'No saved addresses yet'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {
         await page.getByRole('button', { name: 'Account', exact: true }).click();
         await page.getByRole('button', { name: label, exact: true }).click();
         await page.getByText(text, { exact: false }).waitFor();
