@@ -24,9 +24,13 @@ export function requestDate(chip: TodayChip, picked: string, now?: number | Date
   return chip === 'today' ? undefined : chip === 'yesterday' ? istYesterdayISO(now) : picked;
 }
 /** A picked day must be a real day, not after today (India time). Returns it, or null. */
+/** Earliest pickable day (two years back): typing a year digit by digit never asks for year 0002. */
+export const minPickedDate = (now?: number | Date) => addDaysISO(istDateISO(now), -731);
 export function acceptPickedDate(value: string, now?: number | Date): string | null {
-  return isValidDateISO(value) && value <= istDateISO(now) ? value : null;
+  return isValidDateISO(value) && value <= istDateISO(now) && value >= minPickedDate(now) ? value : null;
 }
+/** Cash figures shrink together as they lengthen, so two columns fit a phone (e.g. ₹1,23,456.50). */
+export const amountFontSize = (...amounts: string[]) => { const longest = Math.max(0, ...amounts.map(text => text.length)); return longest > 11 ? 18 : longest > 9 ? 22 : longest > 7 ? 26 : 30; };
 /** Previous/next day for the native stepper, never beyond today. */
 export const stepPickedDate = (dateISO: string, step: -1 | 1, now?: number | Date): string => {
   const next = addDaysISO(dateISO, step);

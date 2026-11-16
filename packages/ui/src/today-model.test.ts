@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptPickedDate, addDaysISO, cancelledLabel, chipLabel, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, istYesterdayISO, outstandingNote, placedLabel, requestDate, scopeWord, shortDateLabel, stepPickedDate } from './today-model.ts';
+import { acceptPickedDate, addDaysISO, amountFontSize, minPickedDate, cancelledLabel, chipLabel, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, istYesterdayISO, outstandingNote, placedLabel, requestDate, scopeWord, shortDateLabel, stepPickedDate } from './today-model.ts';
 
 const at = (iso: string) => Date.parse(iso);
 
@@ -50,4 +50,18 @@ test('date-scoped labels follow the selected day', () => {
   assert.equal(deliveredNote(1, '2026-11-10', now), '1 order delivered on 10 Nov');
   assert.equal(outstandingNote(6), '6 open orders · all dates');
   assert.equal(outstandingNote(1), '1 open order · all dates');
+});
+
+test('picked days stay within two years back and cash figures shrink to fit two columns', () => {
+  const now = Date.parse('2026-11-13T06:00:00Z');
+  assert.equal(minPickedDate(now), '2024-11-12');
+  assert.equal(acceptPickedDate('0202-11-10', now), null, 'a half-typed year never reaches the server');
+  assert.equal(acceptPickedDate('2024-11-11', now), null);
+  assert.equal(acceptPickedDate('2024-11-12', now), '2024-11-12');
+  assert.equal(addDaysISO('2028-02-28', 1), '2028-02-29');
+  assert.equal(istDateISO(Date.parse('2026-12-31T18:30:00Z')), '2027-01-01');
+  assert.equal(amountFontSize('₹4,260', '₹2,210'), 30);
+  assert.equal(amountFontSize('₹1,880.50', '₹2,210'), 26);
+  assert.equal(amountFontSize('₹10,880.50', '₹2,210'), 22);
+  assert.equal(amountFontSize('₹1,23,456.50', '₹2,210'), 18);
 });

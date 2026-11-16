@@ -5,7 +5,7 @@ import { ServiceError, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
 import { useMarketFonts, useMarketTheme } from './theme';
-import { acceptPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
+import { scopeWord, acceptPickedDate, amountFontSize, minPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
 const rupees = (paise: number) => { try { return formatINRFromPaise(paise).replace(/\.00$/, ''); } catch { return '₹0'; } };
 
@@ -27,7 +27,7 @@ function DatePicker({ value, onChange }: { value: string; onChange: (dateISO: st
   if (Platform.OS === 'web') return <View style={{ gap: 6 }}>
     <Text nativeID="today-date-label" style={{ color: colors.muted, fontSize: 14, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>Choose a day</Text>
     {createElement('input', {
-      type: 'date', value, max: today, 'aria-labelledby': 'today-date-label', 'aria-label': 'Choose a day',
+      type: 'date', value, max: today, min: minPickedDate(), 'aria-labelledby': 'today-date-label', 'aria-label': 'Choose a day',
       onChange: (event: { target: { value: string } }) => { const next = acceptPickedDate(event.target.value); if (next) onChange(next); },
       style: { minHeight: 48, boxSizing: 'border-box', padding: '0 14px', fontSize: 16, color: colors.ink, backgroundColor: colors.surface, border: `1px solid ${colors.inputBorder}`, borderRadius: 14, fontFamily: fonts.body ?? 'inherit' },
     })}
@@ -71,7 +71,8 @@ export function OwnerToday({ services }: { services: MarketServices }) {
       if (current !== request.current) return;
       setSummary(null);
       if (e instanceof ServiceError && e.code === 'ADMIN_REQUIRED') setState('denied'); else setState('error');
-      setError(e instanceof Error ? e.message : 'Please try again.');
+      // Our own access message is safe to show; anything else gets a fixed, friendly line.
+      setError(e instanceof ServiceError && e.code === 'ADMIN_REQUIRED' ? e.message : 'Check your connection and try again.');
     }
   }, [services, date]);
   useEffect(() => { if (demo) return; void load(); return () => { request.current++; }; }, [load, demo, attempt]);
@@ -79,11 +80,14 @@ export function OwnerToday({ services }: { services: MarketServices }) {
   // Light text on the dark cash card; bars scale to the most-ordered dish.
   const soft = 'rgba(255,255,255,0.78)';
   const topQuantity = Math.max(1, ...(summary?.topDishes.map(dish => dish.quantity) ?? [1]));
+  const cashSize = summary ? amountFontSize(rupees(summary.collectedPaise), rupees(summary.outstandingPaise)) : 30;
   return <View style={{ gap: 16 }}>
+    {/* Always mounted, so screen readers announce changes to it. */}
+    <Text role="status" aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 }}>{state === 'loading' ? 'Loading summary' : state === 'ready' && summary ? `Showing ${scopeWord(shown)}: ${rupees(summary.collectedPaise)} collected, ${rupees(summary.outstandingPaise)} still to collect.` : ''}</Text>
     <View role="group" aria-label="Choose a day" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {todayChips.map(value => {
         const active = chip === value;
-        return <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'date' && active ? `Pick a date, ${shortDateLabel(picked)} selected` : chipLabel(value, picked)} aria-pressed={active}
+        return <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'date' && active ? `${shortDateLabel(picked)}, picked date` : chipLabel(value, picked)} aria-pressed={active} accessibilityState={{ selected: active }}
           onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }}
           style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: active ? colors.ink : colors.border, backgroundColor: active ? colors.ink : colors.surface }}>
           <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)}</Text>
@@ -95,18 +99,18 @@ export function OwnerToday({ services }: { services: MarketServices }) {
     {state === 'loading' ? <MarketStatus kind="loading" title="Loading summary" /> : null}
     {state === 'denied' ? <MarketStatus kind="error" title="Owner access needed" message={error || 'Your admin access changed. Sign in again to see the summary.'} /> : null}
     {state === 'error' ? <MarketStatus kind="error" title="Could not load the summary" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => setAttempt(n => n + 1)} />} /> : null}
-    {state === 'ready' && summary ? <View style={{ gap: 16 }} aria-live="polite">
+    {state === 'ready' && summary ? <View style={{ gap: 16 }}>
       <View style={{ backgroundColor: colors.ink, borderRadius: 18, padding: 18, gap: 12 }}>
         <Text style={{ color: soft, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>CASH</Text>
         <View style={{ flexDirection: 'row', gap: 16 }}>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>{shown === istDateISO() ? 'Collected' : collectedHeading(shown)}</Text>
-            <Bold size={30} color={colors.surface}>{rupees(summary.collectedPaise)}</Bold>
+            <Bold size={cashSize} color={colors.surface}>{rupees(summary.collectedPaise)}</Bold>
             <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{deliveredNote(summary.deliveredCount, shown)}</Text>
           </View>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>Still to collect now</Text>
-            <Bold size={30} color={colors.surface}>{rupees(summary.outstandingPaise)}</Bold>
+            <Bold size={cashSize} color={colors.surface}>{rupees(summary.outstandingPaise)}</Bold>
             <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{outstandingNote(summary.outstandingCount)}</Text>
           </View>
         </View>
