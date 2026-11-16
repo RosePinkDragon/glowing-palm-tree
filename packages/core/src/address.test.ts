@@ -49,10 +49,13 @@ test('remote order flag: saved-address orders only, distance wording and roundin
   assert.equal(flag(undefined), 'Customer location not confirmed');
   assert.equal(flag(0), null);
   assert.equal(flag(150), null, 'at the threshold is near');
-  assert.equal(flag(151), 'Ordered from 150 m away');
-  assert.equal(flag(420), 'Ordered from 400 m away');
+  assert.equal(flag(151), 'Ordered from 200 m away', 'rounds up, never to the 150 m threshold');
+  assert.equal(flag(400), 'Ordered from 400 m away');
+  assert.equal(flag(420), 'Ordered from 450 m away');
   assert.equal(flag(430), 'Ordered from 450 m away');
-  assert.equal(flag(990), 'Ordered from 1.0 km away', 'metres never round up to 1000 m');
+  for (const bad of [NaN, -5, Infinity, -Infinity]) assert.equal(flag(bad), 'Customer location not confirmed');
+  for (const near of [975, 990, 999]) assert.equal(flag(near), 'Ordered from 1.0 km away', 'metres never show 1000 m');
+  assert.equal(flag(9950), 'Ordered from 10 km away');
   assert.equal(flag(1000), 'Ordered from 1.0 km away');
   assert.equal(flag(2449), 'Ordered from 2.4 km away');
   assert.equal(flag(9949), 'Ordered from 9.9 km away');

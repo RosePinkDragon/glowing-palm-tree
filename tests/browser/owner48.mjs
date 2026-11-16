@@ -52,7 +52,7 @@ try {
   await flagIn(card('AMS-2026110002'), 'Customer location not confirmed').waitFor();
   assert.equal(await visible(card('AMS-2026110003').getByText(/Ordered from|not confirmed/)).count(), 0, 'near saved-address order has no flag');
   assert.equal(await visible(card('AMS-2026110004').getByText(/Ordered from|not confirmed/)).count(), 0, 'legacy order never has a flag, whatever its distance');
-  await flagIn(card('AMS-2026110005'), 'Ordered from 400 m away').waitFor();
+  await flagIn(card('AMS-2026110005'), 'Ordered from 450 m away').waitFor();
 
   const details = async (reference, name) => { await visible(page.getByRole('button', { name: `Details for ${reference}`, exact: true })).click(); const heading = visible(page.getByRole('heading', { name, level: 2, exact: true })); await heading.waitFor(); panel = heading.locator('xpath=ancestor::*[.//button[@aria-label="Close"]][1]'); };
   const close = () => visible(page.getByRole('button', { name: 'Close', exact: true })).click();
@@ -70,7 +70,7 @@ try {
   await text('Legacy typed address, Khed').waitFor();
   assert.equal(await visible(panel.getByText(/Ordered from|not confirmed|Landmark:/)).count(), 0); assert.equal(await hint().count(), 0); await close();
   await details('AMS-2026110005', 'Close-by customer');
-  await text('Home').waitFor(); await text('Ordered from 400 m away').waitFor();
+  await text('Home').waitFor(); await text('Ordered from 450 m away').waitFor();
   assert.equal(await visible(panel.getByText(/^Landmark:/)).count(), 0, 'missing landmark is not invented');
   assert.deepEqual(errors, []);
   console.log('PASS: owner queue and details show the structured address and remote-order flag only for saved-address orders');

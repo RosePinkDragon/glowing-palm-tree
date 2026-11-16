@@ -90,14 +90,14 @@ export const remoteOrderThresholdM = 150;
 /**
  * Owner-facing remote-order flag (#48). Only orders placed with a saved address carry one:
  * a measured distance above the threshold reads "Ordered from N km away" (one decimal under 10 km,
- * whole km otherwise, metres rounded to 50 under 1 km); an unknown distance says so; otherwise null.
+ * whole km otherwise, metres rounded up to the next 50 under 1 km); an unknown distance says so; otherwise null.
  */
 export function remoteOrderFlag(order: { address?: unknown; placedFromDistanceM?: number | null }): string | null {
   if (!order.address) return null;
   const distance = order.placedFromDistanceM;
   if (distance === null || distance === undefined || !Number.isFinite(distance) || distance < 0) return 'Customer location not confirmed';
   if (distance <= remoteOrderThresholdM) return null;
-  const metres = Math.round(distance / 50) * 50;
+  const metres = Math.ceil(distance / 50) * 50;
   if (metres < 1000) return `Ordered from ${metres} m away`;
   const tenths = Math.round(distance / 100) / 10;
   return `Ordered from ${tenths >= 10 ? Math.round(distance / 1000) : tenths.toFixed(1)} km away`;
