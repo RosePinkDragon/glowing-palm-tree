@@ -324,6 +324,17 @@ const prepareCart = async (page, add = true) => {
   const notifications = admin.getByRole('switch', { name: 'Notifications', exact: true });
   await notifications.waitFor(); assert.equal(await notifications.isChecked(), false);
   assert.equal(await admin.getByRole('switch', { name: 'Share app usage', exact: true }).isChecked(), false);
+  // One key press is one toggle on a switch that stays enabled while it saves (Enter comes from
+  // react-native-web's press handling, Space from MarketSwitch), so a double toggle would show here.
+  const usage = admin.getByRole('switch', { name: 'Share app usage', exact: true });
+  await usage.focus(); await admin.keyboard.press('Enter');
+  await admin.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Share app usage"]')?.getAttribute('aria-checked') === 'true');
+  await admin.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Share app usage"]')?.getAttribute('aria-busy') !== 'true');
+  assert.equal(await usage.isChecked(), true, 'Enter toggles once');
+  await admin.keyboard.press('Space');
+  await admin.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Share app usage"]')?.getAttribute('aria-checked') === 'false');
+  await admin.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Share app usage"]')?.getAttribute('aria-busy') !== 'true');
+  assert.equal(await usage.isChecked(), false, 'Space toggles once');
   await admin.getByText('Phone numbers, delivery fee, minimum order', { exact: true }).filter({ visible: true }).waitFor();
   await admin.getByText('Who can manage Ammu Sammu', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await admin.getByText('Coming soon', { exact: true }).filter({ visible: true }).count(), 4, 'restaurant, owners, ring and test alert are announced');
