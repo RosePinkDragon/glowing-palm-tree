@@ -33,4 +33,7 @@ do $$ declare s text; begin
   for s in select slug from public.businesses where slug in ('ammu-sammu', 'kokani-dine-inn') and kitchen_location is not null loop
     perform public.set_delivery_radius(s, 12000, 'Owner decision 16 Nov 2026: deliver within 12 km of the kitchen');
   end loop;
+  for s in select slug from public.businesses where slug in ('ammu-sammu', 'kokani-dine-inn') and kitchen_location is null loop
+    raise notice '% has no kitchen point; set it, then run set_delivery_radius', s;
+  end loop;
 end $$;
