@@ -57,12 +57,14 @@ export function addressLine(address: Pick<AddressDraft, 'house' | 'streetArea' |
 }
 
 // Same rules as the database (customer_addresses checks), so errors show beside the field:
-// control, zero-width and direction-override characters are refused; ZWJ/ZWNJ stay for Indic scripts.
-const controlCharacters = /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/;
+// control (including the line/paragraph separators Postgres counts as control), zero-width and
+// direction-override characters are refused; ZWJ/ZWNJ stay for Indic scripts.
+const controlCharacters = /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\ufeff]/;
 
 export function validateAddressDraft(input: AddressDraft): AddressDraft {
   const fields: DomainFieldErrors = {};
-  const text = (value: string | undefined) => (value ?? '').trim();
+  // Non-strings (untyped callers) become blank, so they get a field error rather than a TypeError.
+  const text = (value: unknown) => (typeof value === 'string' ? value : '').trim();
   const house = text(input.house), streetArea = text(input.streetArea), landmark = text(input.landmark);
   const customLabel = input.label === 'other' ? text(input.customLabel) : '';
   if (!isAddressLabel(input.label)) fields.label = 'Choose Home, Work or Other.';

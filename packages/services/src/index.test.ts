@@ -729,13 +729,14 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
   let listed: unknown = [{ id, label: 'home', custom_label: null, house: '12', street_area: 'Station Road', landmark: 'Near temple', latitude: 17.7, longitude: 73.4, location_source: 'pin', version: 3, updated_at: '2026-11-16T10:00:00Z', in_area: true, distance_m: 1800 }];
   let updated: unknown = { id, version: 4 };
   let placeError: Record<string, unknown> | null = null;
+  let saveError: Record<string, unknown> | null = null;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'user1', aud: 'authenticated' } });
     requests.push({ method: init?.method ?? 'GET', path: url.pathname, query: url.search, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (url.pathname.endsWith('/rpc/list_addresses')) return Response.json(listed);
     if (url.pathname.endsWith('/rpc/place_order')) return placeError ? Response.json(placeError, { status: 400 }) : Response.json({ outcome: 'placed', id: '40000000-0000-4000-8000-000000000001' });
-    if (url.pathname.endsWith('/customer_addresses') && init?.method === 'POST') return Response.json({ id, version: 1 }, { status: 201 });
+    if (url.pathname.endsWith('/customer_addresses') && init?.method === 'POST') return saveError ? Response.json(saveError, { status: 400 }) : Response.json({ id, version: 1 }, { status: 201 });
     if (url.pathname.endsWith('/customer_addresses') && init?.method === 'PATCH') return Response.json(updated === null ? [] : [updated]);
     if (url.pathname.endsWith('/customer_addresses') && init?.method === 'DELETE') return new Response(null, { status: 204 });
     throw new Error(`Unexpected request ${init?.method} ${url}`);
@@ -759,6 +760,11 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
     assert.match(requests.at(-1)?.query ?? '', /version=eq\.3/, 'edit only the version that was opened');
     updated = null;
     await assert.rejects(customer.saveAddress(draft, { id, version: 3 }), (e: unknown) => e instanceof ServiceError && e.code === 'ADDRESS_CHANGED');
+    for (const [code, message, expected] of [['23514', 'saved address limit reached', 'ADDRESS_LIMIT'], ['23514', 'new row violates check constraint', 'INVALID_ADDRESS'], ['23502', 'null value in column "latitude"', 'INVALID_ADDRESS'], ['42501', 'permission denied for table customer_addresses', 'SIGN_IN_REQUIRED'], ['08006', 'connection failure', '08006']]) {
+      saveError = { code, message, details: null, hint: null };
+      await assert.rejects(customer.saveAddress(draft), (e: unknown) => e instanceof ServiceError && e.code === expected, `${code} ${message}`);
+    }
+    saveError = null;
     await customer.deleteAddress(id);
     assert.equal(requests.at(-1)?.method, 'DELETE');
     await assert.rejects(customer.deleteAddress('nope'), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS');
@@ -772,8 +778,12 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
     assert.deepEqual(sent.p_delivery, { name: 'Priya', phone: '+919876543210', address_id: id, address_version: 3 }, 'no typed address with a saved one');
     assert.equal(sent.p_location, null, 'no phone fix is fine');
     placeError = { code: '22023', message: 'delivery unavailable', details: null, hint: null };
-    await assert.rejects(customer.placeOrder({ ...input, location: { latitude: 17.71, longitude: 73.41, accuracy: 900, capturedAtISO: '2026-11-16T10:00:00Z' } }), (e: unknown) => e instanceof ServiceError && e.code === 'OUTSIDE_DELIVERY_AREA');
+    await assert.rejects(customer.placeOrder({ ...input, location: { latitude: 17.71, longitude: 73.41, accuracy: 900, capturedAtISO: '2026-11-16T10:00:00Z' } }), (e: unknown) => e instanceof ServiceError && e.code === 'DELIVERY_UNAVAILABLE');
     assert.deepEqual((requests.at(-1)?.body as Record<string, unknown>).p_location, { latitude: 17.71, longitude: 73.41, accuracy: 900, captured_at: '2026-11-16T10:00:00Z' }, 'phone fix is sent as-is');
+    // The typed-address checkout must send exactly what it always has: saved attempts retry with this payload.
+    placeError = { code: 'PT409', message: 'restaurant is not accepting orders', details: null, hint: null };
+    await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined, location: { latitude: 17.71, longitude: 73.41, accuracy: 20, capturedAtISO: '2026-11-16T10:00:00Z' } }));
+    assert.deepEqual(requests.at(-1)?.body, { p_business_slug: slug, p_items: [{ menu_item_id: item.id, quantity: 1 }], p_delivery: { name: 'Priya', phone: '+919876543210', address_line: 'ignored' }, p_location: { latitude: 17.71, longitude: 73.41, accuracy: 20, captured_at: '2026-11-16T10:00:00Z' }, p_idempotency_key: '64800000-0000-4000-8000-000000000001', p_accepted_pricing: pricing });
     const calls = requests.length;
     await assert.rejects(customer.placeOrder({ ...input, savedAddress: { id, version: 0 } }), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ADDRESS');
     await assert.rejects(customer.placeOrder({ ...input, savedAddress: undefined }), (e: unknown) => e instanceof ServiceError && e.code === 'LOCATION_REQUIRED', 'typed address still needs GPS');

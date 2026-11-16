@@ -164,14 +164,17 @@ export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): Men
 function orderAddress(row: OrderRow): { address?: OrderAddress; placedFromDistanceM?: number | null } {
   if (!row.saved_address_id || !isAddressLabel(row.address_label) || !isAddressLocationSource(row.address_location_source) || !row.address_house || !row.address_street_area) return {};
   const address: OrderAddress = { label: row.address_label, house: row.address_house, streetArea: row.address_street_area, locationSource: row.address_location_source,
-    ...(row.address_custom_label ? { customLabel: row.address_custom_label } : {}), ...(row.address_landmark ? { landmark: row.address_landmark } : {}) };
+    ...(typeof row.address_custom_label === 'string' && row.address_custom_label ? { customLabel: row.address_custom_label } : {}), ...(typeof row.address_landmark === 'string' && row.address_landmark ? { landmark: row.address_landmark } : {}) };
   const distance = row.placed_from_distance_m;
   return { address, placedFromDistanceM: Number.isSafeInteger(distance) && (distance as number) >= 0 ? distance as number : null };
 }
 type AddressRow = { id: string; label: string; custom_label: string | null; house: string; street_area: string; landmark: string | null; latitude: number; longitude: number; location_source: string; version: number; updated_at: string; in_area: boolean; distance_m: number | null };
 export function mapSavedAddress(row: AddressRow): SavedAddress {
-  if (!row || typeof row.id !== 'string' || !isAddressLabel(row.label) || !isAddressLocationSource(row.location_source) || typeof row.house !== 'string' || typeof row.street_area !== 'string' ||
-      !Number.isFinite(row.latitude) || !Number.isFinite(row.longitude) || !Number.isSafeInteger(row.version) || row.version < 1 || typeof row.in_area !== 'boolean') {
+  const optionalText = (value: unknown) => value === null || value === undefined || typeof value === 'string';
+  if (!row || typeof row.id !== 'string' || !isAddressLabel(row.label) || !isAddressLocationSource(row.location_source) || typeof row.house !== 'string' || !row.house.trim() || typeof row.street_area !== 'string' || !row.street_area.trim() ||
+      !optionalText(row.custom_label) || !optionalText(row.landmark) || typeof row.updated_at !== 'string' ||
+      !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90 || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180 ||
+      !Number.isSafeInteger(row.version) || row.version < 1 || typeof row.in_area !== 'boolean') {
     throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid saved address.');
   }
   return { id: row.id, label: row.label, ...(row.custom_label ? { customLabel: row.custom_label } : {}), house: row.house, streetArea: row.street_area, ...(row.landmark ? { landmark: row.landmark } : {}),
@@ -460,7 +463,8 @@ export function createMarketServices(options: ServiceOptions) {
     // Retries must send this exact payload: the server's request hash covers delivery and location.
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
-    if (saved && error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('OUTSIDE_DELIVERY_AREA', 'This address is outside the delivery area. Choose another address.', error);
+    // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
+    if (saved && error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
@@ -484,9 +488,10 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const addressError = (error: { code?: string; message: string } | null, action: string) => {
     if (!error) return;
-    if (error.code === '23514' && /limit/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
-    if (error.code === '23514' || error.code === '22001') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
-    if (error.code === '23502' || error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
+    if (error.code === '23514' && /saved address limit reached/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
+    if (error.code === '23514' || error.code === '23502') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
+    // Signed-out callers run as anon, which has no address access at all.
+    if (error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
     fail(error, action);
   };
   const addressColumns = (draft: AddressDraft) => {
@@ -510,7 +515,8 @@ export function createMarketServices(options: ServiceOptions) {
     if (typeof data.id !== 'string' || !Number.isSafeInteger(data.version)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return the saved address.');
     return { id: data.id, version: data.version };
   };
-  /** Past orders keep their own copy, so deleting never changes them. Already gone counts as deleted. */
+  /** Past orders keep their own copy, so deleting never changes them. Already gone counts as deleted.
+   *  No version check: deleting is confirmed by the customer, whatever was edited elsewhere. */
   const deleteAddress = async (id: string): Promise<void> => {
     if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
     const { error } = await requireClient().from('customer_addresses').delete().eq('id', id);

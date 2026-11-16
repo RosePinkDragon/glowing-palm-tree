@@ -24,6 +24,8 @@ test('address drafts follow the database limits, field by field', () => {
   assert.ok(fieldsOf({ ...draft, house: 'Flat\n3' }).house, 'control characters are refused');
   assert.ok(fieldsOf({ ...draft, streetArea: 'Road\u202eKhed' }).streetArea, 'direction overrides are refused');
   assert.ok(fieldsOf({ ...draft, landmark: 'Near\u200btemple' }).landmark, 'zero-width spaces are refused');
+  assert.ok(fieldsOf({ ...draft, house: 'Flat\u20283' }).house, 'line separators are refused like the database does');
+  assert.ok(fieldsOf({ ...draft, house: 12 as never }).house, 'a non-string is a field error, not a crash');
   assert.deepEqual(fieldsOf({ ...draft, house: '\u0915\u094d\u200d\u0937' }), {}, 'ZWJ in Devanagari is allowed');
   assert.ok(fieldsOf({ ...draft, label: 'office' as never }).label);
   for (const bad of [{ latitude: 91 }, { longitude: -181 }, { latitude: Number.NaN }, { longitude: Number.POSITIVE_INFINITY }, { locationSource: 'typed' as never }]) {
