@@ -1,3 +1,4 @@
+import type { OrderAddress } from './address.ts';
 import type { BusinessSlug } from './index.ts';
 
 export type OrderStatus =
@@ -91,8 +92,12 @@ export interface Order {
   totalPaise: number;
   delivery: DeliveryDetails;
   createdAtISO: string;
-  /** Delivery pin captured at checkout (owner Open in Maps); absent when not stored. #48 will add the structured address/pin. */
+  /** Delivery pin: the saved address's pin (#48) or, on older orders, the phone's GPS at checkout. */
   location?: { latitude: number; longitude: number };
+  /** Copy of the saved address used for this order (#48); absent on orders placed with a typed address. */
+  address?: OrderAddress;
+  /** How far the customer's phone was from the delivery pin when ordering, in metres; null when unknown (#48). */
+  placedFromDistanceM?: number | null;
   /** actorName is the owner's display name snapshot; present only on owner reads (#98). */
   history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }

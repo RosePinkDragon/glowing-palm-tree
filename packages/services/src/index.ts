@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, isDiet, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
@@ -12,7 +12,12 @@ export interface PricingTerms {
   lines: { menu_item_id: string; quantity: number; unit_price_paise: number; line_total_paise: number }[];
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
 }
-export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix; idempotencyKey: string }
+/**
+ * With savedAddress (#48) the server checks that address's pin and snapshots the reviewed
+ * version; delivery.addressLine is not sent and location (the phone, optional) only measures
+ * how far away the customer is. Without it, the typed address and a fresh GPS fix are required.
+ */
+export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix | null; idempotencyKey: string; savedAddress?: { id: string; version: number } }
 /** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
@@ -72,6 +77,9 @@ function orderPageOptions(value: OrderPageOptions): { cursor: OrderCursor | null
 
 /** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
 const NOT_ACCEPTING_ORDERS_SQLSTATE = 'PT409';
+/** SQLSTATE raised by place_order when the reviewed saved address was edited or deleted (#48). */
+const ADDRESS_CHANGED_SQLSTATE = 'PT412';
+const addressChanged = (cause?: unknown) => new ServiceError('ADDRESS_CHANGED', 'This address was changed or removed, maybe in the other app. Check it and try again.', cause);
 
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
@@ -145,15 +153,36 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
 // Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
 type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
 const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
 export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): MenuItem {
   return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
+// Only a complete snapshot becomes a structured address; older typed-address orders keep addressLine alone.
+function orderAddress(row: OrderRow): { address?: OrderAddress; placedFromDistanceM?: number | null } {
+  if (!row.saved_address_id || !isAddressLabel(row.address_label) || !isAddressLocationSource(row.address_location_source) || !row.address_house || !row.address_street_area) return {};
+  const address: OrderAddress = { label: row.address_label, house: row.address_house, streetArea: row.address_street_area, locationSource: row.address_location_source,
+    ...(typeof row.address_custom_label === 'string' && row.address_custom_label ? { customLabel: row.address_custom_label } : {}), ...(typeof row.address_landmark === 'string' && row.address_landmark ? { landmark: row.address_landmark } : {}) };
+  const distance = row.placed_from_distance_m;
+  return { address, placedFromDistanceM: Number.isSafeInteger(distance) && (distance as number) >= 0 ? distance as number : null };
+}
+type AddressRow = { id: string; label: string; custom_label: string | null; house: string; street_area: string; landmark: string | null; latitude: number; longitude: number; location_source: string; version: number; updated_at: string; in_area: boolean; distance_m: number | null };
+export function mapSavedAddress(row: AddressRow): SavedAddress {
+  const optionalText = (value: unknown) => value === null || value === undefined || typeof value === 'string';
+  if (!row || typeof row.id !== 'string' || !isAddressLabel(row.label) || !isAddressLocationSource(row.location_source) || typeof row.house !== 'string' || !row.house.trim() || typeof row.street_area !== 'string' || !row.street_area.trim() ||
+      !optionalText(row.custom_label) || !optionalText(row.landmark) || typeof row.updated_at !== 'string' ||
+      !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90 || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180 ||
+      !Number.isSafeInteger(row.version) || row.version < 1 || typeof row.in_area !== 'boolean') {
+    throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid saved address.');
+  }
+  return { id: row.id, label: row.label, ...(row.custom_label ? { customLabel: row.custom_label } : {}), house: row.house, streetArea: row.street_area, ...(row.landmark ? { landmark: row.landmark } : {}),
+    latitude: row.latitude, longitude: row.longitude, locationSource: row.location_source, version: row.version, updatedAtISO: row.updated_at,
+    inArea: row.in_area, distanceM: Number.isSafeInteger(row.distance_m) && (row.distance_m as number) >= 0 ? row.distance_m : null };
+}
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
 // History columns are explicit: customers may read status and time only (#98).
@@ -426,7 +455,16 @@ export function createMarketServices(options: ServiceOptions) {
   const placeOrder = async (input: PlaceOrderInput): Promise<Order> => {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
-    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery: { name: input.delivery.name, phone: input.delivery.phone, address_line: input.delivery.addressLine }, p_location: { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO }, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
+    const saved = input.savedAddress;
+    if (saved && (typeof saved.id !== 'string' || !orderIdPattern.test(saved.id) || !Number.isSafeInteger(saved.version) || saved.version < 1)) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    if (!saved && !input.location) throw new ServiceError('LOCATION_REQUIRED', 'A recent, accurate location is required.');
+    const fix = input.location && { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO };
+    const p_delivery = saved ? { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version } : { name: input.delivery.name, phone: input.delivery.phone, address_line: input.delivery.addressLine };
+    // Retries must send this exact payload: the server's request hash covers delivery and location.
+    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
+    if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
+    // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
+    if (saved && error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
@@ -439,6 +477,50 @@ export function createMarketServices(options: ServiceOptions) {
       throw new ServiceError('INVALID_RESPONSE', 'The returned order does not match the accepted pricing. Retry recovery before placing another order.');
     }
     return order;
+  };
+  // Saved addresses (#48): the caller's own list, shared by both restaurant apps (RLS),
+  // with in-area and distance worked out by the server for this restaurant.
+  const listAddresses = async (): Promise<SavedAddress[]> => {
+    const { data, error } = await requireClient().rpc('list_addresses', { p_business_slug: slug });
+    fail(error, 'Could not load your saved addresses');
+    if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return your saved addresses.');
+    return (data as AddressRow[]).map(mapSavedAddress);
+  };
+  const addressError = (error: { code?: string; message: string } | null, action: string) => {
+    if (!error) return;
+    if (error.code === '23514' && /saved address limit reached/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
+    if (error.code === '23514' || error.code === '23502') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
+    // Signed-out callers run as anon, which has no address access at all.
+    if (error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
+    fail(error, action);
+  };
+  const addressColumns = (draft: AddressDraft) => {
+    const valid = validateAddressDraft(draft);
+    return { label: valid.label, custom_label: valid.customLabel ?? null, house: valid.house, street_area: valid.streetArea, landmark: valid.landmark ?? null, latitude: valid.latitude, longitude: valid.longitude, location_source: valid.locationSource };
+  };
+  /** Adds an address, or edits one only if it is still at the version the customer was editing. */
+  const saveAddress = async (draft: AddressDraft, current?: { id: string; version: number }): Promise<{ id: string; version: number }> => {
+    const db = requireClient(); const columns = addressColumns(draft);
+    if (!current) {
+      const { data, error } = await db.from('customer_addresses').insert(columns).select('id, version').single();
+      addressError(error, 'Could not save the address');
+      if (!data || typeof data.id !== 'string' || !Number.isSafeInteger(data.version)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return the saved address.');
+      return { id: data.id, version: data.version };
+    }
+    if (typeof current.id !== 'string' || !orderIdPattern.test(current.id) || !Number.isSafeInteger(current.version) || current.version < 1) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    const { data, error } = await db.from('customer_addresses').update(columns).eq('id', current.id).eq('version', current.version).select('id, version').maybeSingle();
+    addressError(error, 'Could not save the address');
+    // No row: deleted, someone else's, or edited elsewhere since it was opened.
+    if (!data) throw addressChanged();
+    if (typeof data.id !== 'string' || !Number.isSafeInteger(data.version)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return the saved address.');
+    return { id: data.id, version: data.version };
+  };
+  /** Past orders keep their own copy, so deleting never changes them. Already gone counts as deleted.
+   *  No version check: deleting is confirmed by the customer, whatever was edited elsewhere. */
+  const deleteAddress = async (id: string): Promise<void> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    const { error } = await requireClient().from('customer_addresses').delete().eq('id', id);
+    addressError(error, 'Could not delete the address');
   };
   const transitionOrder = async (orderId: string, status: OrderStatus, expectedVersion: number): Promise<Order> => {
     await loadOrder(orderId); // Reject orders outside the active business before mutating.
@@ -506,7 +588,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

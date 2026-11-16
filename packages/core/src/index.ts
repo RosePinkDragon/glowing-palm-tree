@@ -15,6 +15,8 @@ export {
   validateDeliveryDetails,
   validateLocationFix,
 } from './domain.ts';
+export { addressLabels, addressLine, addressTitle, isAddressLabel, isAddressLocationSource, validateAddressDraft } from './address.ts';
+export type { AddressDraft, AddressLabel, AddressLocationSource, OrderAddress, SavedAddress } from './address.ts';
 export type {
   CartLine,
   DailySummary,
