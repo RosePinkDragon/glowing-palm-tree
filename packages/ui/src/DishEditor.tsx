@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { MarketSwitch } from './MarketSwitch';
 import { MarketGroup, MarketRow } from './MarketList';
@@ -148,7 +148,6 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
     </AccessiblePanel> : null}
   </AccessiblePanel>;
 }
-
 
 function MenuPhotoEditor({ item, services, onSaved, onClose }: {
   item: MenuItem; services: MarketServices; onSaved: (message: string) => Promise<void>; onClose: () => void;

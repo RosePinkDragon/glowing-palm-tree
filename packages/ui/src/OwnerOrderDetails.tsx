@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import { Linking, Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';

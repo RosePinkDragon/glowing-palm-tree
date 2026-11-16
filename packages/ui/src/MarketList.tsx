@@ -4,7 +4,9 @@ import { useMarketFonts, useMarketTheme } from './theme';
 
 // Shared owner list building blocks (#116). Two section styles from the owners' screens:
 // MarketGroup (heading above a card of divided rows, p. 10) and MarketSection (heading inside
-// a padded card, p. 5 and p. 11).
+// a padded card, p. 5 and p. 11). MarketSection is the owners' tighter card (16px padding,
+// 20 radius, muted section heading); MarketCard stays the roomier general-purpose card.
+// Pass rows as direct children (not fragments): each child becomes one divided row.
 
 function SectionHeading({ title }: { title: string }) {
   const { colors } = useMarketTheme();
@@ -53,6 +55,6 @@ export function MarketLine({ left, right, bold = false }: { left: ReactNode; rig
   const style = { color: colors.ink, fontSize: 15, lineHeight: 22, ...(bold && fonts.bodyBold ? { fontFamily: fonts.bodyBold } : bold ? { fontWeight: '700' as const } : fonts.body ? { fontFamily: fonts.body } : {}) };
   return <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
     <Text style={[style, { flex: 1 }]}>{left}</Text>
-    {right !== undefined ? typeof right === 'string' ? <Text style={style}>{right}</Text> : right : null}
+    {right !== undefined ? typeof right === 'string' || typeof right === 'number' ? <Text style={style}>{right}</Text> : right : null}
   </View>;
 }
