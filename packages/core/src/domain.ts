@@ -228,3 +228,6 @@ export function validateLocationFix(fix: LocationFix, now = Date.now()): Locatio
   }
   return fix;
 }
+
+/** Owners' day summary (#61): India-time day; cash = orders delivered that day; outstanding = every open order now. */
+export interface DailySummary { dateISO: string; collectedPaise: number; deliveredCount: number; outstandingPaise: number; outstandingCount: number; placedCount: number; cancelledCount: number; topDishes: { name: string; quantity: number }[] }

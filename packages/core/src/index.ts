@@ -17,6 +17,7 @@ export {
 } from './domain.ts';
 export type {
   CartLine,
+  DailySummary,
   DeliveryDetails,
   Diet,
   DomainFieldErrors,

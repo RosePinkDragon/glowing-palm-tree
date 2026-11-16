@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, isDiet, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, isDiet, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
@@ -369,6 +369,17 @@ export function createMarketServices(options: ServiceOptions) {
     if (typeof categoryId !== 'string' || !categoryId.trim()) throw new ServiceError('INVALID_ORDER', 'Choose a category to arrange.');
     return reorder('reorder_menu_items', { p_category_id: categoryId, p_item_ids: itemIds }, itemIds);
   };
+  // dateISO is an India-time calendar day (YYYY-MM-DD); omitted means today.
+  const getDailySummary = async (dateISO?: string): Promise<DailySummary> => {
+    if (dateISO !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO) || new Date(`${dateISO}T00:00:00Z`).toISOString().slice(0, 10) !== dateISO)) throw new ServiceError('INVALID_DATE', 'Choose a valid day.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { data, error } = await db.rpc('daily_summary', { p_business_slug: slug, ...(dateISO ? { p_date: dateISO } : {}) });
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again to see the summary.', error);
+    fail(error, 'Could not load the day summary');
+    const row = data as { date: string; collected_paise: number; delivered_count: number; outstanding_paise: number; outstanding_count: number; placed_count: number; cancelled_count: number; top_dishes: { name: string; quantity: number }[] } | null;
+    if (!row || typeof row.date !== 'string') throw new ServiceError('SUMMARY_UNAVAILABLE', 'The day summary was not returned. Try again.');
+    return { dateISO: row.date, collectedPaise: Number(row.collected_paise), deliveredCount: Number(row.delivered_count), outstandingPaise: Number(row.outstanding_paise), outstandingCount: Number(row.outstanding_count), placedCount: Number(row.placed_count), cancelledCount: Number(row.cancelled_count), topDishes: Array.isArray(row.top_dishes) ? row.top_dishes.map(dish => ({ name: String(dish.name), quantity: Number(dish.quantity) })) : [] };
+  };
   const reorderCategories = (categoryIds: readonly string[]) => reorder('reorder_menu_categories', { p_category_ids: categoryIds }, categoryIds);
   const photoRequest = async (action: 'upload' | 'remove' | 'cleanup', item?: MenuItem, bytes?: ArrayBuffer): Promise<{ cleanupComplete: boolean }> => {
     const db = requireClient();
@@ -485,7 +496,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

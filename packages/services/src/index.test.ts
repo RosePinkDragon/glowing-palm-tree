@@ -648,3 +648,35 @@ test('owner menu switches send availability only and reorders map stale lists to
     await assert.rejects(service.reorderCategories(['cat-1']), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
   } finally { service.dispose(); globalThis.fetch = original; }
 });
+
+test('owner day summary maps the RPC, validates the day and reports lost access', async () => {
+  const original = globalThis.fetch;
+  const bodies: Record<string, unknown>[] = [];
+  let rpcError = '';
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'summary-owner', role: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.signature`;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'summary-owner', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'summary-owner' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-summary', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true });
+    if (url.pathname.endsWith('/business_memberships')) return Response.json({ role: 'admin' });
+    assert.equal(url.pathname, '/rest/v1/rpc/daily_summary');
+    bodies.push(JSON.parse(String(init?.body ?? '{}')));
+    if (rpcError) return new Response(JSON.stringify({ code: rpcError, message: 'Synthetic' }), { status: 400 });
+    return Response.json({ date: '2026-11-10', collected_paise: 43000, delivered_count: 1, outstanding_paise: 31000, outstanding_count: 2, placed_count: 4, cancelled_count: 1, top_dishes: [{ name: 'Misal pav', quantity: 3 }] });
+  };
+  const memory = new Map<string, string>();
+  const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://summary.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: key => memory.get(key) ?? null, setItem: (key, value) => { memory.set(key, value); }, removeItem: key => { memory.delete(key); } } });
+  try {
+    await service.auth.signIn('owner@example.test', 'password');
+    assert.deepEqual(await service.getDailySummary('2026-11-10'), { dateISO: '2026-11-10', collectedPaise: 43000, deliveredCount: 1, outstandingPaise: 31000, outstandingCount: 2, placedCount: 4, cancelledCount: 1, topDishes: [{ name: 'Misal pav', quantity: 3 }] });
+    assert.deepEqual(bodies.at(-1), { p_business_slug: slug, p_date: '2026-11-10' });
+    await service.getDailySummary();
+    assert.deepEqual(bodies.at(-1), { p_business_slug: slug }, 'no day means today on the server, in India time');
+    const before = bodies.length;
+    for (const bad of ['2026-02-30', '10-11-2026', '2026-11-1', '']) await assert.rejects(service.getDailySummary(bad), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_DATE');
+    assert.equal(bodies.length, before, 'invalid days never reach the server');
+    rpcError = '42501';
+    await assert.rejects(service.getDailySummary('2026-11-10'), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
+  } finally { service.dispose(); globalThis.fetch = original; }
+});
