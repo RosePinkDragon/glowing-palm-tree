@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, parseRupees, queueFilters, rupeesInput, shortAddress } from './admin-model.ts';
+import { applyOrderTransition, callLink, canCancel, historyLine, historyNewestFirst, mapsUrl, nextAction, placedLabel, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, parseRupees, queueFilters, rupeesInput, shortAddress } from './admin-model.ts';
 import type { Order } from '@market/core';
 
 test('rupees are converted exactly and invalid or unsafe amounts rejected', () => {
@@ -50,4 +50,35 @@ test('order reference, elapsed time and address summary', () => {
   assert.equal(elapsedLabel('not a date', now), 'just now');
   assert.equal(shortAddress('  Station   Road '), 'Station Road');
   assert.equal(shortAddress('x'.repeat(50), 10), `${'x'.repeat(9)}…`);
+});
+
+test('details next action follows the state machine and terminal orders have none', () => {
+  assert.deepEqual(['placed', 'accepted', 'preparing', 'out_for_delivery'].map(status => nextAction(status as Order['status'])?.label), ['Accept order', 'Start preparing', 'Out for delivery', 'Mark delivered']);
+  assert.deepEqual(['placed', 'accepted', 'preparing', 'out_for_delivery'].map(status => nextAction(status as Order['status'])?.status), ['accepted', 'preparing', 'out_for_delivery', 'delivered']);
+  assert.equal(nextAction('delivered'), null);
+  assert.equal(nextAction('cancelled'), null);
+  assert.deepEqual(['placed', 'accepted', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'].map(status => canCancel(status as Order['status'])), [true, true, true, false, false, false]);
+});
+test('call and maps links are built only from valid data', () => {
+  assert.equal(callLink('98765 43210'), 'tel:+919876543210');
+  assert.equal(callLink('+91 98765 43210'), 'tel:+919876543210');
+  assert.equal(callLink('12345'), null);
+  assert.equal(callLink(''), null);
+  assert.equal(mapsUrl({ latitude: 17.7, longitude: 73.4 }), 'https://www.google.com/maps/search/?api=1&query=17.7,73.4');
+  assert.equal(mapsUrl(undefined), null);
+  assert.equal(mapsUrl({ latitude: 91, longitude: 73 }), null);
+  assert.equal(mapsUrl({ latitude: 17, longitude: Number.NaN }), null);
+});
+test('history lines show the owner snapshot only when present, newest first', () => {
+  assert.equal(historyLine({ status: 'accepted', createdAtISO: '2026-01-01T07:12:00Z', actorName: ' Suresh ' }), 'Accepted by Suresh');
+  assert.equal(historyLine({ status: 'placed', createdAtISO: '2026-01-01T07:10:00Z' }), 'Placed');
+  assert.equal(historyLine({ status: 'out_for_delivery', createdAtISO: '2026-01-01T07:10:00Z', actorName: '  ' }), 'Out for delivery');
+  assert.deepEqual(historyNewestFirst([{ status: 'placed', createdAtISO: '2026-01-01T07:10:00Z' }, { status: 'accepted', createdAtISO: '2026-01-01T07:12:00Z' }]).map(entry => entry.status), ['accepted', 'placed']);
+  assert.deepEqual(historyNewestFirst(undefined), []);
+});
+test('placed label reads today or the date', () => {
+  const now = Date.parse('2026-11-16T12:00:00');
+  assert.match(placedLabel('2026-11-16T09:40:00', now), /^Placed today, \d{1,2}:40 (am|pm)$/);
+  assert.match(placedLabel('2026-11-14T09:40:00', now), /^Placed 14 Nov, \d{1,2}:40 (am|pm)$/);
+  assert.equal(placedLabel('bad', now), 'Placed');
 });
