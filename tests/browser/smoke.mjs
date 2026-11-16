@@ -68,7 +68,7 @@ await context.route(origin + '/**', async route => {
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
-  if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin' } : null);
+  if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin', display_name: 'Suresh Pawar' } : null);
   if (url.pathname === '/rest/v1/rpc/daily_summary') return json({ date: '2026-11-13', collected_paise: 426000, delivered_count: 11, outstanding_paise: 221000, outstanding_count: 6, placed_count: 14, cancelled_count: 1, top_dishes: [{ name: 'Veg thali', quantity: 12 }] });
   if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
   if (url.pathname === '/rest/v1/rpc/place_order') {
@@ -317,15 +317,22 @@ const prepareCart = async (page, add = true) => {
   assert.equal(await admin.getByRole('button', { name: 'Details for #000001' }).count(), 0, 'order cards are only on the Orders tab');
   await ownerTab('Settings').click();
   await admin.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
-  await admin.getByText(user.email, { exact: true }).filter({ visible: true }).waitFor();
-  await admin.getByRole('button', { name: 'Turn notifications on', exact: true }).waitFor();
-  await admin.getByText('Phone numbers, delivery fee and minimum order · Coming soon', { exact: true }).filter({ visible: true }).waitFor();
-  await admin.getByText('Who can manage Ammu Sammu · Coming soon', { exact: true }).filter({ visible: true }).waitFor();
-  assert.equal(await admin.getByRole('button', { name: /Restaurant details|Owners|Coming soon/ }).count(), 0, 'placeholders are not interactive');
+  // Owners' Settings follows p. 10: owner card from the membership name, alert and privacy switches, Log out.
+  await admin.getByRole('heading', { name: 'Suresh Pawar', exact: true }).waitFor();
+  await admin.getByText(`${user.email} · Owner`, { exact: true }).filter({ visible: true }).waitFor();
+  for (const heading of ['RESTAURANT', 'NEW ORDER ALERTS ON THIS PHONE', 'PRIVACY']) await admin.getByRole('heading', { name: heading, exact: true }).waitFor();
+  const notifications = admin.getByRole('switch', { name: 'Notifications', exact: true });
+  await notifications.waitFor(); assert.equal(await notifications.isChecked(), false);
+  assert.equal(await admin.getByRole('switch', { name: 'Share app usage', exact: true }).isChecked(), false);
+  await admin.getByText('Phone numbers, delivery fee, minimum order', { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Who can manage Ammu Sammu', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await admin.getByText('Coming soon', { exact: true }).filter({ visible: true }).count(), 4, 'restaurant, owners, ring and test alert are announced');
+  assert.equal(await admin.getByRole('button', { name: /Restaurant details|Owners|Ring|test alert|Coming soon/ }).count(), 0, 'placeholders are not interactive');
+  assert.equal(await admin.getByRole('button', { name: /Turn (analytics|notifications)/ }).count(), 0, 'the old preference buttons are gone');
   await ownerTab('Orders').click();
   await admin.getByRole('button', { name: 'Done', exact: true }).waitFor();
   await ownerTab('Settings').click();
-  await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await admin.getByRole('button', { name: 'Log out', exact: true }).click();
   await admin.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
   assert.equal(await ownerTabs.count(), 0, 'signing out removes owner tabs');
   await admin.getByText("This app is for Ammu Sammu's owners. Customers order from the Ammu Sammu app.", { exact: true }).filter({ visible: true }).waitFor();
@@ -690,7 +697,7 @@ const prepareCart = async (page, add = true) => {
       const ownerSections = adminPage.getByRole('navigation', { name: 'Owner sections' });
       await adminPage.setViewportSize({ width: 390, height: 844 });
       await ownerSections.getByRole('button', { name: 'Settings', exact: true }).click();
-      await adminPage.getByRole('button', { name: 'Sign out', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Log out', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
       assert.equal(await ownerSections.count(), 0, 'signed-out owners see no tabs');
       await adminPage.getByRole('heading', { name: `${ownerName} kitchen`, exact: true }).waitFor();

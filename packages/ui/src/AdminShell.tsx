@@ -20,7 +20,7 @@ export function AdminShell({ businessId }: { businessId: BusinessSlug }) {
   const account = !demo ? <AuthPanel key={market.identityVersion} market={market} /> : null;
   return <OwnerFrame>
     {signedIn
-      ? <AdminArea key={`${market.session?.user.id ?? 'demo'}:${market.identityVersion}`} services={market.services} banner={banner} account={account} />
+      ? <AdminArea key={`${market.session?.user.id ?? 'demo'}:${market.identityVersion}`} services={market.services} market={demo ? undefined : market} banner={banner} account={account} />
       : <SignedOut banner={banner} account={account} />}
   </OwnerFrame>;
 }

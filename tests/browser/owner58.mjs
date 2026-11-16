@@ -146,7 +146,7 @@ try {
       console.log(`PASS: ${slug} disconnect/retry uses reads only, setup remains developer-controlled, and customer/other-business owners never receive the switch`);
 
       const late = { arrived: deferred(), release: deferred() }; writeGate = late; await control(first.page).click(); await late.arrived.promise;
-      await button(first.page, 'Settings').click(); await button(first.page, 'Sign out').click(); await button(first.page, 'Sign in').waitFor(); assert.equal(await control(first.page).count(), 0);
+      await button(first.page, 'Settings').click(); await button(first.page, 'Log out').click(); await button(first.page, 'Sign in').waitFor(); assert.equal(await control(first.page).count(), 0);
       await visible(first.page.getByLabel('Email', { exact: true })).fill(users[3].email); await visible(first.page.getByLabel('Password', { exact: true })).fill('synthetic-password');
       await button(first.page, 'Sign in').click(); await text(first.page, 'Access denied').waitFor(); late.release.resolve();
       await status(second.page, true); assert.equal(await control(first.page).count(), 0); await text(first.page, 'Access denied').waitFor();
