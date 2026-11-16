@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, PanResponder, Platform, Pressable, Switch, Text, TextInput, View } from 'react-native';
+import { Image, PanResponder, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { MarketSwitch } from './MarketSwitch';
 import { formatINRFromPaise, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
@@ -7,7 +8,7 @@ import { DietMark } from './DietMark';
 import { useMarketTheme } from './theme';
 import { applyCategoryOrder, applyItemOrder, dragTarget, featuredLabel, menuSections, moveId, nextCategoryOrder, sectionSummary, sortCategories, sortMenuItems } from './menu-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
-import { DishEditor, switchColors } from './DishEditor';
+import { DishEditor } from './DishEditor';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const errorCode = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error ? String((error as { code: unknown }).code) : '';
@@ -314,7 +315,7 @@ function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArra
           </View>
         </View>
       </Pressable>
-      <Switch accessibilityLabel={`Available: ${item.name}`} value={item.isAvailable} disabled={switchDisabled} onValueChange={onToggle} {...switchColors} />
+      <MarketSwitch label={`Available: ${item.name}`} value={item.isAvailable} disabled={switchDisabled} onValueChange={onToggle} />
     </View>
     {error ? <Text accessibilityRole="alert" style={{ paddingHorizontal: 12, paddingBottom: 10, color: colors.danger, fontSize: 14, fontWeight: '700' }}>{error}</Text> : null}
     {arranging ? <View style={{ flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingBottom: 12 }}>

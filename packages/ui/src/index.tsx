@@ -7,4 +7,5 @@ export function MarketApp({ businessId, audience }: { businessId: BusinessSlug; 
   return <MarketThemeProvider businessId={businessId}><MarketApplication businessId={businessId} audience={audience} /></MarketThemeProvider>;
 }
 export { BrandLogo, OwnerScreen, OwnerTabBar } from './OwnerShell';
+export { MarketSwitch } from './MarketSwitch';
 export * from './owner-navigation';

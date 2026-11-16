@@ -152,6 +152,14 @@ try {
       assert.deepEqual(patches[1].values, { available: false }); assert.equal(dishes.find(row => row.name === 'Veg thali').available, true);
       await toggle('Fish thali').click(); await text('Fish thali is available to order.').waitFor();
       assert.deepEqual(patches[2].values, { available: true });
+      // The shared switch toggles once per key press (Space and Enter) with a visible focus ring.
+      await toggle('Fish thali').focus(); await page.keyboard.press('Space');
+      await text('Fish thali now shows as currently unavailable.').waitFor(); await page.waitForTimeout(300);
+      assert.equal(patches.length, 4, 'Space toggles exactly once'); assert.deepEqual(patches[3].values, { available: false });
+      assert.notEqual(await toggle('Fish thali').evaluate(node => getComputedStyle(node).outlineStyle), 'none', 'focus is visible');
+      await page.keyboard.press('Enter'); await text('Fish thali is available to order.').waitFor(); await page.waitForTimeout(300);
+      assert.equal(patches.length, 5, 'Enter toggles exactly once'); assert.deepEqual(patches[4].values, { available: true });
+      const switchBox = await toggle('Fish thali').boundingBox(); assert.ok(switchBox.width >= 48 && switchBox.height >= 48, 'switch target is at least 48px');
       console.log(`PASS ${slug} owner menu: availability switch is optimistic, disabled in flight, availability-only and rolls back on failure`);
 
       // 4. Move up/down with the accessible controls, then stale-order recovery.
