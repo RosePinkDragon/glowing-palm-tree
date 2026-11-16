@@ -3,6 +3,12 @@
 -- area/distance, and saved-pin checkout with immutable snapshots. Rolled back.
 begin;
 create or replace function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %',message; end if; end $$;
+-- Owner-supplied kitchen points are installed (by migration or seed), within a metre.
+do $$ declare ns text; ok boolean; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('select count(*) filter (where kitchen_location is not null and %1$I.st_distance(kitchen_location::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1$I.geography) < 1) = 2 from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into ok;
+  perform public.test_assert(ok, 'owner-supplied kitchen points installed');
+end $$;
 -- Fictional test geography only: a 0..1 degree square with the kitchen in the middle.
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
