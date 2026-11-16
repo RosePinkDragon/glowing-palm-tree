@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addressLine, addressTitle, validateAddressDraft, type AddressDraft } from './address.ts';
+import { addressLine, addressTitle, remoteOrderFlag, validateAddressDraft, type AddressDraft } from './address.ts';
 import { DomainValidationError } from './domain.ts';
 
 const draft: AddressDraft = { label: 'home', house: ' 12, Shivaji Nagar ', streetArea: ' Station Road, Khed ', landmark: '  ', latitude: 17.7189, longitude: 73.3961, locationSource: 'pin' };
@@ -40,4 +40,25 @@ test('titles and one-line addresses', () => {
   assert.equal(addressTitle({ label: 'other' }), 'Other');
   assert.equal(addressLine({ house: '12', streetArea: 'Station Road' }), '12, Station Road');
   assert.equal(addressLine({ house: '12', streetArea: 'Station Road', landmark: 'Near temple' }), '12, Station Road, Near temple');
+});
+
+test('remote order flag: saved-address orders only, distance wording and rounding', () => {
+  const address = { label: 'home', house: '1', streetArea: 'Road', locationSource: 'pin' };
+  const flag = (placedFromDistanceM?: number | null, withAddress = true) => remoteOrderFlag({ ...(withAddress ? { address } : {}), placedFromDistanceM });
+  assert.equal(flag(null), 'Customer location not confirmed');
+  assert.equal(flag(undefined), 'Customer location not confirmed');
+  assert.equal(flag(0), null);
+  assert.equal(flag(150), null, 'at the threshold is near');
+  assert.equal(flag(151), 'Ordered from 150 m away');
+  assert.equal(flag(420), 'Ordered from 400 m away');
+  assert.equal(flag(430), 'Ordered from 450 m away');
+  assert.equal(flag(990), 'Ordered from 1.0 km away', 'metres never round up to 1000 m');
+  assert.equal(flag(1000), 'Ordered from 1.0 km away');
+  assert.equal(flag(2449), 'Ordered from 2.4 km away');
+  assert.equal(flag(9949), 'Ordered from 9.9 km away');
+  assert.equal(flag(9960), 'Ordered from 10 km away');
+  assert.equal(flag(12400), 'Ordered from 12 km away');
+  assert.equal(flag(12600), 'Ordered from 13 km away');
+  assert.equal(flag(5000, false), null, 'legacy orders never get a flag');
+  assert.equal(flag(null, false), null);
 });

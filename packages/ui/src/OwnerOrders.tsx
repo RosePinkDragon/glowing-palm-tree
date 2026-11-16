@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
-import { formatINRFromPaise, type Order, type OrderStatus } from '@market/core';
+import { formatINRFromPaise, remoteOrderFlag, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
@@ -113,6 +113,19 @@ function Strong({ children, size = 16, color, align }: { children: ReactNode; si
   const fonts = useMarketFonts();
   return <Text style={{ color: color ?? colors.ink, fontSize: size, lineHeight: Math.round(size * 1.4), textAlign: align, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{children}</Text>;
 }
+/** Remote-order warning (#48): text plus icon on the warning tint, never colour alone. Null when nothing to flag. */
+export function RemoteOrderFlag({ order, hint }: { order: Order; hint?: boolean }) {
+  const { colors } = useMarketTheme();
+  const message = remoteOrderFlag(order);
+  if (!message) return null;
+  return <View role="note" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 10, borderRadius: 12, backgroundColor: colors.warningTint }}>
+    <MarketIcon name="pin" color={colors.warning} nudge={3} />
+    <View style={{ flex: 1, gap: 2 }}>
+      <Text style={{ color: colors.warning, fontSize: 14, lineHeight: 21, fontWeight: '700' }}>{message}</Text>
+      {hint ? <Text style={{ color: colors.warning, fontSize: 14, lineHeight: 21 }}>Call to confirm someone will receive the order and pay cash.</Text> : null}
+    </View>
+  </View>;
+}
 function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Order; now: number; busy: boolean; demo: boolean; onAccept: () => void; onDetails: () => void }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
@@ -131,6 +144,7 @@ function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Ord
         </View>
         <View style={{ alignItems: 'flex-end' }}><Strong size={20} align="right">{formatINRFromPaise(order.totalPaise)}</Strong><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>Cash</Text></View>
       </View>
+      <RemoteOrderFlag order={order} />
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: 'dashed', paddingTop: 12, gap: 4 }}>
         {order.lines.map((line, index) => <MarketText key={`${line.menuItemId}-${index}`}>{`${line.quantity} × ${line.name}`}</MarketText>)}
       </View>
