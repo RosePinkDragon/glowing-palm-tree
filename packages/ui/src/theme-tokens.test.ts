@@ -19,3 +19,15 @@ test('both restaurant themes give switches visible on/off states (WCAG 1.4.11, 3
     assert.equal(switchOn, marketThemes['ammu-sammu'].colors.switchOn, 'the approved green is the same in both brands');
   }
 });
+
+test('pill and chip text stays readable on its background in both themes (WCAG 1.4.3, 4.5:1)', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    const pairs: [string, string, string][] = [
+      ['brand pill', c.primary, c.tint], ['positive pill', c.positive, c.positiveTint], ['neutral pill', c.ink, c.neutralTint],
+      ['quiet pill', c.muted, c.neutralTint], ['outline pill', c.muted, c.surface], ['danger pill', c.danger, c.background],
+      ['selected chip', c.surface, c.ink], ['chip', c.ink, c.surface], ['chip count', c.primary, c.tint], ['selected chip count', c.onPrimary, c.primary],
+    ];
+    for (const [name, text, ground] of pairs) assert.ok(contrastRatio(text, ground) >= 4.5, `${theme.name}: ${name} ${text} on ${ground} = ${contrastRatio(text, ground).toFixed(2)}`);
+  }
+});

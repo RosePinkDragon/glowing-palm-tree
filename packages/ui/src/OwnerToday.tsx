@@ -5,6 +5,7 @@ import { ServiceError, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { MarketSection } from './MarketList';
+import { MarketChip } from './MarketChips';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { scopeWord, acceptPickedDate, amountFontSize, minPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
@@ -88,11 +89,8 @@ export function OwnerToday({ services }: { services: MarketServices }) {
     <View role="group" aria-label="Choose a day" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
       {todayChips.map(value => {
         const active = chip === value;
-        return <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'date' && active ? `${shortDateLabel(picked)}, picked date` : chipLabel(value, picked)} aria-pressed={active} accessibilityState={{ selected: active }}
-          onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }}
-          style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: active ? colors.ink : colors.border, backgroundColor: active ? colors.ink : colors.surface }}>
-          <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)}</Text>
-        </Pressable>;
+        return <MarketChip key={value} selected={active} label={value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)} accessibilityLabel={value === 'date' && active ? `${shortDateLabel(picked)}, picked date` : chipLabel(value, picked)}
+          onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }} />;
       })}
     </View>
     {chip === 'date' ? <DatePicker value={picked} onChange={setPicked} /> : null}

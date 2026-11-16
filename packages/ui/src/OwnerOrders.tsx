@@ -7,6 +7,7 @@ import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ActionButton, OwnerOrderDetails } from './OwnerOrderDetails';
 import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, orderReference, ordersForFilter, queueFilters, shortAddress, statusLabel, type QueueFilter } from './admin-model';
 import { useMarketFonts, useMarketTheme } from './theme';
+import { MarketChip, MarketPill } from './MarketChips';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const tickMs = 30000;
@@ -84,16 +85,10 @@ export function useOwnerOrders(services: MarketServices, enabled: boolean, onNew
 }
 export type OwnerOrdersState = ReturnType<typeof useOwnerOrders>;
 
-const pillColors = { live: { bg: '#E3F1E7', dot: '#2E7D4F', text: '#1F5B37' }, other: { bg: '#EDEAE6', dot: '#6B6B6B', text: '#4A4A4A' } };
 /** Live / Paused indicator for the Orders header. */
 export function OrdersConnectionPill({ connection }: { connection: OrdersConnection }) {
-  const fonts = useMarketFonts();
   const label = { live: 'Live', paused: 'Paused', connecting: 'Connecting', sample: 'Sample' }[connection];
-  const colors = connection === 'live' ? pillColors.live : pillColors.other;
-  return <View role="status" aria-label={`Live updates: ${label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, minHeight: 28, borderRadius: 14, backgroundColor: colors.bg }}>
-    <View aria-hidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.dot }} />
-    <Text style={{ color: colors.text, fontSize: 12, lineHeight: 16, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{label}</Text>
-  </View>;
+  return <MarketPill dot tone={connection === 'live' ? 'positive' : 'quiet'} label={label} status={`Live updates: ${label}`} />;
 }
 
 function useNow() {
@@ -172,10 +167,7 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
       <View role="group" aria-label="Order status filters" style={{ flexDirection: 'row', gap: 8 }}>
         {queueFilters.map(value => {
           const active = filter === value; const count = value === 'complete' ? 0 : counts[value];
-          return <Pressable key={value} accessibilityRole="button" accessibilityLabel={count ? `${filterLabel(value)}, ${count}` : filterLabel(value)} aria-pressed={active} onPress={() => queue.setFilter(value)} style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, borderRadius: 24, borderWidth: 1, borderColor: active ? colors.ink : colors.border, backgroundColor: active ? colors.ink : colors.surface }}>
-            <Text style={{ color: active ? colors.surface : colors.ink, fontSize: 15, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{filterLabel(value)}</Text>
-            {count ? <View aria-hidden style={{ minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.primary : colors.tint }}><Text style={{ color: active ? colors.onPrimary : colors.primary, fontSize: 12, lineHeight: 16, fontWeight: '700' }}>{count}</Text></View> : null}
-          </Pressable>;
+          return <MarketChip key={value} label={filterLabel(value)} accessibilityLabel={count ? `${filterLabel(value)}, ${count}` : filterLabel(value)} selected={active} count={count || undefined} onPress={() => queue.setFilter(value)} />;
         })}
       </View>
     </ScrollView>
