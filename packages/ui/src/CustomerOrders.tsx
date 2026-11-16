@@ -70,7 +70,7 @@ export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: 
   const shown = current?.order ?? (!current?.resolved ? saved : null);
   // The consent offer appears only while the order is in progress and updates are off (existing consent flow).
   const offer = !!shown && activeOrder(shown) && market.preferences.ready && !market.preferences.prefs.push;
-  const updates = { offer, busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage };
+  const updates = { offer, on: market.preferences.prefs.push, busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage };
   return <View style={{ gap: 16 }}>
     {shown ? <OrderStatusView order={shown} restaurant={name} phone={market.businessReady ? phone : undefined} updates={updates} onReorder={onReorder} /> : null}
     {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}

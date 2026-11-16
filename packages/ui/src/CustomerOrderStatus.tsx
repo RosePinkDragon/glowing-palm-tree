@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketLinkButton, MarketText } from './components';
@@ -123,8 +123,8 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 export function OrderStatusView({ order, restaurant, phone, updates, onReorder }: {
   /** undefined while the restaurant is still loading: say nothing about calling yet. */
   order: Order; restaurant: string; phone: string | null | undefined;
-  /** offer: show "Get updates" (order in progress, updates off). message: result of turning them on. */
-  updates: { offer: boolean; busy: boolean; turnOn: () => void; message: string };
+  /** offer: show "Get updates" (order in progress, updates off). on: updates are now on. message: app-wide result, shown only after a tap on this screen. */
+  updates: { offer: boolean; on: boolean; busy: boolean; turnOn: () => void; message: string };
   onReorder?: ReorderAction;
 }) {
   const { colors, statusHeader, voice } = useMarketTheme();
@@ -135,17 +135,28 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
   };
   const updatesStatus = useRef<ComponentRef<typeof View>>(null);
   const tapped = useRef(false);
+  const wasBusy = useRef(false);
+  // Only a tap on this screen during this visit may show the app-wide updates message.
+  const [asked, setAsked] = useState(false);
   const active = order.status !== 'delivered' && order.status !== 'cancelled';
+  const { offer, on, busy } = updates;
+  // A finished attempt that left the offer showing did not succeed: forget the tap.
+  useEffect(() => {
+    if (wasBusy.current && !busy && offer) tapped.current = false;
+    wasBusy.current = busy;
+  }, [busy, offer]);
   // Turning updates on removes the offer (and its focused button): keep focus on the result instead.
   useEffect(() => {
-    if (updates.offer || !tapped.current) return;
+    if (offer || !on || !tapped.current) return;
     tapped.current = false;
     const node = updatesStatus.current as unknown as { focus?: () => void } | null;
     if (Platform.OS === 'web') node?.focus?.();
     else { const handle = findNodeHandle(updatesStatus.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
-  }, [updates.offer]);
+  }, [offer, on]);
+  const message = asked ? updates.message : '';
+  const showCard = active && offer;
   const copy = statusCopy(order, restaurant, statusHeader, indiaParts, formatINRFromPaise(order.totalPaise), voice);
-  const call = (label: string, icon: boolean) => phone === undefined ? null : phone ? <MarketLinkButton tone={icon ? 'brand' : 'secondary'} icon={icon ? 'phone' : undefined} compact={!icon} label={label} name={`Call ${restaurant}`} href={phone} />
+  const call = (label: string, icon: boolean) => phone === undefined ? null : phone ? <MarketLinkButton tone={icon ? 'brand' : 'secondary'} icon={icon ? 'phone' : undefined} compact={!icon} label={label} name={label === 'Call us' ? `Call us, ${restaurant}` : `Call ${restaurant}`} href={phone} />
     : <MarketText variant="muted">Restaurant phone is unavailable. Please try Help & support.</MarketText>;
   const reorder = (label: string) => onReorder ? <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`${label} for order ${orderName(order)}`} onPress={() => onReorder(order, restoreFocus)}
     style={({ pressed }) => ({ flex: 1, minHeight: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: pressed ? 0.85 : 1 })}>
@@ -158,18 +169,21 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     <Text accessibilityRole="header" aria-level={1} style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>{`Order ${orderName(order)}`}</Text>
     <StatusHeader order={order} eyebrow={copy.eyebrow} title={copy.title} detail={copy.detail} />
     {order.status !== 'delivered' ? <Timeline order={order} /> : null}
-    {active && updates.offer ? <View style={{ gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-      <MarketIcon name="bell" color={colors.updatesIcon} />
-      <View style={{ flex: 1 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>Get updates on this order</Text><Text style={{ color: colors.muted, fontSize: 14 }}>A notification at every step</Text></View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Turn on order updates" disabled={updates.busy} onPress={() => { tapped.current = true; updates.turnOn(); }}
-        style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.surface, opacity: updates.busy ? 0.6 : 1 }}>
-        <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '700' }}>Turn on</Text>
-      </Pressable>
-    </View>
-    </View> : null}
-    {/* Always mounted so a result is announced; focusable so focus can land here after the offer closes. */}
-    <View ref={updatesStatus} role="status" accessibilityLiveRegion="polite" {...(Platform.OS === 'web' ? { tabIndex: -1 } as object : {})}>
-      {updates.message ? <Text style={{ color: colors.ink, fontSize: 14, lineHeight: 20 }}>{updates.message}</Text> : null}
+    {/* One wrapper: the tinted card (while offered) and the always-mounted live region share it. An empty wrapper cancels its slot in the parent's gap. */}
+    <View style={showCard ? { gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint } : message ? undefined : { marginTop: -16 }}>
+      {showCard ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <MarketIcon name="bell" color={colors.updatesIcon} />
+        <View style={{ flex: 1 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>Get updates on this order</Text><Text style={{ color: colors.muted, fontSize: 14 }}>A notification at every step</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Turn on order updates" accessibilityState={{ disabled: busy }} aria-disabled={busy}
+          onPress={() => { if (busy) return; tapped.current = true; setAsked(true); updates.turnOn(); }}
+          style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.surface, opacity: busy ? 0.6 : 1 }}>
+          <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '700' }}>Turn on</Text>
+        </Pressable>
+      </View> : null}
+      {/* Always mounted so a result is announced; focusable so focus can land here after the offer closes. */}
+      <View ref={updatesStatus} role="status" accessibilityLiveRegion="polite" accessible={!!message} {...(Platform.OS === 'web' ? { tabIndex: -1 } as object : {})}>
+        {message ? <Text style={{ color: colors.ink, fontSize: 14, lineHeight: 20 }}>{message}</Text> : null}
+      </View>
     </View>
     {active ? <MarketSection title="Order details">
       <DetailRow label={voice === 'we' ? 'Dishes' : 'Items'}>{order.lines.map(line => `${line.quantity} × ${line.name}`).join(', ')}</DetailRow>

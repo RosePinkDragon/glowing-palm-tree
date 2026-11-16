@@ -1130,6 +1130,7 @@ async function tracking47() {
         assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
         assert.equal(await page.evaluate(() => window.__trackingPermissionRequests), 0, 'tracking never requests notification consent automatically');
         await page.getByRole('button', { name: 'Turn on order updates', exact: true }).click();
+        assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), 'BODY', 'focus stays on the button after Turn on');
         await visible('Notifications are not available yet.').waitFor();
         assert.equal(liveSubscriptions(), 1, 'one order subscription serves the tracking screen');
         const initialNavigations = navigations, initialReads = orderReads;
@@ -1168,7 +1169,7 @@ async function tracking47() {
         await visible('Want to know why? The restaurant can tell you.').waitFor();
         await visible('Order again').waitFor();
         assert.equal(await visible('₹170').evaluate(el => getComputedStyle(el).textDecorationLine), 'line-through', 'nothing is owed: the total is struck through');
-        assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
+        assert.equal(await page.getByRole('link', { name: slug === 'kokani-dine-inn' ? `Call us, ${brandName}` : `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
         await visible(`Order ${prefix}-20261110001`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-cancelled.png`, fullPage: true });
         // Missing contact stays honest, and refresh/reload never manufactures a dialer target.
