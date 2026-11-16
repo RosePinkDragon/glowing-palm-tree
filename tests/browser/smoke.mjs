@@ -1064,6 +1064,7 @@ async function tracking47() {
       if (selectedBrand && slug !== selectedBrand) continue;
       const server = await serveWeb(`apps/${slug}-customer/dist/web`);
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+      await ctx.clock.install({ time: new Date('2026-11-16T06:30:30Z') }); // pin fixture clock: fixtures are dated 16 Nov 2026 (12:00 pm IST); time still flows
       const origin = 'https://market-fixture.supabase.co';
       const businessId = slug === 'ammu-sammu' ? '10000000-0000-4000-8000-000000000001' : '10000000-0000-4000-8000-000000000002';
       const userId = '30000000-0000-4000-8000-000000000001', orderId = '40000000-0000-4000-8000-000000000047';
