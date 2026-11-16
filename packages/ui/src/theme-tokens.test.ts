@@ -38,3 +38,10 @@ test('the amber paused banner keeps its title and body readable in both themes (
     for (const [name, text] of [['title', c.warning], ['body', c.ink]] as const) assert.ok(contrastRatio(text, c.warningTint) >= 4.5, `${theme.name}: banner ${name} ${text} on ${c.warningTint}`);
   }
 });
+
+test('the order status band keeps its text readable in both themes (WCAG 1.4.3, 4.5:1)', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    for (const [name, text] of [['eyebrow', c.bandAccent], ['headline and detail', c.onPrimary]] as const) assert.ok(contrastRatio(text, c.primary) >= 4.5, `${theme.name}: band ${name} ${text} on ${c.primary}`);
+  }
+});

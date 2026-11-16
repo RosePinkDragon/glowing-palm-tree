@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Order } from '@market/core';
-import { deliveryMinutes, terminalTime, trackingHeadlines, trackingTimeline, mergeHistory, readHistoryPages } from './order-history.ts';
+import { deliveryMinutes, statusCopy, terminalTime, trackingTimeline, mergeHistory, readHistoryPages } from './order-history.ts';
 
 const order = (id: string, version = 1) => ({ id, version } as Order);
 test('append deduplicates boundaries and never regresses an observed order version', () => {
@@ -51,9 +51,27 @@ test('tracking stages preserve public timestamps, mark current/future stages and
   assert.equal(JSON.stringify(stages).includes('Private owner'), false);
   const done = { ...live, status: 'delivered', history: [...live.history!, { status: 'delivered', createdAtISO: delivered }] } as Order;
   assert.equal(terminalTime(done), delivered); assert.equal(deliveryMinutes(done), 35);
-  assert.equal(trackingHeadlines.delivered, 'Your food has arrived');
   assert.equal(deliveryMinutes({ ...done, history: [] }), null);
   const cancelled = { ...live, status: 'cancelled', history: [{ status: 'cancelled', createdAtISO: accepted }] } as Order;
   assert.equal(terminalTime(cancelled), accepted);
   assert.ok(trackingTimeline(cancelled).every(s => s.state === 'stopped'));
+});
+
+test('status copy follows the order, names the restaurant and says what is owed (customer p. 5, 25, 26)', () => {
+  const at = (iso: string) => ({ time: iso.slice(11, 16), date: iso.slice(0, 10) });
+  const base = { ...order('a'), createdAtISO: '2026-11-16T06:30:00Z', status: 'placed', history: [] } as unknown as Order;
+  const copy = (o: Partial<Order>, header: 'pill' | 'band' = 'pill') => statusCopy({ ...base, ...o } as Order, 'Ammu Sammu', header, at, '₹390');
+  assert.equal(copy({}).detail, "Waiting for Ammu Sammu to accept it. We'll tell you when they do.");
+  const accepted = [{ status: 'accepted' as const, createdAtISO: '2026-11-16T06:32:00Z' }];
+  assert.deepEqual(copy({ status: 'preparing', history: accepted }), { eyebrow: 'In the kitchen', title: 'Your food is being prepared', detail: "Ammu Sammu accepted your order at 06:32. We'll tell you when it leaves the kitchen." });
+  assert.equal(copy({ status: 'preparing' }).detail, "Ammu Sammu accepted your order. We'll tell you when it leaves the kitchen.", 'no invented time');
+  const out = copy({ status: 'out_for_delivery', history: [...accepted, { status: 'out_for_delivery', createdAtISO: '2026-11-16T06:50:00Z' }] }, 'band');
+  assert.equal(out.title, 'Out for delivery'); assert.equal(out.detail, 'Your order left the kitchen at 06:50. Please keep ₹390 ready in cash.');
+  assert.equal(copy({ status: 'out_for_delivery' }).title, 'Your food is on its way');
+  const delivered = { status: 'delivered' as const, history: [{ status: 'delivered' as const, createdAtISO: '2026-11-16T07:07:00Z' }] };
+  assert.equal(copy(delivered).title, 'Delivered. Enjoy!'); assert.equal(copy(delivered, 'band').title, 'Enjoy your meal');
+  assert.equal(copy(delivered).detail, 'Arrived on 2026-11-16 at 07:07, 37 minutes after you ordered.');
+  assert.equal(copy({ status: 'delivered' }).detail, 'Your order was delivered.');
+  assert.equal(copy({ status: 'cancelled', history: [{ status: 'cancelled', createdAtISO: '2026-11-16T06:40:00Z' }] }).detail, "Ammu Sammu cancelled it at 06:40. You don't need to pay anything.");
+  assert.equal(copy({ status: 'cancelled' }).detail, "Ammu Sammu cancelled it. You don't need to pay anything.");
 });

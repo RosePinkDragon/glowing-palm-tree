@@ -142,8 +142,8 @@ const prepareCart = async (page, add = true) => {
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   failCatalog = false;
   await second.getByRole('button', { name: 'Retry loading', exact: true }).click();
-  await second.getByText('Delivery: ₹20 · Total: ₹170', { exact: true }).filter({ visible: true }).waitFor();
-  assert.equal(await second.getByText('Delivery: ₹20 · Total: ₹170', { exact: true }).filter({ visible: true }).count(), 1);
+  await second.getByText('₹170 cash on delivery', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await second.getByText('₹170 cash on delivery', { exact: true }).filter({ visible: true }).count(), 1);
   await second.screenshot({ path: 'dist/browser/customer-confirmed-mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
   console.log('PASS: cross-tab lost-response recovery reuses exact key/payload, survives catalog failure and confirms one server order');
@@ -152,13 +152,13 @@ const prepareCart = async (page, add = true) => {
   // to that receipt while a subsequent server refresh is delayed.
   savedOrder = { ...savedOrder, version: savedOrder.version + 1, status: 'accepted' };
   await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
-  await second.getByText('Status: accepted', { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByText('The restaurant accepted your order', { exact: true }).filter({ visible: true }).waitFor();
   holdOrders = true; orderHeld = false;
   await second.getByRole('button', { name: 'Refresh orders', exact: true }).click();
   for (let i = 0; i < 50 && !orderHeld; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(orderHeld, true);
-  assert.equal(await second.getByText('Status: accepted', { exact: true }).filter({ visible: true }).count(), 1);
-  assert.equal(await second.getByText('Status: placed', { exact: true }).filter({ visible: true }).count(), 0);
+  assert.equal(await second.getByText('The restaurant accepted your order', { exact: true }).filter({ visible: true }).count(), 1);
+  assert.equal(await second.getByText('Your order is with the restaurant', { exact: true }).filter({ visible: true }).count(), 0);
   holdOrders = false; releaseOrders();
   await second.getByText('Refreshing order…', { exact: true }).filter({ visible: true }).waitFor({ state: 'hidden' });
   // Restore the shared fixture for later independent owner transition assertions.
@@ -1123,7 +1123,9 @@ async function tracking47() {
         const visible = text => page.getByText(text, { exact: true }).filter({ visible: true });
         await visible(`Order ${reference}`).waitFor();
         await visible('Your order is with the restaurant').waitFor();
-        for (const stage of ['Order placed · Current', 'Accepted by the restaurant · Pending', 'Being prepared · Pending', 'Out for delivery · Pending', 'Delivered · Pending']) await visible(stage).waitFor();
+        const stage = name => page.getByRole('listitem', { name }).filter({ visible: true });
+        for (const name of [/^Order placed, now, .*12:00 pm$/, /^Accepted by the restaurant, not yet$/, /^Being prepared, not yet$/, /^Out for delivery, not yet$/, /^Delivered, not yet$/]) await stage(name).waitFor();
+        await visible(`Waiting for ${brandName} to accept it. We'll tell you when they do.`).waitFor();
         assert.equal(await visible('Good food starts here.').count(), 0);
         assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
         assert.equal(await page.evaluate(() => window.__trackingPermissionRequests), 0, 'tracking never requests notification consent automatically');
@@ -1133,21 +1135,24 @@ async function tracking47() {
         const initialNavigations = navigations, initialReads = orderReads;
         pushStatus('accepted', '2026-11-16T06:32:00Z');
         await visible('The restaurant accepted your order').waitFor();
-        await page.getByText(/16 Nov.*12:02/).filter({ visible: true }).waitFor();
+        await stage(/^Accepted by the restaurant, now, .*12:02 pm$/).waitFor();
+        await visible(`${brandName} accepted your order at 12:02 pm. They'll start cooking soon.`).waitFor();
         pushStatus('preparing', '2026-11-16T06:35:00Z');
         await visible('Your food is being prepared').waitFor();
-        await visible('Being prepared · Current').waitFor();
+        await stage(/^Being prepared, now, .*12:05 pm$/).waitFor();
+        await visible('Order details').waitFor(); await visible('₹170 cash on delivery').waitFor();
         await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-mobile.png`, fullPage: true });
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.screenshot({ path: `dist/browser/${slug}-tracking-desktop.png`, fullPage: true });
         pushStatus('out_for_delivery', '2026-11-16T06:50:00Z');
-        await visible('Your food is on its way').waitFor();
+        await visible(slug === 'kokani-dine-inn' ? 'Out for delivery' : 'Your food is on its way').first().waitFor();
+        await page.getByText(/left the kitchen at .*Please keep ₹170 ready in cash\.$/).filter({ visible: true }).waitFor();
         pushStatus('delivered', '2026-11-16T07:05:00Z');
-        await visible('Your food has arrived').waitFor();
-        await visible('Paid in cash: ₹170').waitFor();
-        await page.getByText(/^Arrived .*Took 35 minutes$/).filter({ visible: true }).waitFor();
-        await visible('Tracking customer · House 5, Station Road, Khed').waitFor();
+        await visible(slug === 'kokani-dine-inn' ? 'Enjoy your meal' : 'Delivered. Enjoy!').waitFor();
+        await visible('Paid in cash').waitFor(); await visible('₹170').waitFor();
+        await page.getByText(/^Arrived on .* 35 minutes after you ordered\.$/).filter({ visible: true }).waitFor();
+        await visible('House 5, Station Road, Khed').waitFor();
         await visible('Order this again').waitFor();
         assert.equal(await page.getByRole('button', { name: 'Turn on order updates', exact: true }).count(), 0, 'no consent prompt on terminal order');
         assert.equal(navigations, initialNavigations, 'all transitions arrived without page navigation/reload');
@@ -1157,11 +1162,12 @@ async function tracking47() {
         // A separate cancelled order exercises the other terminal presentation.
         order = { ...order, id: '40000000-0000-4000-8000-000000000048', order_number: `${prefix}-20261110001`, status: 'cancelled', version: 2, order_status_history: [{ status: 'placed', created_at: placed }, { status: 'cancelled', created_at: '2026-11-16T06:34:00Z' }] };
         await page.goto(`${server.url}/orders/${order.id}`, { waitUntil: 'networkidle' });
-        await visible('The restaurant cancelled your order').waitFor();
-        await visible('You don’t need to pay anything. Nothing is owed.').waitFor();
-        await page.getByText(/^Cancelled .*12:04/).filter({ visible: true }).waitFor();
+        await visible('This order was cancelled').waitFor();
+        await visible(`${brandName} cancelled it at 12:04 pm. You don't need to pay anything.`).waitFor();
+        await stage(/^Cancelled by the restaurant, cancelled, .*12:04 pm$/).waitFor();
+        await visible('Want to know why? The restaurant can tell you.').waitFor();
         await visible('Order again').waitFor();
-        assert.equal(await visible('Total: ₹170').evaluate(el => getComputedStyle(el).textDecorationLine), 'line-through');
+        assert.equal(await visible('₹170').evaluate(el => getComputedStyle(el).textDecorationLine), 'line-through', 'nothing is owed: the total is struck through');
         assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
         await visible(`Order ${prefix}-20261110001`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-cancelled.png`, fullPage: true });

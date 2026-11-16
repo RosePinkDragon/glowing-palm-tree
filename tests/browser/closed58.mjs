@@ -193,7 +193,7 @@ try {
       assert.ok(uncertain); await setOpen(false); assert.equal(await attempt(), uncertain);
       assert.equal(await button('Retry order recovery').isEnabled(), true, 'closure cannot disable an existing-order recovery');
       mode = 'placed'; await button('Retry order recovery').click();
-      await visible(page.getByText('Status: placed', { exact: true })).waitFor();
+      await visible(page.getByText('Your order is with the restaurant', { exact: true })).waitFor();
       assert.equal(requests.length, beforeRecovery + 1); assert.deepEqual(requests.at(-1), sent, 'recovery resends the original frozen request despite closing');
       await assertEventually(async () => await attempt() === null);
       assert.equal(JSON.parse(await saved()).lines.length, 0);
