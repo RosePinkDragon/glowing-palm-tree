@@ -147,5 +147,52 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-reorder.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/daily-summary.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/saved-addresses.sql
+  # #48: an address edit made while checkout holds the address waits for it, and
+  # the order keeps exactly the version it locked. Committed fixture, last step.
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set is_demo=false,service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''address-race-test-only'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=0,min_order_paise=0 where slug=''ammu-sammu''',ns);
+end $$;
+update public.menu_items set available=true,is_demo=false where id='20000000-0000-4000-8000-000000000001';
+insert into auth.users(id) values ('34800000-0000-4000-8000-000000000009') on conflict do nothing;
+insert into public.customer_addresses(id,customer_id,label,house,street_area,latitude,longitude,location_source)
+  values ('74800000-0000-4000-8000-000000000001','34800000-0000-4000-8000-000000000009','home','Before edit','Race Road',0.4,0.4,'pin');
+SQL
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL' &
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009',true);
+select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Race","phone":"123","address_id":"74800000-0000-4000-8000-000000000001","address_version":1}',null,'64800000-0000-4000-8000-000000000099',
+  jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',0,'min_order_paise',0,'subtotal_paise',m.price_paise,'total_paise',m.price_paise))
+  from public.menu_items m where m.id='20000000-0000-4000-8000-000000000001';
+select pg_sleep(2);
+commit;
+SQL
+  checkout_pid=$!
+  # Wait until the checkout has placed its order and holds the address (it is sleeping).
+  held=false
+  for _ in {1..100}; do
+    if [[ $(docker exec "$container" psql -X -qtA -U postgres -d "$db" -c "select count(*) from pg_stat_activity where state='active' and query like '%pg_sleep(2)%' and pid<>pg_backend_pid()") == 1 ]]; then held=true; break; fi
+    sleep 0.1
+  done
+  if [[ "$held" != true ]]; then echo 'Saved-address checkout race never held the address' >&2; exit 1; fi
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009',false);
+set lock_timeout = '300ms';
+do $$ begin
+  update public.customer_addresses set house='Edited during checkout' where id='74800000-0000-4000-8000-000000000001';
+  raise exception 'address edit did not wait for the open checkout';
+exception when lock_not_available then null; end $$;
+SQL
+  wait "$checkout_pid" || { echo 'Saved-address checkout race failed' >&2; exit 1; }
+  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009',false);
+update public.customer_addresses set house='Edited during checkout' where id='74800000-0000-4000-8000-000000000001';
+SQL
+  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary and order-number tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary, order-number and saved-address tests passed, including all migrations before seed in both PostGIS schemas.'
