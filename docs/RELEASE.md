@@ -35,15 +35,17 @@ A formal GitHub approval requires a distinct eligible reviewer; agent review rep
 
 ## Migration policy (pre-release baseline)
 
-Tracked by issue #131. Current status: `supabase/migrations/` holds a chain of 17 migrations that has not been squashed; the squash is pending completion of #48's schema work. No migration for this application has been applied to any persistent or shared database. Local disposable PostgreSQL/PostGIS runs in tests do not count.
+Tracked by issue #131. Status: `supabase/migrations/` currently holds a chain of 17 migrations that has not been squashed; the squash is pending completion of #48's schema work. No migration for this application has been applied to any persistent or shared database. Local disposable PostgreSQL/PostGIS runs in tests do not count.
 
-The mode lives in `supabase/migration-policy.json` and is enforced by `npm run pr:preflight`:
+The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). It is not yet a CI gate; a follow-up should run it in the trusted delivery-policy workflow.
 
 | Mode | Meaning | Guard |
 | --- | --- | --- |
 | `pre-release-open` (current) | Squash not yet done; feature PRs may still add migration files. | Warns on added migration files. |
 | `pre-release-baseline` | One baseline exists and is not yet applied anywhere persistent. Fold schema changes into it. | Fails when a PR adds a file under `supabase/migrations/`. Override with a `Migration-Policy-Override: <reason>` line in the PR body (or `MIGRATION_POLICY_OVERRIDE=<reason>` in the environment), for example when a shared database has already applied the baseline; then move to `frozen`. |
 | `frozen` | Baseline applied to a persistent or shared environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file; adding new files is allowed. No override. |
+
+In `pre-release-baseline` mode, editing or deleting existing migration files is allowed (the squash needs it). The squash PR flips `pre-release-open` to `pre-release-baseline`; the PR that records the first persistent deployment flips `pre-release-baseline` to `frozen`. Because the mode is read from `main`, a flip takes effect once that PR merges.
 
 Rules:
 
@@ -54,7 +56,7 @@ Rules:
 
 Release-readiness gate before switching to forward-only:
 
-1. Deploy the single baseline to the new, empty Supabase project (step 2 below).
+1. Deploy the single baseline to the new, empty Supabase project (step 2 above).
 2. Verify seed and reference data, security (RLS, tenant isolation, grants, Supabase advisers), roles and memberships, the `menu-photos` storage bucket, Realtime publications, and the critical flows (checkout, order transitions, notifications).
 3. Record the baseline version and commit, set `mode` to `frozen`.
 
