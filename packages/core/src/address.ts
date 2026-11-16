@@ -56,8 +56,9 @@ export function addressLine(address: Pick<AddressDraft, 'house' | 'streetArea' |
   return [address.house, address.streetArea, address.landmark].filter(Boolean).join(', ');
 }
 
-// Same rules as the database (customer_addresses checks), so errors show beside the field.
-const controlCharacters = /[\u0000-\u001f\u007f-\u009f]/;
+// Same rules as the database (customer_addresses checks), so errors show beside the field:
+// control, zero-width and direction-override characters are refused; ZWJ/ZWNJ stay for Indic scripts.
+const controlCharacters = /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/;
 
 export function validateAddressDraft(input: AddressDraft): AddressDraft {
   const fields: DomainFieldErrors = {};
