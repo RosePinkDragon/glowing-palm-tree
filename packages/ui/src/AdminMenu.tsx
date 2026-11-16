@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, PanResponder, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { MarketSwitch } from './MarketSwitch';
+import { MarketPill } from './MarketChips';
 import { formatINRFromPaise, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
@@ -308,9 +309,9 @@ function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArra
           </View>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
             <Text style={{ fontSize: 15, fontWeight: '700', color: off ? colors.muted : colors.ink }}>{formatINRFromPaise(item.pricePaise)}</Text>
-            {item.isFeatured ? <Badge background={colors.tint} color={colors.primary} star>{feature}</Badge> : null}
-            {off ? <Badge background="#ECE6E2" color="#3F3633">Currently unavailable</Badge> : null}
-            {item.isDemo ? <Badge background={colors.surface} color={colors.muted} border={colors.inputBorder}>Sample</Badge> : null}
+            {item.isFeatured ? <MarketPill tone="brand" star label={feature} /> : null}
+            {off ? <MarketPill tone="neutral" label="Currently unavailable" /> : null}
+            {item.isDemo ? <MarketPill tone="outline" label="Sample" /> : null}
             {!item.imageUrl ? <Text style={{ fontSize: 12, color: colors.muted }}>No photo</Text> : null}
           </View>
         </View>
@@ -322,13 +323,6 @@ function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArra
       <SmallButton nativeID={`move-${item.id}-up`} label="↑ Move up" accessibilityLabel={`Move ${item.name} up`} disabled={!canArrange || isFirst} onPress={() => onMove(-1)} />
       <SmallButton nativeID={`move-${item.id}-down`} label="↓ Move down" accessibilityLabel={`Move ${item.name} down`} disabled={!canArrange || isLast} onPress={() => onMove(1)} />
     </View> : null}
-  </View>;
-}
-
-function Badge({ children, background, color, border, star = false }: { children: string; background: string; color: string; border?: string; star?: boolean }) {
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: background, borderWidth: border ? 1 : 0, borderColor: border }}>
-    {star ? <Text accessible={false} aria-hidden style={{ fontSize: 11, color }}>★</Text> : null}
-    <Text style={{ fontSize: 12, lineHeight: 18, fontWeight: '700', color }}>{children}</Text>
   </View>;
 }
 

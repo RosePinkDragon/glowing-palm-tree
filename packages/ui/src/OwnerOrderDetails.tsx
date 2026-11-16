@@ -4,6 +4,7 @@ import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
 import { MarketLine, MarketSection } from './MarketList';
+import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
 import type { OwnerOrdersState } from './OwnerOrders';
@@ -74,9 +75,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
   return <AccessiblePanel fullScreen title={`Order ${reference}`} onClose={onClose} footer={footer}>
     <View style={{ gap: 6 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <View role="status" aria-label={`Status: ${statusLabel(order.status)}`} style={{ paddingHorizontal: 12, minHeight: 28, justifyContent: 'center', borderRadius: 14, backgroundColor: order.status === 'cancelled' ? colors.background : colors.tint, borderWidth: order.status === 'cancelled' ? 1 : 0, borderColor: colors.border }}>
-          <Text style={{ color: order.status === 'cancelled' ? colors.danger : colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' }}>{statusLabel(order.status)}</Text>
-        </View>
+        <MarketPill tone={order.status === 'cancelled' ? 'danger' : 'brand'} label={statusLabel(order.status)} status={`Status: ${statusLabel(order.status)}`} />
         <MarketText variant="muted">{placedLabel(order.createdAtISO, now)}</MarketText>
       </View>
       {terminal ? <MarketText variant="muted">{order.status === 'cancelled' ? 'This order was cancelled. No further actions.' : 'This order was delivered. No further actions.'}</MarketText> : null}

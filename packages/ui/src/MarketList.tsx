@@ -6,7 +6,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
 // MarketGroup (heading above a card of divided rows, p. 10) and MarketSection (heading inside
 // a padded card, p. 5 and p. 11). MarketSection is the owners' tighter card (16px padding,
 // 20 radius, muted section heading); MarketCard stays the roomier general-purpose card.
-// Pass rows as direct children (not fragments): each child becomes one divided row.
+// MarketGroup: pass rows as direct children (not fragments); each child becomes one divided row.
 
 function SectionHeading({ title }: { title: string }) {
   const { colors } = useMarketTheme();
