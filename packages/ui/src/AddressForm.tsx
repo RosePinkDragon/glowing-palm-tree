@@ -59,10 +59,10 @@ export function AddressForm({ editing, save, close }: { editing: SavedAddress | 
     <MarketField label="House, flat or floor" placeholder="e.g. Flat 3, Sai Krupa Apartments" value={form.house} maxLength={120} error={errors.house} autoComplete="address-line1" onChangeText={house => set({ house })} />
     <MarketField label="Street and area" placeholder="e.g. Bharne Naka" value={form.streetArea} maxLength={200} error={errors.streetArea} autoComplete="address-line2" onChangeText={streetArea => set({ streetArea })} />
     <MarketField label="Landmark (optional)" placeholder="e.g. Opposite the Maruti temple" value={form.landmark} maxLength={120} error={errors.landmark} onChangeText={landmark => set({ landmark })} />
-    <View accessibilityRole="radiogroup" style={{ gap: 8 }}>
+    <View accessibilityRole="radiogroup" accessibilityLabel="Save as" style={{ gap: 8 }}>
       <Text style={{ color: colors.ink, fontSize: 15, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>Save as</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {(['home', 'work', 'other'] as AddressLabel[]).map(label => <MarketChip key={label} label={addressLabels[label]} selected={form.label === label} onPress={() => set({ label })} />)}
+        {(['home', 'work', 'other'] as AddressLabel[]).map(label => <MarketChip key={label} label={addressLabels[label]} selected={form.label === label} radio onPress={() => set({ label })} />)}
       </View>
     </View>
     {form.label === 'other' ? <MarketField label="Name this address (optional)" placeholder="e.g. Aai's place" value={form.customLabel} maxLength={40} error={errors.customLabel} onChangeText={customLabel => set({ customLabel })} /> : null}

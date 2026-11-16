@@ -77,7 +77,7 @@ try {
     if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
     if (url.pathname === '/rest/v1/businesses') return json(businesses.find(b => url.searchParams.get('slug') === `eq.${b.slug}`));
     if (url.pathname === '/rest/v1/menu_items') return json(menus[ids.indexOf(url.searchParams.get('business_id')?.replace('eq.', ''))]);
-    if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
+    if (url.pathname === '/rest/v1/rpc/list_addresses') return json([{ id: '48200000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 0.5, longitude: 0.5, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 }]);
     if (url.pathname === '/rest/v1/orders') {
       if (url.searchParams.has('id') && orderLoadFails) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Synthetic saved-order load failure' }) });
       return json(url.searchParams.has('id') ? pricingOrder : pricingOrder ? [pricingOrder] : []);
@@ -119,7 +119,6 @@ try {
   for (let index = 0; index < slugs.length; index++) {
     const page = await open(index); pages.push(page); await add(page); await goCart(page);
     await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Memory-only private name');
-    await page.getByLabel('Delivery address', { exact: true }).filter({ visible: true }).fill('Private address');
     await page.reload({ waitUntil: 'networkidle' });
     await page.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
     assert.equal(await page.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), '');
@@ -213,9 +212,7 @@ try {
   const fillCheckout = async (page = customer) => {
     await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Quote sender');
     await page.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).fill('9876543210');
-    await page.getByLabel('Delivery address', { exact: true }).filter({ visible: true }).fill('Quote private address');
-    await page.getByRole('button', { name: 'Check my delivery location', exact: true }).click();
-    await page.getByText('Delivery location confirmed. Refresh if your location changes.', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByText('Deliver to Home', { exact: true }).filter({ visible: true }).waitFor();
   };
   const quoteTab = await open(0, '/cart');
   await fillCheckout(); await fillCheckout(quoteTab);

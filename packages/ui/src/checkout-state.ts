@@ -1,33 +1,56 @@
 import type { PricingTerms } from '@market/services';
-import type { BusinessSlug, CartLine, DeliveryDetails, LocationFix } from '@market/core';
+import type { BusinessSlug, CartLine, LocationFix } from '@market/core';
 
+/** What the order needs from the customer: contact only. The address comes from the saved address (#48). */
+export interface CheckoutDelivery { name: string; phone: string; /** Legacy (version 1) attempts only. */ addressLine?: string }
+
+/**
+ * The complete order request, frozen before sending. Version 2 (#48) orders to a saved address and carries the
+ * phone's location only when it was available (`null` otherwise). Version 1 is the typed address with a required
+ * fix: it is never created now, but one saved before the upgrade is still recovered, with its exact payload.
+ */
 export interface CheckoutAttempt {
-  version: 1;
+  version: 1 | 2;
   businessId: BusinessSlug;
   userId: string;
   idempotencyKey: string;
   lines: CartLine[];
   pricing: PricingTerms;
-  delivery: DeliveryDetails;
-  location: LocationFix;
+  delivery: CheckoutDelivery;
+  savedAddress?: { id: string; version: number };
+  location: LocationFix | null;
 }
 
 /** Capture the complete request before sending it. A retry must use this snapshot. */
 export function freezeAttempt(input: Omit<CheckoutAttempt, 'version'>): CheckoutAttempt {
-  return JSON.parse(JSON.stringify({ version: 1, ...input })) as CheckoutAttempt;
+  return JSON.parse(JSON.stringify({ ...input, version: input.savedAddress ? 2 : 1 })) as CheckoutAttempt;
 }
+const unreadable = () => new Error('The saved order attempt could not be read. Contact the restaurant before placing another order.');
+const isFix = (value: unknown): value is LocationFix => !!value && typeof value === 'object' && ['latitude', 'longitude', 'accuracy'].every(key => Number.isFinite((value as Record<string, unknown>)[key])) && typeof (value as LocationFix).capturedAtISO === 'string';
+/** Throws for anything unreadable, including a malformed older value; a legacy (version 1) attempt is still valid. */
 export function readAttempt(value: string | null, businessId: BusinessSlug): CheckoutAttempt | null {
   if (!value) return null;
-  const attempt = JSON.parse(value) as CheckoutAttempt;
-  if (attempt.version !== 1 || attempt.businessId !== businessId || !attempt.userId || !attempt.idempotencyKey || !Array.isArray(attempt.lines) || !attempt.delivery || !attempt.location || !attempt.pricing) throw new Error('The saved order attempt could not be read. Contact the restaurant before placing another order.');
+  let attempt: CheckoutAttempt;
+  try { attempt = JSON.parse(value) as CheckoutAttempt; } catch { throw unreadable(); }
+  const common = !!attempt && typeof attempt === 'object' && attempt.businessId === businessId && !!attempt.userId && !!attempt.idempotencyKey && Array.isArray(attempt.lines) && !!attempt.pricing
+    && !!attempt.delivery && typeof attempt.delivery.name === 'string' && typeof attempt.delivery.phone === 'string';
+  const saved = attempt?.savedAddress;
+  const valid = common && (attempt.version === 2
+    ? !!saved && typeof saved.id === 'string' && Number.isSafeInteger(saved.version) && saved.version >= 1 && (attempt.location === null || isFix(attempt.location))
+    : attempt.version === 1 && saved === undefined && isFix(attempt.location) && typeof attempt.delivery.addressLine === 'string');
+  if (!valid) throw unreadable();
   return attempt;
+}
+/** The request exactly as the service sends it; the typed line is only present on a legacy attempt. */
+export function orderInput(attempt: CheckoutAttempt) {
+  return { ...attempt, delivery: { ...attempt.delivery, addressLine: attempt.delivery.addressLine ?? '' } };
 }
 export function attemptKey(businessId: BusinessSlug) { return `market:checkout:${businessId}`; }
 
 /** Only an explicit transactional rejection from the order RPC can release a saved attempt. */
 export function isDefiniteOrderRejection(error: unknown): boolean {
-  // A closed restaurant refuses before anything is written, and a retry of an existing order is returned instead.
-  if (error instanceof Error && 'code' in error && error.code === 'NOT_ACCEPTING_ORDERS') return true;
+  // A closed restaurant, a changed address or one outside the area refuse before anything is written, and a retry of an existing order is returned instead.
+  if (error instanceof Error && 'code' in error && (error.code === 'NOT_ACCEPTING_ORDERS' || error.code === 'ADDRESS_CHANGED' || error.code === 'DELIVERY_UNAVAILABLE')) return true;
   if (!(error instanceof Error) || !('code' in error) || error.code !== '22023') return false;
   return new Set(['delivery unavailable', 'invalid delivery details', 'invalid items', 'invalid item', 'invalid item quantity or duplicate', 'item unavailable', 'invalid order total']).has(error.message.replace(/^Could not place order: /, '')) && error.message.startsWith('Could not place order: ');
 }

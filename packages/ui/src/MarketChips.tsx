@@ -5,12 +5,14 @@ import { useMarketFonts, useMarketTheme } from './theme';
 // contrast of every text/background pair is checked in theme-tokens.test.ts.
 
 /** A selectable filter or day chip: 48px pill button, filled when selected, optional count. */
-export function MarketChip({ label, selected, onPress, accessibilityLabel, count }: {
+export function MarketChip({ label, selected, onPress, accessibilityLabel, count, radio = false }: {
   label: string; selected: boolean; onPress: () => void; accessibilityLabel?: string; count?: number;
+  /** One choice of a group: a radio with aria-checked, for use inside a labelled radiogroup, instead of a pressed toggle button. */
+  radio?: boolean;
 }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} aria-pressed={selected} accessibilityState={{ selected }} onPress={onPress}
+  return <Pressable accessibilityRole={radio ? 'radio' : 'button'} accessibilityLabel={accessibilityLabel ?? label} {...(radio ? { 'aria-checked': selected } : { 'aria-pressed': selected })} accessibilityState={radio ? { checked: selected } : { selected }} onPress={onPress}
     style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: selected ? colors.ink : colors.border, backgroundColor: selected ? colors.ink : colors.surface, opacity: pressed ? 0.85 : 1 })}>
     <Text numberOfLines={1} style={{ color: selected ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
     {count ? <View aria-hidden style={{ minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.primary : colors.tint }}>

@@ -123,7 +123,7 @@ try {
       await button('Use my current location').click();
       await text('Delivery pin set from your phone\'s location.').waitFor();
       await visible(page.getByLabel('Landmark (optional)', { exact: true })).fill('Near the bus stop');
-      await button('Other').click();
+      await visible(page.getByRole('radio', { name: 'Other', exact: true })).click();
       await visible(page.getByLabel('Name this address (optional)', { exact: true })).fill('Friend\'s flat');
       await shot('add');
       fixture.limit = true; await button('Save address').click();
@@ -138,7 +138,10 @@ try {
       await visible(page.getByRole('heading', { name: 'Edit address', exact: true })).waitFor();
       const house = visible(page.getByLabel('House, flat or floor', { exact: true }));
       assert.equal(await house.inputValue(), 'Shop 12');
-      assert.equal(await button('Work').getAttribute('aria-pressed'), 'true');
+      const labels = visible(page.getByRole('radiogroup', { name: 'Save as', exact: true }));
+      assert.equal(await labels.getByRole('radio').count(), 3, 'label chips are radios in a group named Save as');
+      assert.equal(await labels.getByRole('radio', { name: 'Work', exact: true }).getAttribute('aria-checked'), 'true');
+      assert.equal(await labels.getByRole('radio', { name: 'Home', exact: true }).getAttribute('aria-checked'), 'false');
       await house.fill('Shop 14'); await shot('edit');
       fixture.conflict = true; await button('Save address').click();
       await text('This address was changed elsewhere. Reload and try again.').waitFor();
