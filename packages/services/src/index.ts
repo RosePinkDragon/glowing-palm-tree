@@ -4,7 +4,7 @@ import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
-export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
+export interface Business { contactPhone?: string | null; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
 export interface MenuCategory { id: string; businessId: BusinessSlug; name: string; sortOrder: number }
 export interface SaveCategoryInput { id?: string; name: string; sortOrder: number }
 export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
@@ -145,7 +145,7 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
 // Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
 type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
 const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
@@ -153,7 +153,7 @@ export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): Men
   return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
 // History columns are explicit: customers may read status and time only (#98).
@@ -189,10 +189,10 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const getBusiness = async (): Promise<Business> => {
     if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
-    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders').eq('slug', slug).single();
+    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone').eq('slug', slug).single();
     fail(error, 'Could not load business');
     if (!data) throw new ServiceError('NOT_FOUND', 'Business not found.');
-    return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
+    return { contactPhone: data.contact_phone ?? null, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
     if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', categoryId: `sample-category-${slug}`, categorySortOrder: 0, diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];

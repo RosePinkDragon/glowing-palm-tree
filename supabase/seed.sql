@@ -1,7 +1,7 @@
 -- Demonstration catalog only; no service boundary has been verified.
-insert into public.businesses (id, slug, name, is_demo) values
-  ('10000000-0000-4000-8000-000000000001', 'ammu-sammu', 'Ammu Sammu', true),
-  ('10000000-0000-4000-8000-000000000002', 'kokani-dine-inn', 'Kokani Dine Inn', true)
+insert into public.businesses (id, slug, name, is_demo, order_prefix) values
+  ('10000000-0000-4000-8000-000000000001', 'ammu-sammu', 'Ammu Sammu', true, 'AMS'),
+  ('10000000-0000-4000-8000-000000000002', 'kokani-dine-inn', 'Kokani Dine Inn', true, 'KDI')
 on conflict (slug) do nothing;
 insert into public.menu_categories(business_id, name)
 select id, 'Demo' from public.businesses where slug in ('ammu-sammu', 'kokani-dine-inn')

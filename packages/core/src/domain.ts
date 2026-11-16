@@ -80,6 +80,8 @@ export interface OrderLine {
 
 export interface Order {
   id: string;
+  /** Server-assigned restaurant/month reference; absent only on pre-upgrade reads. */
+  orderNumber?: string;
   businessId: BusinessSlug;
   version: number;
   status: OrderStatus;
