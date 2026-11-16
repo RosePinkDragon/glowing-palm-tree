@@ -171,7 +171,13 @@ select pg_sleep(2);
 commit;
 SQL
   checkout_pid=$!
-  sleep 1
+  # Wait until the checkout has placed its order and holds the address (it is sleeping).
+  held=false
+  for _ in {1..100}; do
+    if [[ $(docker exec "$container" psql -X -qtA -U postgres -d "$db" -c "select count(*) from pg_stat_activity where state='active' and query like '%pg_sleep(2)%' and pid<>pg_backend_pid()") == 1 ]]; then held=true; break; fi
+    sleep 0.1
+  done
+  if [[ "$held" != true ]]; then echo 'Saved-address checkout race never held the address' >&2; exit 1; fi
   docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
 set role authenticated;
 select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009',false);

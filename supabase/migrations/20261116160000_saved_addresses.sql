@@ -14,14 +14,15 @@ do $$ declare ns text; begin
 end $$;
 
 -- No business_id: one customer's addresses serve both apps. No PIN code (13 Nov decision).
+-- Text refuses control, zero-width and direction-override characters (ZWJ/ZWNJ stay for Indic scripts).
 create table public.customer_addresses (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   label text not null check (label in ('home','work','other')),
-  custom_label text check (custom_label is null or (label = 'other' and length(custom_label) between 1 and 40 and custom_label !~ '[[:cntrl:]]')),
-  house text not null check (length(house) between 1 and 120 and house !~ '[[:cntrl:]]'),
-  street_area text not null check (length(street_area) between 1 and 200 and street_area !~ '[[:cntrl:]]'),
-  landmark text check (landmark is null or (length(landmark) between 1 and 120 and landmark !~ '[[:cntrl:]]')),
+  custom_label text check (custom_label is null or (label = 'other' and length(custom_label) between 1 and 40 and custom_label !~ '[[:cntrl:]\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]')),
+  house text not null check (length(house) between 1 and 120 and house !~ '[[:cntrl:]\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]'),
+  street_area text not null check (length(street_area) between 1 and 200 and street_area !~ '[[:cntrl:]\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]'),
+  landmark text check (landmark is null or (length(landmark) between 1 and 120 and landmark !~ '[[:cntrl:]\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]')),
   latitude double precision not null check (latitude between -90 and 90),
   longitude double precision not null check (longitude between -180 and 180),
   location_source text not null check (location_source in ('gps','pin')),
@@ -70,13 +71,9 @@ grant insert (label, custom_label, house, street_area, landmark, latitude, longi
   on public.customer_addresses to authenticated;
 grant all on public.customer_addresses to service_role;
 
--- Live sync between the two customer apps; the publication does not bypass RLS.
-do $$ begin
-  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
-     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'customer_addresses') then
-    alter publication supabase_realtime add table public.customer_addresses;
-  end if;
-end $$;
+-- Deliberately not in the realtime publication: Supabase does not apply RLS to
+-- DELETE events, which would tell every subscriber other customers' address ids.
+-- The apps reload the list when it is shown instead.
 
 -- SECURITY DEFINER (PostGIS may live in a schema callers cannot use), so the
 -- caller filter is explicit: a restaurant admin gets only their own addresses as
@@ -194,14 +191,16 @@ begin
     execute format('select %1$I.st_covers($1::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint($2,$3),4326)::%1$I.geography)', spatial_schema)
       into covered using b.service_area, addr.longitude, addr.latitude;
     if not coalesce(covered,false) then raise exception 'delivery unavailable' using errcode='22023'; end if;
-    -- The phone fix never blocks an order: anything missing, malformed, old or
-    -- in the future just leaves the distance unknown.
+    -- The phone fix never blocks an order: anything missing, malformed, coarser
+    -- than 150 m, old or in the future just leaves the distance unknown. It is
+    -- the customer's own claim, so owners treat it as a hint, never as proof.
     begin
       if jsonb_typeof(p_location) = 'object' then
         phone_lat := (p_location->>'latitude')::double precision;
         phone_lon := (p_location->>'longitude')::double precision;
         phone_at := (p_location->>'captured_at')::timestamptz;
         if phone_lat between -90 and 90 and phone_lon between -180 and 180
+           and (p_location->>'accuracy')::double precision between 0 and 150
            and phone_at between clock_timestamp() - interval '10 minutes' and clock_timestamp() + interval '30 seconds' then
           execute format('select %1$I.st_distance(%1$I.st_setsrid(%1$I.st_makepoint($1,$2),4326)::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint($3,$4),4326)::%1$I.geography)', spatial_schema)
             into phone_distance using phone_lon, phone_lat, addr.longitude, addr.latitude;

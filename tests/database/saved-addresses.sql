@@ -26,6 +26,7 @@ select public.test_assert(not has_column_privilege('authenticated','public.custo
 select public.test_assert(not has_function_privilege('anon','public.list_addresses(text)','execute') and has_function_privilege('authenticated','public.list_addresses(text)','execute'),'list_addresses is for signed-in callers only');
 select public.test_assert(not has_function_privilege('authenticated','public.prepare_customer_address()','execute'),'trigger function is not an RPC');
 select public.test_assert(to_regprocedure('public.place_order(text,jsonb,jsonb,jsonb,uuid)') is null,'no extra place_order overload');
+select public.test_assert(not exists(select 1 from pg_publication_tables where tablename='customer_addresses'),'addresses stay out of realtime (DELETE events bypass RLS)');
 
 set role authenticated;
 select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
@@ -47,6 +48,8 @@ do $$ begin
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home',repeat('a',121),'y',0.4,0.4,'pin'); raise exception 'long house accepted'; exception when check_violation then null; end;
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x',repeat('a',201),0.4,0.4,'pin'); raise exception 'long street accepted'; exception when check_violation then null; end;
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x'||chr(10)||'y','y',0.4,0.4,'pin'); raise exception 'control character accepted'; exception when check_violation then null; end;
+  begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x'||chr(8238)||'y','y',0.4,0.4,'pin'); raise exception 'direction override accepted'; exception when check_violation then null; end;
+  begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x'||chr(8203)||'y','y',0.4,0.4,'pin'); raise exception 'zero-width space accepted'; exception when check_violation then null; end;
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x','y',91,0.4,'pin'); raise exception 'bad latitude accepted'; exception when check_violation then null; end;
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x','y','NaN',0.4,'pin'); raise exception 'NaN latitude accepted'; exception when check_violation then null; end;
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','x','y',0.4,0.4,'typed'); raise exception 'bad source accepted'; exception when check_violation then null; end;
@@ -81,9 +84,9 @@ do $$ begin
 end $$;
 
 -- Saved-pin checkout: no fresh GPS needed; the phone fix only measures distance.
-select set_config('test.near',jsonb_build_object('latitude',0.4,'longitude',0.4,'accuracy',500,'captured_at',clock_timestamp())::text,true);
+select set_config('test.near',jsonb_build_object('latitude',0.4,'longitude',0.4,'accuracy',20,'captured_at',clock_timestamp())::text,true);
 select set_config('test.placed',public.test_addr_place('64800000-0000-4000-8000-000000000001',public.test_addr_delivery(current_setting('test.home')::uuid,2),current_setting('test.near')::jsonb)::text,true);
-select public.test_assert(current_setting('test.placed')::jsonb->>'outcome'='placed','saved address order placed with an inaccurate phone fix');
+select public.test_assert(current_setting('test.placed')::jsonb->>'outcome'='placed','saved address order placed');
 select public.test_assert((select address_label='home' and address_house='14, Shivaji Nagar' and address_street_area='Station Road, Khed' and address_landmark is null and address_location_source='pin'
   and saved_address_id=current_setting('test.home')::uuid and saved_address_version=2 and latitude=0.4 and longitude=0.4 and placed_from_distance_m=0
   and location_accuracy is null and location_captured_at is null and delivery_address_line='14, Shivaji Nagar, Station Road, Khed'
@@ -101,8 +104,65 @@ select public.test_assert((select placed_from_distance_m is null and address_hou
 select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000004',public.test_addr_delivery(current_setting('test.home')::uuid,3),jsonb_build_object('latitude',0.4,'longitude',0.4,'captured_at',clock_timestamp()-interval '20 minutes'))->>'outcome')='placed','stale phone fix does not block');
 select public.test_assert((select placed_from_distance_m is null from public.orders where idempotency_key='64800000-0000-4000-8000-000000000004'),'stale phone fix is unknown distance');
 select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000005',public.test_addr_delivery(current_setting('test.home')::uuid,3),jsonb_build_object('latitude','bad','longitude',0.4,'captured_at','soon'))->>'outcome')='placed','malformed phone fix does not block');
-select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000006',public.test_addr_delivery(current_setting('test.home')::uuid,3),jsonb_build_object('latitude',0.5,'longitude',0.5,'captured_at',clock_timestamp()))->>'outcome')='placed','remote phone still places');
+select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000006',public.test_addr_delivery(current_setting('test.home')::uuid,3),jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',30,'captured_at',clock_timestamp()))->>'outcome')='placed','remote phone still places');
 select public.test_assert((select placed_from_distance_m between 15000 and 16500 from public.orders where idempotency_key='64800000-0000-4000-8000-000000000006'),'remote order records how far away the phone was');
+select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000015',public.test_addr_delivery(current_setting('test.home')::uuid,3),jsonb_build_object('latitude',0.4,'longitude',0.4,'accuracy',50000,'captured_at',clock_timestamp()))->>'outcome')='placed','coarse phone fix does not block');
+select public.test_assert((select placed_from_distance_m is null from public.orders where idempotency_key='64800000-0000-4000-8000-000000000015'),'a fix coarser than 150 m is unknown distance, not "near"');
+-- The same key with a different address is a different request.
+do $$ begin
+  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000003',public.test_addr_delivery(current_setting('test.away')::uuid,1),null); raise exception 'key reused with another address'; exception when invalid_parameter_value then null; end;
+end $$;
+-- Pricing rejections on the saved path create no order and replay as rejections.
+reset role;
+update public.menu_items set price_paise=price_paise+100 where id='20000000-0000-4000-8000-000000000001';
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+select set_config('test.stale_quote',(select jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',id,'quantity',1,'unit_price_paise',price_paise-100,'line_total_paise',price_paise-100)),'delivery_fee_paise',0,'min_order_paise',0,'subtotal_paise',price_paise-100,'total_paise',price_paise-100)::text from public.menu_items where id='20000000-0000-4000-8000-000000000001'),true);
+select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',public.test_addr_delivery(current_setting('test.home')::uuid,3),null,'64800000-0000-4000-8000-000000000016',current_setting('test.stale_quote')::jsonb)->>'outcome')='pricing_changed','saved-path price change places nothing');
+select public.test_assert(not exists(select 1 from public.orders where idempotency_key='64800000-0000-4000-8000-000000000016'),'no order for a rejected quote');
+reset role;
+update public.menu_items set price_paise=price_paise-100 where id='20000000-0000-4000-8000-000000000001';
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+-- Holes in the area are outside; its edge is inside.
+reset role;
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0),(0.35 0.35,0.45 0.35,0.45 0.45,0.35 0.45,0.35 0.35)))'',4326) where slug=''ammu-sammu''',ns);
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+select public.test_assert((select not in_area from public.list_addresses('ammu-sammu') where id=current_setting('test.home')::uuid),'address inside a hole is out of area');
+do $$ begin
+  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000017',public.test_addr_delivery(current_setting('test.home')::uuid,3),null); raise exception 'address in a hole accepted'; exception when invalid_parameter_value then null; end;
+end $$;
+insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('work','Edge','Boundary Road',0,0.5,'pin');
+select public.test_assert((select in_area from public.list_addresses('ammu-sammu') where house='Edge'),'address on the area edge is in area');
+select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000018',public.test_addr_delivery((select id from public.customer_addresses where house='Edge'),1),null)->>'outcome')='placed','address on the edge places');
+delete from public.customer_addresses where house='Edge';
+-- Closed restaurants and unverified areas refuse saved-address orders too.
+reset role;
+update public.businesses set accepting_orders=false where slug='ammu-sammu';
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+do $$ begin
+  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000019',public.test_addr_delivery(current_setting('test.away')::uuid,1),null); raise exception 'closed restaurant accepted'; exception when sqlstate 'PT409' then null; end;
+end $$;
+reset role;
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set accepting_orders=true,service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_verified_at=null,ordering_enabled=false where slug=''ammu-sammu''',ns);
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+select public.test_assert((select bool_and(not in_area) from public.list_addresses('ammu-sammu')),'unverified area: nothing is in area');
+do $$ begin
+  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000020',public.test_addr_delivery(current_setting('test.home')::uuid,3),null); raise exception 'unverified area accepted'; exception when invalid_parameter_value then null; end;
+end $$;
+reset role;
+update public.businesses set service_area_verified_at=now(),ordering_enabled=true where slug='ammu-sammu';
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
 -- The server stays authoritative: outside the area, other people's addresses, malformed requests.
 do $$ begin
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000007',public.test_addr_delivery(current_setting('test.away')::uuid,1),null); raise exception 'outside address accepted'; exception when invalid_parameter_value then null; end;
@@ -122,6 +182,7 @@ select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001'
 delete from public.customer_addresses where id=current_setting('test.home')::uuid;
 select public.test_assert(public.test_addr_place('64800000-0000-4000-8000-000000000001',public.test_addr_delivery(current_setting('test.home')::uuid,2),current_setting('test.near')::jsonb)=current_setting('test.placed')::jsonb,'retry after delete returns the original order');
 select public.test_assert((select count(*)=1 from public.orders where saved_address_id=current_setting('test.home')::uuid and address_house='14, Shivaji Nagar'),'deleted address keeps its order copy');
+select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',public.test_addr_delivery(current_setting('test.home')::uuid,3),null,'64800000-0000-4000-8000-000000000016',current_setting('test.stale_quote')::jsonb)->>'outcome')='pricing_changed','rejected quote replays as a rejection after the address is deleted');
 do $$ begin
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000012',public.test_addr_delivery(current_setting('test.home')::uuid,3),null); raise exception 'deleted address accepted'; exception when sqlstate 'PT412' then null; end;
 end $$;
