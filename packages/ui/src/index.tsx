@@ -8,4 +8,5 @@ export function MarketApp({ businessId, audience }: { businessId: BusinessSlug; 
 }
 export { BrandLogo, OwnerScreen, OwnerTabBar } from './OwnerShell';
 export { MarketSwitch } from './MarketSwitch';
+export { MarketIcon, type MarketIconName } from './MarketIcons';
 export * from './owner-navigation';

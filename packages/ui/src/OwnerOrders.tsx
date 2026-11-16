@@ -8,6 +8,7 @@ import { ActionButton, OwnerOrderDetails } from './OwnerOrderDetails';
 import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, orderReference, ordersForFilter, queueFilters, shortAddress, statusLabel, type QueueFilter } from './admin-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketChip, MarketPill } from './MarketChips';
+import { MarketIcon } from './MarketIcons';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const tickMs = 30000;
@@ -172,8 +173,9 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
       </View>
     </ScrollView>
     {topSlot}
-    {connection === 'paused' ? <View accessibilityRole="alert" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: colors.tint }}>
-      <View style={{ flex: 1 }}><MarketText><Text style={{ fontWeight: '700' }}>Live updates paused.</Text> New orders may not show until you reconnect.</MarketText></View>
+    {connection === 'paused' ? <View accessibilityRole="alert" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: colors.warningTint }}>
+      <MarketIcon name="offline" color={colors.warning} />
+      <View style={{ flex: 1 }}><MarketText><Text style={{ fontWeight: '700', color: colors.warning }}>Live updates paused.</Text> New orders may not show until you reconnect.</MarketText></View>
       <MarketButton label="Reconnect" onPress={queue.reconnect} />
     </View> : null}
     {demo ? <MarketStatus kind="empty" title="Sample mode" message="There are no live orders in sample mode. Connect the backend and sign in as an administrator to manage orders." /> : null}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import { MarketIcon } from './MarketIcons';
 import { MarketSwitch } from './MarketSwitch';
 import { MarketGroup, MarketRow } from './MarketList';
 import { messageOf, type useMarket } from './useMarket';
@@ -71,7 +71,7 @@ export function OwnerSettings({ market }: { market?: Market }) {
     {status(settings.analyticsMessage)}
     <Pressable accessibilityRole="button" disabled={settings.busy} onPress={() => { setSignOutError(''); void settings.signOut().catch(e => setSignOutError(messageOf(e))); }}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.tint : colors.surface, opacity: settings.busy ? 0.6 : 1 })}>
-      <Svg aria-hidden accessible={false} width={18} height={18} viewBox="0 0 24 24"><Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" fill="none" stroke={colors.ink} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg>
+      <MarketIcon name="logout" color={colors.ink} />
       <Text style={{ ...body(15), ...bold }}>Log out</Text>
     </Pressable>
     {signOutError ? <Text role="alert" accessibilityRole="alert" style={{ ...body(14), color: colors.danger }}>{signOutError}</Text> : null}
