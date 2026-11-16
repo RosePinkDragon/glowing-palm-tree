@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, findNodeHandle, Linking, Platform, Pressable, Text, View } from 'react-native';
-import { formatINRFromPaise, type BusinessSlug } from '@market/core';
+import { formatINRFromPaise, type BusinessSlug, type Order } from '@market/core';
 import { useIsFocused } from '@react-navigation/native';
 import type { useMarket } from './useMarket';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
@@ -49,8 +49,19 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
   if (!origin.current.identity && market.authReady && market.session) origin.current.identity = market.identity.current;
   const currentReference = market.authReady && market.session && origin.current.identity && sameIdentity(origin.current.identity, market.identity.current) ? orderReference : undefined;
   const support = useSupportOrders(market, currentReference);
-  // Never show the raw id: the matching order's number once loaded, else the short reference.
-  const openedReference = currentReference ? orderName(support.orders.find(candidate => candidate.id === currentReference) ?? { id: currentReference }) : '';
+  // The opened order may be delivered or cancelled, so it is not in the active list: read that one own-row order by id.
+  const [opened, setOpened] = useState<Order | null>(null);
+  const activeMatch = currentReference ? support.orders.find(candidate => candidate.id === currentReference) : undefined;
+  const { services } = market;
+  useEffect(() => {
+    setOpened(null);
+    if (!currentReference || activeMatch) return;
+    let stale = false;
+    void services.getCustomerOrder(currentReference).then(found => { if (!stale && found?.id === currentReference) setOpened(found); }).catch(() => undefined);
+    return () => { stale = true; };
+  }, [currentReference, services, !!activeMatch]);
+  // Never show the raw id: the order number once known, else the short reference.
+  const openedReference = currentReference ? orderName(activeMatch ?? opened ?? { id: currentReference }) : '';
   const [expanded, setExpanded] = useState<string | null>(null);
   const config = supportConfig[businessId];
   const order = support.selected;

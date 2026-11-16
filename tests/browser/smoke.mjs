@@ -1132,6 +1132,9 @@ async function tracking47() {
         assert.equal(await page.getByText('Notifications are not available yet.', { exact: true }).count(), 0, 'no updates message before a tap');
         await page.getByRole('button', { name: 'Turn on order updates', exact: true }).click();
         assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), 'BODY', 'focus stays on the button after Turn on');
+        // The tapped button disappears once delivered, so park focus on a control that survives and check it stays put.
+        await page.getByRole('button', { name: 'Refresh orders', exact: true }).focus();
+        await page.evaluate(() => { window.__focusBeforeDelivered = document.activeElement; });
         await visible('Notifications are not available yet.').waitFor();
         assert.equal(liveSubscriptions(), 1, 'one order subscription serves the tracking screen');
         const initialNavigations = navigations, initialReads = orderReads;
@@ -1156,7 +1159,7 @@ async function tracking47() {
         await page.getByText(/^Arrived on .* 35 minutes after you ordered\.$/).filter({ visible: true }).waitFor();
         await visible('House 5, Station Road, Khed').waitFor();
         await visible('Order this again').waitFor();
-        assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), null, 'focus is not pulled to the updates region when the order is delivered after a failed Turn on');
+        assert.equal(await page.evaluate(() => document.activeElement === window.__focusBeforeDelivered), true, 'focus stays on the same element when the order is delivered after a failed Turn on');
         assert.equal(await page.getByRole('button', { name: 'Turn on order updates', exact: true }).count(), 0, 'no consent prompt on terminal order');
         assert.equal(navigations, initialNavigations, 'all transitions arrived without page navigation/reload');
         assert.ok(orderReads > initialReads); assert.equal(liveSubscriptions(), 1);

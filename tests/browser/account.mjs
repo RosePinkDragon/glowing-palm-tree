@@ -9,7 +9,7 @@ const userId = '51000000-0000-4000-8000-000000000001';
 const otherUser = '51000000-0000-4000-8000-000000000002';
 const orderId = n => `52000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 // Support shows the order number, or the order page's short reference (last 6 of the id) for older orders.
-const ref = n => n === 25 ? 'TEST-20261115025' : orderId(n).slice(-6);
+const ref = n => n === 25 || n === 2 ? `TEST-202611150${String(n).padStart(2, '0')}` : orderId(n).slice(-6);
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'account-fixture@example.test', user_metadata: {}, app_metadata: {} };
 const token = part({ alg: 'HS256' }) + '.' + part({ sub: userId, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture';
@@ -113,6 +113,12 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   assert.equal(new URL(page.url()).searchParams.get('id'), orderId(25));
   assert.equal(await page.getByText('You opened Help for this order reference:', { exact: true }).locator('xpath=following-sibling::*[1]').innerText(), ref(25), 'the opened-from line shows the order number');
   assert.equal(await page.getByText(orderId(25), { exact: true }).count(), 0, 'the raw order id is never shown');
+  // A delivered order is not in the active list: Help still shows its order number, not the short fallback.
+  await page.goto(server.url + '/orders/' + orderId(2), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Help & support', exact: true }).click();
+  await page.getByText('You opened Help for this order reference:', { exact: true }).waitFor();
+  await page.getByText('You opened Help for this order reference:', { exact: true }).locator('xpath=following-sibling::*[1]').getByText(ref(2), { exact: true }).waitFor();
+  assert.equal(await page.getByText(orderId(2), { exact: true }).count(), 0, 'the raw order id is never shown for a delivered order');
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   const drawer = page.getByRole('dialog');
   await drawer.getByRole('button', { name: 'Help & support', exact: true }).click();
@@ -304,7 +310,7 @@ try {
     const business = { id: businessId, slug, name: brand ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map() };
-    const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), ...(index === 24 ? { order_number: ref(25) } : {}), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
+    const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), ...(index === 24 || index === 1 ? { order_number: ref(index + 1) } : {}), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
     let failOlder = true, failDetail = false, holdOrders = false, held, release;
     await context.routeWebSocket(/.*/, socket => {
       socket.onMessage(message => {

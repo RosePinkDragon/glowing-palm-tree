@@ -146,7 +146,7 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
   const updatesStatus = useRef<ComponentRef<typeof View>>(null);
   const tapped = useRef(false);
   const wasBusy = useRef(false);
-  // Only a tap on this screen during this visit may show the app-wide updates message.
+  // Only a tap on this screen during this visit may show the app-wide updates message. Parents key this view by order id, so a different order starts fresh.
   const [asked, setAsked] = useState(false);
   const active = order.status !== 'delivered' && order.status !== 'cancelled';
   const { offer, on, busy } = updates;
@@ -163,14 +163,6 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     if (Platform.OS === 'web') node?.focus?.();
     else { const handle = findNodeHandle(updatesStatus.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
   }, [offer, on]);
-  // A different order is a different visit: forget any earlier tap.
-  const orderId = useRef(order.id);
-  useEffect(() => {
-    if (orderId.current === order.id) return;
-    orderId.current = order.id;
-    tapped.current = false;
-    setAsked(false);
-  }, [order.id]);
   const message = asked ? updates.message : '';
   const showCard = active && offer;
   const copy = statusCopy(order, restaurant, statusHeader, indiaParts, formatINRFromPaise(order.totalPaise), voice);
