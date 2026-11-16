@@ -69,6 +69,7 @@ await context.route(origin + '/**', async route => {
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
   if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin' } : null);
+  if (url.pathname === '/rest/v1/rpc/daily_summary') return json({ date: '2026-11-13', collected_paise: 426000, delivered_count: 11, outstanding_paise: 221000, outstanding_count: 6, placed_count: 14, cancelled_count: 1, top_dishes: [{ name: 'Veg thali', quantity: 12 }] });
   if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
   if (url.pathname === '/rest/v1/rpc/place_order') {
     const body = req.postDataJSON(); requests.push(body);
@@ -309,7 +310,8 @@ const prepareCart = async (page, add = true) => {
   assert.equal(menuItems.length, 1);
   assert.equal(await ownerTab('Menu').getAttribute('aria-current'), 'page');
   await ownerTab('Today').click();
-  await admin.getByText("Today's summary is coming soon", { exact: true }).filter({ visible: true }).waitFor();
+  await admin.getByText('Still to collect now', { exact: true }).filter({ visible: true }).waitFor();
+  assert.equal(await admin.getByText("Today's summary is coming soon").count(), 0, 'the placeholder is gone');
   assert.equal(await ownerTab('Today').getAttribute('aria-current'), 'page');
   assert.equal(await ownerTab('Menu').getAttribute('aria-current'), null);
   assert.equal(await admin.getByRole('button', { name: 'Details for #000001' }).count(), 0, 'order cards are only on the Orders tab');
@@ -708,7 +710,8 @@ const prepareCart = async (page, add = true) => {
     const primary = { 'ammu-sammu': 'rgb(168, 62, 50)', 'kokani-dine-inn': 'rgb(22, 92, 84)' }[slug];
     const brandName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
     const errs = [], unhandled = [], rpcCalls = [], sockets = [], joined = new Map();
-    let realtimeFail = false, gate = null, orderGets = 0;
+    const istDay = offset => new Date(Date.now() + 19800000 + offset * 86400000).toISOString().slice(0, 10);
+    let realtimeFail = false, gate = null, orderGets = 0, summaryFail = false, summaryGate = null; const summaryCalls = [];
     const ids = n => `40000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
     const ref = n => `#${n.toString(16).toUpperCase().padStart(6, '0')}`;
     const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
@@ -751,6 +754,13 @@ const prepareCart = async (page, add = true) => {
         if (url.searchParams.has('id')) return json(db.find(order => order.id === url.searchParams.get('id').slice(3)) ?? null);
         orderGets++; return json(db);
       }
+      if (url.pathname === '/rest/v1/rpc/daily_summary') {
+        const body = req.postDataJSON(); summaryCalls.push(body);
+        if (summaryGate?.[body.p_date ?? 'today']) await summaryGate[body.p_date ?? 'today'];
+        if (summaryFail) return json({ message: 'Fixture summary failure' }, 500);
+        const day = body.p_date ?? istDay(0), empty = day === '2026-11-01';
+        return json({ date: day, collected_paise: empty ? 0 : day === istDay(0) ? 426000 : 188050, delivered_count: empty ? 0 : day === istDay(0) ? 11 : 1, outstanding_paise: 221000, outstanding_count: 6, placed_count: empty ? 0 : 14, cancelled_count: empty ? 0 : 2, top_dishes: empty ? [] : [{ name: day === istDay(0) ? 'Veg thali' : 'Fish curry meal', quantity: 12 }] });
+      }
       if (url.pathname === '/rest/v1/rpc/transition_order') {
         const body = req.postDataJSON(); rpcCalls.push(body);
         if (gate) await gate;
@@ -780,7 +790,7 @@ const prepareCart = async (page, add = true) => {
       await page.getByRole('img', { name: brandName, exact: true }).count();
       for (const button of [accept(0x1A1), page.getByRole('button', { name: `Details for ${ref(0x1A1)}`, exact: true })]) { const box = await button.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'card targets are at least 48px'); }
       assert.equal(await card(0x1A3).count(), 0, 'accepted orders are not under New');
-      await mkdir('/tmp/review100', { recursive: true });
+      await mkdir('/tmp/review100', { recursive: true }); await mkdir('/tmp/review61', { recursive: true });
       await page.screenshot({ path: `/tmp/review100/${slug}-orders.png` });
       // Accept: version-checked transition, per-card in-flight disable, no double accept.
       let release; gate = new Promise(resolve => { release = resolve; });
@@ -945,6 +955,62 @@ const prepareCart = async (page, add = true) => {
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
       console.log(`PASS: ${slug} owners' Orders queue cards, accept, in-flight, conflict, empty, live badge, single subscription and Paused/Reconnect, plus order details (#101): contact/maps/bill/history, version-checked steps, conflict reload, cancel sheet, terminal state`);
+      // Today tab (#61): India-time days, date-scoped labels, current outstanding, stale responses, error + Retry.
+      const ownerTabs = page.getByRole('navigation', { name: 'Owner sections' });
+      const [istToday, istYesterday] = [istDay(0), istDay(-1)], dayName = iso => `${Number(iso.slice(8))} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(iso.slice(5, 7)) - 1]}`;
+      await ownerTabs.getByRole('button', { name: /^Today/ }).click();
+      const today = text => page.getByText(text, { exact: true }).filter({ visible: true });
+      await today('₹4,260').waitFor();
+      for (const text of ['Collected', '11 orders delivered today', 'Still to collect now', '₹2,210', '6 open orders · all dates', 'Placed today', 'Delivered today', 'Cancelled today', 'Veg thali', '× 12', "Days run midnight to midnight, India time. Cancelled orders aren't counted in cash."]) await today(text).waitFor();
+      await page.getByRole('heading', { name: 'MOST ORDERED', level: 2 }).waitFor();
+      assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'today sends no p_date');
+      assert.equal(await page.getByRole('button', { name: `Today, ${dayName(istToday)}`, exact: true }).getAttribute('aria-pressed'), 'true');
+      for (const name of [`Today, ${dayName(istToday)}`, 'Yesterday', 'Pick a date']) { const box = await page.getByRole('button', { name, exact: true }).boundingBox(); assert.ok(box.height >= 48, 'chips are at least 48px tall'); }
+      assert.equal(await page.getByText(brandName === 'Ammu Sammu' ? 'Kokani' : 'Ammu', { exact: false }).filter({ visible: true }).count(), 0, 'the other brand is never shown');
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: `/tmp/review61/${slug}-today.png` });
+      // Yesterday: p_date is the India-time yesterday; labels follow the day; outstanding stays current.
+      await page.getByRole('button', { name: 'Yesterday', exact: true }).click();
+      await today('Delivered yesterday').waitFor(); await today('Collected yesterday').waitFor(); await today('₹1,880.50').waitFor(); await today('Fish curry meal').waitFor();
+      assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug, p_date: istYesterday });
+      assert.equal(await page.getByRole('button', { name: 'Yesterday', exact: true }).getAttribute('aria-pressed'), 'true');
+      await today('Still to collect now').waitFor(); await today('₹2,210').waitFor();
+      // Picked date (native input, max = today IST).
+      await page.getByRole('button', { name: 'Pick a date', exact: true }).click();
+      const input = page.getByLabel('Choose a day', { exact: true }).and(page.locator('input'));
+      await input.waitFor(); assert.equal(await input.getAttribute('max'), istToday);
+      await today(`Delivered on ${dayName(istDay(-2))}`).waitFor();
+      assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug, p_date: istDay(-2) });
+      await input.fill('2026-11-10');
+      await today('Delivered on 10 Nov').waitFor(); await today('1 order delivered on 10 Nov').waitFor();
+      assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug, p_date: '2026-11-10' });
+      await page.screenshot({ path: `/tmp/review61/${slug}-today-picked.png` });
+      // Empty day: zeros and "No dishes ordered".
+      await input.fill('2026-11-01');
+      await today('No dishes ordered').waitFor(); await today('₹0').first().waitFor();
+      assert.equal(await page.getByRole('group', { name: 'Placed on 1 Nov: 0', exact: true }).count(), 1);
+      // Stale responses: leave a slow picked-day request, switch to Today, the slow answer must not replace it.
+      let releaseSlow; summaryGate = { '2026-11-05': new Promise(resolve => { releaseSlow = resolve; }) };
+      await input.fill('2026-11-05');
+      await page.getByRole('button', { name: new RegExp(`^Today, ${dayName(istToday)}`) }).click();
+      await today('Collected').waitFor(); releaseSlow(); summaryGate = null;
+      await page.waitForTimeout(150);
+      assert.equal(await today('Collected on 5 Nov').count(), 0, 'a stale response is ignored');
+      await today('Collected').waitFor();
+      // Error with Retry, then recovery.
+      summaryFail = true;
+      await page.getByRole('button', { name: 'Yesterday', exact: true }).click();
+      await page.getByText('Could not load the summary', { exact: true }).filter({ visible: true }).waitFor();
+      summaryFail = false;
+      await page.getByRole('button', { name: 'Retry', exact: true }).click();
+      await today('Collected yesterday').waitFor();
+      await ownerTabs.getByRole('button', { name: /^Orders/ }).click();
+      await page.getByRole('button', { name: 'New, 2', exact: true }).waitFor();
+      await ownerTabs.getByRole('button', { name: /^Today/ }).click();
+      await today('Collected').waitFor();
+      assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'returning to the tab starts on today');
+      assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
+      console.log(`PASS: ${slug} owners' Today tab (#61): India-time chips, rpc/daily_summary params, labels, picked date, empty, stale-response guard, error/Retry`);
     } finally { await ctx.close(); await owner.close(); }
   }
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
