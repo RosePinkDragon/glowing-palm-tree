@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
 // Shared owner icons (#116): simple 24px outline glyphs, always decorative. The text beside
@@ -12,9 +13,10 @@ const paths = {
 
 export type MarketIconName = keyof typeof paths;
 
-/** Decorative line icon: always hidden from assistive tech, so the text beside it must carry the meaning. `nudge` drops it a few px to sit on the first text line. */
-export function MarketIcon({ name, color, size = 18, nudge = 0 }: { name: MarketIconName; color: string; size?: number; nudge?: number }) {
-  return <Svg aria-hidden accessible={false} importantForAccessibility="no" width={size} height={size} viewBox="0 0 24 24" style={nudge ? { marginTop: nudge } : undefined}>
+/** Decorative line icon: always hidden from assistive tech, so the text beside it must carry the meaning. `nudge` drops it a few px to sit on the first text line; `inline` centres it on the text line when it sits inside a Text (web; native already centres inline views). */
+export function MarketIcon({ name, color, size = 18, nudge = 0, inline = false }: { name: MarketIconName; color: string; size?: number; nudge?: number; inline?: boolean }) {
+  const style = inline && Platform.OS === 'web' ? ({ verticalAlign: 'middle', marginTop: -2 } as object) : nudge ? { marginTop: nudge } : undefined;
+  return <Svg aria-hidden accessible={false} importantForAccessibility="no" width={size} height={size} viewBox="0 0 24 24" style={style}>
     <Path d={paths[name]} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
   </Svg>;
 }
