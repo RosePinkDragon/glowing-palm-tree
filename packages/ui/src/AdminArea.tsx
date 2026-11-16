@@ -8,6 +8,7 @@ import { OrdersConnectionPill, OwnerOrders, useOwnerOrders } from './OwnerOrders
 import { OwnerScreen, OwnerTabBar } from './OwnerShell';
 import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
 import { useMarketTheme } from './theme';
+import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 // Tabs render only after the server confirms owner access; the access states keep the account card (and sign out) available.
@@ -38,7 +39,7 @@ export function AdminArea({ services, banner, account, ordersSlot, onNewOrders }
   return <View style={{ flex: 1 }}>
     <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}>
       {banner}
-      {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot} /> : null}
+      {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot ?? <OwnerOrderingSwitch services={services} />} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <MarketStatus kind="empty" title="Today's summary is coming soon" message="A summary of today's orders will appear here in a later update. Use Orders to see current orders." /> : null}
       {tab === 'settings' ? <OwnerSettings account={account} /> : null}
