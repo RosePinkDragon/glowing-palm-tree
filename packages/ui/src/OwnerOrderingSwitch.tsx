@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform, Switch, Text, View } from 'react-native';
 import type { Business, MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketText } from './components';
-import { useMarketTheme } from './theme';
+import { useMarketFonts, useMarketTheme } from './theme';
 
 type State = { services: MarketServices; business: Business | null; ready: boolean; saving: boolean; error: string; notice: string; uncertain: boolean };
 const empty = (services: MarketServices): State => ({ services, business: null, ready: false, saving: false, error: '', notice: '', uncertain: false });
@@ -10,6 +10,7 @@ const empty = (services: MarketServices): State => ({ services, business: null, 
 /** Portable Orders control; the backend owns authorization and the actual value. */
 export function OwnerOrderingSwitch({ services }: { services: MarketServices }) {
   const { colors, name } = useMarketTheme();
+  const fonts = useMarketFonts();
   const [state, setState] = useState(() => empty(services));
   const [attempt, setAttempt] = useState(0);
   const change = useRef<((next: boolean) => void) | null>(null);
@@ -70,13 +71,13 @@ export function OwnerOrderingSwitch({ services }: { services: MarketServices }) 
     : checked ? setupPending ? 'Kitchen marked open · ordering setup pending' : 'Open · taking orders' : 'Closed · not taking orders';
   return <MarketCard>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-      <Text accessibilityRole="header" style={{ flex: 1, color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>{title}</Text>
+      <Text accessibilityRole="header" style={{ flex: 1, color: colors.ink, fontSize: 22, lineHeight: 29, ...(fonts.heading ? { fontFamily: fonts.heading, fontWeight: 'normal' as const } : { fontWeight: '700' as const }) }}>{title}</Text>
       <View style={{ minWidth: 52, minHeight: 48, justifyContent: 'center' }}><Switch {...(Platform.OS === 'web' ? {} : { accessibilityRole: 'switch' as const, accessibilityState: { checked, disabled, busy: current.saving } })} style={{ height: 48, width: 96 }} accessibilityLabel={`Take new orders at ${name}`} accessibilityHint={disabled ? 'Wait for the restaurant status to be confirmed.' : checked ? 'Switch off to pause new orders.' : 'Switch on to take new orders.'} value={checked} disabled={disabled} onValueChange={next => change.current?.(next)} trackColor={{ false: colors.inputBorder, true: colors.primary }} thumbColor={colors.surface} /></View>
     </View>
     <View role="status" accessibilityLiveRegion="polite"><MarketText>{current.saving ? 'Please wait for confirmation. Existing orders can still be managed.' : !current.ready ? 'Refresh or wait for confirmation before changing whether the restaurant takes new orders.' : checked ? 'Switch off to pause new orders' : "Customers can see the menu but can't order"}</MarketText></View>
     {setupPending ? <MarketText>Customer ordering setup is not enabled yet. This switch only marks the kitchen open or closed; it cannot enable customer ordering by itself.</MarketText> : null}
-    {current.notice ? <Text accessibilityRole={current.uncertain ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: current.uncertain ? colors.danger : colors.ink, fontSize: 15, lineHeight: 23 }}>{current.notice}</Text> : null}
-    {current.error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{current.error}</Text><MarketButton label="Refresh restaurant status" variant="secondary" disabled={current.saving} onPress={() => setAttempt(value => value + 1)} /></> : null}
+    {current.notice ? <Text accessibilityRole={current.uncertain ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ color: current.uncertain ? colors.danger : colors.ink, fontSize: 15, lineHeight: 23, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{current.notice}</Text> : null}
+    {current.error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 23, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{current.error}</Text><MarketButton label="Refresh restaurant status" variant="secondary" disabled={current.saving} onPress={() => setAttempt(value => value + 1)} /></> : null}
     <MarketText variant="muted">Orders placed before closing carry on as normal.</MarketText>
   </MarketCard>;
 }

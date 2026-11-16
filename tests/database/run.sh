@@ -102,6 +102,12 @@ SQL
   docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
+  # Earlier owner transitions from the checkout suite, plus one by an owner who
+  # has since been removed, exercise the snapshot backfill.
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into auth.users(id) values ('49800000-0000-4000-8000-0000000000ff'); insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','49800000-0000-4000-8000-0000000000ff' from public.orders order by created_at, id limit 1"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116000000_owner_history_names.sql
+  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*) = 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.changed_by = '49800000-0000-4000-8000-0000000000ff' and a.actor_name = 'Former owner' and a.actor_id is null), 'removed owner backfills as Former owner') ; select public.test_assert(exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id join public.business_memberships m on m.business_id = o.business_id and m.user_id = h.changed_by where a.actor_name = m.display_name and a.actor_id = h.changed_by), 'current owners backfill with their membership name')"
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
 done
 # Installation order differs from the staged regression suites: apply every
 # migration before seed, proving unknown sample data can be bootstrapped safely.
@@ -117,5 +123,7 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-reorder.sql
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured and category tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history and menu-reorder tests passed, including all migrations before seed in both PostGIS schemas.'

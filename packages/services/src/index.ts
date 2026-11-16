@@ -145,18 +145,24 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
+type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+// Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
+type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
+const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
 export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): MenuItem {
   return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
-const orderSelect = '*, order_items(*), order_status_history(*)';
+// History columns are explicit: customers may read status and time only (#98).
+const customerOrderSelect = '*, order_items(*), order_status_history(status, created_at)';
+const ownerOrderSelect = '*, order_items(*), order_status_history(status, created_at, order_status_actors(actor_name))';
 
 export function createMarketServices(options: ServiceOptions) {
   const { businessSlug: slug, audience } = options;
+  const orderSelect = audience === 'admin' ? ownerOrderSelect : customerOrderSelect;
   const config = options.config ?? publicConfig();
   const url = config.url?.trim();
   const key = config.anonKey?.trim();
@@ -229,7 +235,7 @@ export function createMarketServices(options: ServiceOptions) {
   const readCustomerOrderPage = async (options: OrderPageOptions, activeOnly: boolean): Promise<OrderPage> => {
     const { cursor, limit } = orderPageOptions(options);
     const scope = await customerOrderScope();
-    let query = scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
+    let query = scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
     if (activeOnly) query = query.in('status', ['placed', 'accepted', 'preparing', 'out_for_delivery']);
     // Both values have a strict grammar before entering PostgREST's raw OR filter.
     if (cursor) query = query.or(`created_at.lt.${cursor.createdAtISO},and(created_at.eq.${cursor.createdAtISO},id.lt.${cursor.id})`);
@@ -249,7 +255,7 @@ export function createMarketServices(options: ServiceOptions) {
   const getCustomerOrder = async (id: string): Promise<Order | null> => {
     if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order reference is invalid.');
     const scope = await customerOrderScope();
-    const { data, error } = await scope.db.from('orders').select(orderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
+    const { data, error } = await scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
     scope.ensureCurrent(); fail(error, 'Could not load your order');
     return data ? mapOrder(data as OrderRow, slug) : null;
   };
@@ -341,6 +347,29 @@ export function createMarketServices(options: ServiceOptions) {
     fail(error, 'Could not delete menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
+  // Only availability changes, so the list switch never overwrites a concurrent dish edit.
+  const setMenuItemAvailability = async (id: string, isAvailable: boolean): Promise<MenuItem> => {
+    if (typeof id !== 'string' || !id.trim() || typeof isAvailable !== 'boolean') throw new ServiceError('INVALID_MENU_ITEM', 'Choose a dish and whether it is available.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_items').update({ available: isAvailable }).eq('id', id).eq('business_id', business.id).select(menuSelect).maybeSingle();
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not change availability');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business. Reload the menu.');
+    return mapMenu(data as MenuRow, slug, photoBase);
+  };
+  const reorder = async (fn: 'reorder_menu_items' | 'reorder_menu_categories', args: Record<string, unknown>, ids: readonly string[]): Promise<void> => {
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) throw new ServiceError('INVALID_ORDER', 'List each entry exactly once.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { error } = await db.rpc(fn, { p_business_slug: slug, ...args });
+    if (error?.code === '40001') throw new ServiceError('MENU_CHANGED', 'The menu changed on another device. It has been reloaded; arrange it again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not save the new order');
+  };
+  const reorderMenuItems = (categoryId: string, itemIds: readonly string[]) => {
+    if (typeof categoryId !== 'string' || !categoryId.trim()) throw new ServiceError('INVALID_ORDER', 'Choose a category to arrange.');
+    return reorder('reorder_menu_items', { p_category_id: categoryId, p_item_ids: itemIds }, itemIds);
+  };
+  const reorderCategories = (categoryIds: readonly string[]) => reorder('reorder_menu_categories', { p_category_ids: categoryIds }, categoryIds);
   const photoRequest = async (action: 'upload' | 'remove' | 'cleanup', item?: MenuItem, bytes?: ArrayBuffer): Promise<{ cleanupComplete: boolean }> => {
     const db = requireClient();
     if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage dish photos.');
@@ -456,7 +485,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
@@ -482,6 +511,8 @@ export function subscribeToBusinessState(db: SupabaseClient, businessId: string,
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
     // Realtime cannot filter deletes (the old row carries only its key), so any deleted dish triggers a refresh.
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'menu_items' }, notify)
+    // Category adds, renames and reorders change how customers see the menu (#102).
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_categories', filter: `business_id=eq.${businessId}` }, notify)
     .subscribe(status => {
       if (!active) return;
       if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect

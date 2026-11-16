@@ -347,11 +347,12 @@ test('business state realtime follows open/closed and dish changes, reconnects a
     { table: 'menu_items', event: 'INSERT', filter: 'business_id=eq.tenant-id' },
     { table: 'menu_items', event: 'UPDATE', filter: 'business_id=eq.tenant-id' },
     { table: 'menu_items', event: 'DELETE', filter: undefined },
+    { table: 'menu_categories', event: '*', filter: 'business_id=eq.tenant-id' },
   ]);
   status?.('SUBSCRIBED'); for (const listener of listeners) listener.callback(); status?.('CHANNEL_ERROR'); status?.('SUBSCRIBED');
-  assert.equal(refreshes, 6); assert.equal(errors, 1);
+  assert.equal(refreshes, 7); assert.equal(errors, 1);
   cleanup(); listeners[0].callback(); status?.('SUBSCRIBED');
-  assert.equal(removed, true); assert.equal(refreshes, 6);
+  assert.equal(removed, true); assert.equal(refreshes, 7);
 });
 
 test('open/closed is read, changed only by owners, and a closed refusal has its own error', async () => {
@@ -566,5 +567,80 @@ test('category reads and owner CRUD use current business and report actionable c
     await assert.rejects(service.saveCategory({ name: 'All', sortOrder: 0 }), (error: unknown) => error instanceof ServiceError && error.code === 'ADMIN_REQUIRED');
     conflict = '23503';
     await assert.rejects(service.deleteCategory('category-1'), (error: unknown) => error instanceof ServiceError && error.code === 'CATEGORY_IN_USE');
+  } finally { service.dispose(); globalThis.fetch = original; }
+});
+
+test('owner reads carry history name snapshots; customer reads request status and time only', async () => {
+  const original = globalThis.fetch;
+  const selects: Record<string, string> = {};
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'history-customer', role: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.signature`;
+  const row = { id: '49800000-0000-4000-8000-0000000000a1', status: 'preparing', version: 3, subtotal_paise: 100, delivery_fee_paise: 0, total_paise: 100, customer_name: 'Name', customer_phone: '123', delivery_address_line: 'Khed', created_at: '2026-11-16T10:00:00Z', order_items: [] };
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const audience = String(url.host).startsWith('owner') ? 'admin' : 'customer';
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'history-customer', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'history-customer' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-history', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+    assert.equal(url.pathname, '/rest/v1/orders');
+    assert.equal(init?.method ?? 'GET', 'GET');
+    selects[audience] = url.searchParams.get('select') ?? '';
+    return Response.json(audience === 'admin'
+      ? [{ ...row, order_status_history: [{ status: 'preparing', created_at: '2026-11-16T10:02:00Z', order_status_actors: [{ actor_name: 'Ravi' }] }, { status: 'placed', created_at: '2026-11-16T10:00:00Z', order_status_actors: null }, { status: 'accepted', created_at: '2026-11-16T10:01:00Z', order_status_actors: { actor_name: 'Asha Kadam' } }] }]
+      : [{ ...row, order_status_history: [{ status: 'placed', created_at: '2026-11-16T10:00:00Z' }, { status: 'accepted', created_at: '2026-11-16T10:01:00Z' }] }]);
+  };
+  const memory = new Map<string, string>();
+  const storage = { getItem: (key: string) => memory.get(key) ?? null, setItem: (key: string, value: string) => { memory.set(key, value); }, removeItem: (key: string) => { memory.delete(key); } };
+  const owner = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://owner.example.test', anonKey: 'sb_publishable_test' }, storage });
+  const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://customer.example.test', anonKey: 'sb_publishable_test' }, storage });
+  try {
+    const [order] = await owner.getOrders();
+    assert.deepEqual(order.history, [{ status: 'placed', createdAtISO: '2026-11-16T10:00:00Z' }, { status: 'accepted', createdAtISO: '2026-11-16T10:01:00Z', actorName: 'Asha Kadam' }, { status: 'preparing', createdAtISO: '2026-11-16T10:02:00Z', actorName: 'Ravi' }]);
+    assert.match(selects.admin, /order_status_history\(status,created_at,order_status_actors\(actor_name\)\)/);
+    await customer.auth.signIn('customer@example.test', 'password');
+    const [own] = await customer.getOrders();
+    assert.equal(own.history?.length, 2);
+    assert.match(selects.customer, /order_status_history\(status,created_at\)/);
+    assert.doesNotMatch(selects.customer, /order_status_actors|changed_by|order_status_history\(\*\)/);
+  } finally { owner.dispose(); customer.dispose(); globalThis.fetch = original; }
+});
+
+test('owner menu switches send availability only and reorders map stale lists to a reload', async () => {
+  const original = globalThis.fetch;
+  const calls: { method: string; path: string; body: Record<string, unknown>; query: URLSearchParams }[] = [];
+  let rpcError = '';
+  const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'menu-owner', role: 'authenticated', exp: Math.floor(Date.now()/1000)+3600 })).toString('base64url')}.signature`;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/auth/v1/token')) return Response.json({ access_token: token, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: 'menu-owner', aud: 'authenticated' } });
+    if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: 'menu-owner' });
+    if (url.pathname.endsWith('/businesses')) return Response.json({ id: 'tenant-menu', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true });
+    if (url.pathname.endsWith('/business_memberships')) return Response.json({ role: 'admin' });
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    calls.push({ method: init?.method ?? 'GET', path: url.pathname, body, query: url.searchParams });
+    if (url.pathname.startsWith('/rest/v1/rpc/')) return rpcError ? new Response(JSON.stringify({ code: rpcError, message: 'Synthetic' }), { status: 400 }) : Response.json(2);
+    if (url.pathname.endsWith('/menu_items')) return Response.json({ diet: 'veg', id: 'dish-1', name: 'Veg thali', description: null, category_id: 'cat-1', menu_categories: { name: 'Thalis', sort_order: 0 }, price_paise: 18000, available: false, is_demo: false, is_featured: false, sort_order: 1, image_url: null });
+    throw new Error('Unexpected request ' + url);
+  };
+  const memory = new Map<string, string>();
+  const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://menu.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: key => memory.get(key) ?? null, setItem: (key, value) => { memory.set(key, value); }, removeItem: key => { memory.delete(key); } } });
+  try {
+    await service.auth.signIn('owner@example.test', 'password');
+    const item = await service.setMenuItemAvailability('dish-1', false);
+    assert.equal(item.isAvailable, false);
+    assert.deepEqual(calls[0].body, { available: false }, 'never resend other dish fields');
+    assert.equal(calls[0].method, 'PATCH');
+    assert.equal(calls[0].query.get('business_id'), 'eq.tenant-menu');
+    await assert.rejects(service.setMenuItemAvailability('dish-1', 'no' as unknown as boolean), /available/);
+    await service.reorderMenuItems('cat-1', ['dish-2', 'dish-1']);
+    assert.deepEqual(calls.at(-1)?.body, { p_business_slug: slug, p_category_id: 'cat-1', p_item_ids: ['dish-2', 'dish-1'] });
+    await service.reorderCategories(['cat-2', 'cat-1']);
+    assert.deepEqual(calls.at(-1)?.body, { p_business_slug: slug, p_category_ids: ['cat-2', 'cat-1'] });
+    const before = calls.length;
+    await assert.rejects(service.reorderMenuItems('cat-1', ['dish-1', 'dish-1']), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_ORDER');
+    assert.equal(calls.length, before, 'duplicates are refused before any request');
+    rpcError = '40001';
+    await assert.rejects(service.reorderMenuItems('cat-1', ['dish-1']), (e: unknown) => e instanceof ServiceError && e.code === 'MENU_CHANGED');
+    rpcError = '42501';
+    await assert.rejects(service.reorderCategories(['cat-1']), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
   } finally { service.dispose(); globalThis.fetch = original; }
 });

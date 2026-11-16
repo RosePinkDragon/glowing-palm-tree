@@ -26,3 +26,9 @@ export function MarketThemeProvider({ businessId, children }: { businessId: Busi
   return <ThemeContext.Provider value={marketThemes[businessId]}>{children}</ThemeContext.Provider>;
 }
 export function useMarketTheme() { return useContext(ThemeContext); }
+
+/** Brand font families that have finished loading. Empty (system fonts) unless a shell has loaded them. */
+export type MarketFonts = { heading?: string; body?: string; bodySemiBold?: string; bodyBold?: string };
+const FontContext = createContext<MarketFonts>({});
+export const MarketFontsProvider = FontContext.Provider;
+export function useMarketFonts() { return useContext(FontContext); }

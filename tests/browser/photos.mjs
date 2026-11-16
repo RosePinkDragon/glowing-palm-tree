@@ -173,15 +173,20 @@ try {
       const admin = await context.newPage(); admin.on('pageerror', e => errors.push(e.message));
       await admin.goto(owner.url, { waitUntil: 'networkidle' });
       await admin.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await admin.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-      await admin.getByRole('button', { name: 'Sign in', exact: true }).click(); await admin.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); await admin.getByRole('button', { name: 'Menu', exact: true }).click();
-      const openPhoto = async () => { await admin.getByRole('button', { name: 'Manage photo for Photo dish', exact: true }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Photo for Photo dish'); };
+      await admin.getByRole('button', { name: 'Sign in', exact: true }).click(); await admin.getByRole('navigation', { name: 'Owner sections' }).getByRole('button', { name: 'Menu', exact: true }).click();
+      // Photos are managed from the Edit dish screen (#102); the photo editor opens above it.
+      await admin.getByRole('button', { name: 'Edit Photo dish', exact: true }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Edit dish');
+      const openPhoto = async () => { await admin.getByRole('dialog').last().getByRole('button', { name: /^(Add|Change) photo$/ }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Photo for Photo dish'); };
       const choose = async (name, buffer) => { const chooser = admin.waitForEvent('filechooser'); await admin.getByRole('button', { name: /^Choose (photo|another photo)$/ }).click(); await (await chooser).setFiles({ name, mimeType: 'image/png', buffer }); };
       await openPhoto(); await choose('oversized.png', Buffer.alloc(5 * 1024 * 1024 + 1)); await admin.getByText('Choose a photo up to 5 MB.', { exact: true }).waitFor(); assert.equal(ownerActions.length, 0);
       await choose('neutral-test.png', png); await admin.getByText('Selected: neutral-test.png', { exact: true }).waitFor(); await admin.getByRole('button', { name: 'Replace photo', exact: true }).click();
       await admin.getByText('This photo is damaged. Choose another JPEG, PNG or WebP.', { exact: true }).waitFor(); await admin.getByRole('button', { name: 'Reload dish photo', exact: true }).click();
       await admin.getByText('Current photo reloaded.', { exact: true }).waitFor(); await openPhoto(); await choose('neutral-test.png', png); await admin.getByRole('button', { name: 'Replace photo', exact: true }).click();
       await admin.getByText('Photo saved. Old photos are queued for cleanup; use Retry photo cleanup.', { exact: true }).waitFor();
+      await admin.waitForFunction(() => document.activeElement?.textContent === 'Change photo');
       await openPhoto(); await admin.getByRole('button', { name: 'Remove photo', exact: true }).click(); await admin.getByText('Photo removed. Old photos are queued for cleanup; use Retry photo cleanup.', { exact: true }).waitFor();
+      await admin.getByRole('dialog').last().getByRole('button', { name: 'Add photo', exact: true }).waitFor();
+      await admin.getByRole('button', { name: 'Close', exact: true }).click(); await admin.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Edit Photo dish');
       await admin.getByRole('button', { name: 'Retry photo cleanup', exact: true }).click(); await admin.getByText('Unused photo cleanup completed.', { exact: true }).waitFor();
       assert.deepEqual(ownerActions, ['upload', 'upload', 'remove', 'cleanup']);
       assert.deepEqual(await admin.evaluate(() => ({ created: window.__photoBlobs.created.length, revoked: window.__photoBlobs.revoked.length })), { created: 3, revoked: 3 });
