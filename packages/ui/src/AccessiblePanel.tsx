@@ -37,7 +37,7 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
         <Pressable accessibilityRole="button" accessibilityLabel="Close" accessibilityState={{ disabled: closeDisabled }} disabled={closeDisabled} onPress={onClose} style={({ pressed }) => ({ width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 24, opacity: closeDisabled ? 0.4 : pressed ? 0.6 : 1 })}>
           <Text accessible={false} aria-hidden style={{ fontSize: 22, lineHeight: 26, color: colors.ink }}>✕</Text>
         </Pressable>
-        <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ flex: 1, fontSize: 22, color: colors.ink, ...titleFont }}>{title}</Text>
+        <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ flex: 1, fontSize: 22, lineHeight: 28, color: colors.ink, ...titleFont }}>{title}</Text>
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: 18 }}>{children}</ScrollView>
       {footer ? <View style={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: 10, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background }}>{footer}</View> : null}
@@ -45,8 +45,9 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
   </Modal>;
   if (sheet) return <Modal visible transparent animationType={Platform.OS === 'web' ? 'fade' : 'slide'} onRequestClose={onClose} onShow={focusHeading}>
     <SafeAreaProvider><View accessibilityViewIsModal style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-      <SafeAreaView edges={['bottom', 'left', 'right']} style={{ width: '100%', maxWidth: 600, alignSelf: 'center', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, paddingTop: 10, gap: 14 }}>
+      <SafeAreaView edges={['bottom', 'left', 'right']} style={{ width: '100%', maxWidth: 600, maxHeight: '90%', alignSelf: 'center', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
+        {/* Bounded height: long content or large text scrolls instead of pushing the buttons off screen. */}
+        <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: 20, paddingTop: 10, gap: 14 }}>
           <View aria-hidden style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 4 }} />
           <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 24, lineHeight: 30, color: colors.ink, ...titleFont }}>{title}</Text>
           {children}
@@ -57,7 +58,7 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
   return <Modal visible transparent animationType="fade" onRequestClose={onClose} onShow={focusHeading}>
     <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center' }}>
-        <MarketCard><Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 22, color: colors.ink, ...titleFont }}>{title}</Text>{children}</MarketCard>
+        <MarketCard><Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 22, ...titleFont }}>{title}</Text>{children}</MarketCard>
       </ScrollView>
     </View>
   </Modal>;

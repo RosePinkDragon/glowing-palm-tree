@@ -125,7 +125,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
     {confirming ? <AccessiblePanel sheet title={`Cancel order ${reference}?`} onClose={closeSheet}>
       <MarketText>{`${order.delivery.name}'s order for ${formatINRFromPaise(order.totalPaise)} will be cancelled, and it will show as cancelled in their app. This can't be undone.`}</MarketText>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>
-        <Svg aria-hidden width={18} height={18} viewBox="0 0 24 24" style={{ marginTop: 3 }}><Path d={phonePath} fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg>
+        <Svg aria-hidden accessible={false} importantForAccessibility="no" width={18} height={18} viewBox="0 0 24 24" style={{ marginTop: 3 }}><Path d={phonePath} fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg>
         <View style={{ flex: 1 }}><MarketText>A quick call to say why helps, for example if a dish has run out.</MarketText></View>
       </View>
       <ActionButton tone="danger" label={busy ? 'Cancelling…' : 'Cancel the order'} disabled={locked} onPress={() => { setConfirming(false); run('cancelled'); }} />

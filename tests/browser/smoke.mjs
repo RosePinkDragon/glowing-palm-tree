@@ -920,6 +920,9 @@ const prepareCart = async (page, add = true) => {
       await focused(page, `Cancel order ${ref(0x1A4)}?`);
       const sheetTitle = await page.getByRole('heading', { name: `Cancel order ${ref(0x1A4)}?`, exact: true }).boundingBox();
       assert.ok(sheetTitle.y > page.viewportSize().height / 2, 'the cancel confirmation rises from the bottom as a sheet');
+      const keepBox = await page.getByRole('button', { name: 'Keep the order', exact: true }).boundingBox();
+      assert.ok(keepBox.y + keepBox.height <= page.viewportSize().height, 'both sheet buttons stay on screen');
+      assert.equal(await page.locator('svg[aria-hidden="true"]').filter({ has: page.locator('path') }).count() > 0, true, 'the call-hint icon is hidden from assistive tech');
       await page.getByText("Rahul More's order for ₹180.00 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
       await page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true }).waitFor();
       await page.screenshot({ path: `/tmp/review101/${slug}-cancel.png` });
