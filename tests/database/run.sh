@@ -125,5 +125,6 @@ for db in all_fresh all_existing; do
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
   docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-reorder.sql
+  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/daily-summary.sql
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history and menu-reorder tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder and daily-summary tests passed, including all migrations before seed in both PostGIS schemas.'
