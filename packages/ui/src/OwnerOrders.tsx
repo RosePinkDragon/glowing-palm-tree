@@ -80,7 +80,7 @@ export function useOwnerOrders(services: MarketServices, enabled: boolean, onNew
       await load();
     } finally { inFlight.current.delete(order.id); setBusyIds(new Set(inFlight.current)); }
   }, [services, load]);
-  return { orders, filter, setFilter, loading, error, notice, dismissNotice: () => setNotice(''), success, connection, busyIds, newCount: newOrderCount(orders), reload: load, reconnect, transition, demo };
+  return { orders, filter, setFilter, loading, error, notice, dismissNotice: () => setNotice(''), clearMessages: () => { setNotice(''); setSuccess(''); }, success, connection, busyIds, newCount: newOrderCount(orders), reload: load, reconnect, transition, demo };
 }
 export type OwnerOrdersState = ReturnType<typeof useOwnerOrders>;
 
@@ -153,7 +153,16 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
   const trigger = useRef<HTMLElement | null>(null);
   const selectedOrder = queue.orders.find(order => order.id === selected);
   // Closing returns to the list that holds the order (it may have moved on) and to its Details button.
-  const closeDetails = () => { if (selectedOrder) queue.setFilter(filterForStatus(selectedOrder.status)); setSelected(null); restorePanelFocus(trigger.current); };
+  const refocus = useRef<string | null>(null);
+  const closeDetails = () => { if (selectedOrder) { queue.setFilter(filterForStatus(selectedOrder.status)); refocus.current = orderReference(selectedOrder.id); } setSelected(null); restorePanelFocus(trigger.current); };
+  // A status step moves the card to another filter list, so the captured button is gone: find it again.
+  useEffect(() => {
+    const reference = refocus.current;
+    if (selected || !reference || typeof document === 'undefined') return;
+    refocus.current = null;
+    const target = document.querySelector<HTMLElement>(`[aria-label="Details for ${reference}"]`);
+    if (target && document.activeElement !== target) target.focus();
+  }, [selected, queue.filter, queue.orders]);
   const { orders, filter, loading, error, notice, success, connection, busyIds, demo } = queue;
   const counts = filterCounts(orders);
   const visible = ordersForFilter(orders, filter);
@@ -182,6 +191,6 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
     {!loading && !error && !demo && !visible.length ? <MarketStatus kind="empty" title={emptyCopy[filter][0]} message={emptyCopy[filter][1]} /> : null}
     {selected ? <OwnerOrderDetails queue={queue} orderId={selected} now={now} onClose={closeDetails} /> : null}
     {visible.map(order => <OrderCard key={order.id} order={order} now={now} demo={demo} busy={busyIds.has(order.id)}
-      onAccept={() => void queue.transition(order, 'accepted')} onDetails={() => { trigger.current = capturePanelFocus(); setSelected(order.id); }} />)}
+      onAccept={() => void queue.transition(order, 'accepted')} onDetails={() => { trigger.current = capturePanelFocus(); queue.clearMessages(); setSelected(order.id); }} />)}
   </View>;
 }

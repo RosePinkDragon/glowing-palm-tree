@@ -855,7 +855,7 @@ const prepareCart = async (page, add = true) => {
       await detailsButton(0x1A6).click();
       await focused(page, `Order ${ref(0x1A6)}`);
       await panel().getByText('123', { exact: true }).waitFor();
-      assert.equal(await panel().getByRole('link', { name: 'Call', exact: true }).count(), 0, 'no Call for an invalid phone');
+      assert.equal(await panel().getByRole('link', { name: /^Call /, exact: true }).count(), 0, 'no Call for an invalid phone');
       assert.equal(await panel().getByRole('link', { name: 'Open in Maps', exact: true }).count(), 0, 'no Maps without a pin');
       await panel().getByRole('button', { name: 'Accept order', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -871,9 +871,9 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await view.getByText('Placed', { exact: true }).count(), 1, 'the placed step has no owner name');
       assert.equal(await view.getByText(/^Placed by /).count(), 0);
       await view.getByText('₹280.00').first().waitFor(); await view.getByText('₹310.00').first().waitFor();
-      assert.equal(await view.getByRole('link', { name: 'Call', exact: true }).getAttribute('href'), 'tel:+919876543210');
+      assert.equal(await view.getByRole('link', { name: /^Call /, exact: true }).getAttribute('href'), 'tel:+919876543210');
       assert.equal(await view.getByRole('link', { name: 'Open in Maps', exact: true }).getAttribute('href'), 'https://www.google.com/maps/search/?api=1&query=17.7,73.4');
-      for (const control of [view.getByRole('link', { name: 'Call', exact: true }), view.getByRole('link', { name: 'Open in Maps', exact: true }), page.getByRole('button', { name: 'Cancel order', exact: true }), page.getByRole('button', { name: 'Start preparing', exact: true })]) { const box = await control.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'details targets are at least 48px'); }
+      for (const control of [view.getByRole('link', { name: /^Call /, exact: true }), view.getByRole('link', { name: 'Open in Maps', exact: true }), page.getByRole('button', { name: 'Cancel order', exact: true }), page.getByRole('button', { name: 'Start preparing', exact: true })]) { const box = await control.boundingBox(); assert.ok(box.height >= 48 && box.width >= 48, 'details targets are at least 48px'); }
       assert.equal(await page.getByRole('button', { name: 'Start preparing', exact: true }).evaluate(node => getComputedStyle(node).backgroundColor), primary, `${slug} primary action colour`);
       await page.screenshot({ path: `/tmp/review101/${slug}-details.png` });
       // Another owner moved it on first: our stale step is refused, the screen reloads to the current state and says so.
@@ -902,6 +902,7 @@ const prepareCart = async (page, add = true) => {
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       await page.getByRole('button', { name: 'Done', exact: true }).waitFor();
       await detailsButton(0x1A3).waitFor();
+      await focused(page, `Details for ${ref(0x1A3)}`); // the card moved to Done; focus still returns to it
       // Cancel sheet: focus moves in, Keep restores it, confirm sends one version-checked cancellation.
       await page.getByRole('button', { name: 'Preparing, 1', exact: true }).click();
       await detailsButton(0x1A4).click();
@@ -939,6 +940,7 @@ const prepareCart = async (page, add = true) => {
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await detailsButton(0x1A5).click();
       await page.getByRole('dialog').first().getByText('This order was delivered. No further actions.', { exact: true }).waitFor();
+      assert.equal(await page.getByText(new RegExp(`^Order ${ref(0x1A7)} was not updated`)).filter({ visible: true }).count(), 0, "another order's notice is not shown here");
       await page.screenshot({ path: `/tmp/review101/${slug}-details-wide.png` });
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
