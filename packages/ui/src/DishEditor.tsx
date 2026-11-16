@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Image, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { MarketSwitch } from './MarketSwitch';
+import { MarketGroup, MarketRow } from './MarketList';
 import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
 import { dietLabels, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
@@ -127,11 +128,11 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
       {fieldError(shown.diet)}
     </View>
 
-    <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 16, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
-      <ToggleRow first label="Available to order" helper={'Off shows "Currently unavailable"'} value={draft.isAvailable} disabled={!!busy} onChange={isAvailable => set({ isAvailable })} />
-      <ToggleRow label={feature} helper={businessId === 'ammu-sammu' ? 'Shown big at the top of the menu while available' : 'Shown with the signature dishes at the top of the menu while available'} value={draft.isFeatured} disabled={!!busy} onChange={isFeatured => set({ isFeatured })} />
-      <ToggleRow label="Sample dish" helper="For testing; labelled as a sample" value={draft.isDemo} disabled={!!busy} onChange={isDemo => set({ isDemo })} />
-    </View>
+    <MarketGroup>
+      <MarketRow title="Available to order" detail={'Off shows "Currently unavailable"'} end={<MarketSwitch label="Available to order" value={draft.isAvailable} disabled={!!busy} onValueChange={isAvailable => set({ isAvailable })} />} />
+      <MarketRow title={feature} detail={businessId === 'ammu-sammu' ? 'Shown big at the top of the menu while available' : 'Shown with the signature dishes at the top of the menu while available'} end={<MarketSwitch label={feature} value={draft.isFeatured} disabled={!!busy} onValueChange={isFeatured => set({ isFeatured })} />} />
+      <MarketRow title="Sample dish" detail="For testing; labelled as a sample" end={<MarketSwitch label="Sample dish" value={draft.isDemo} disabled={!!busy} onValueChange={isDemo => set({ isDemo })} />} />
+    </MarketGroup>
 
     {item ? <Pressable accessibilityRole="button" disabled={demo || !!busy} accessibilityState={{ disabled: demo || !!busy }} onPress={() => { trigger.current = capturePanelFocus(); setDeleteError(''); setConfirmDelete(true); }}
       style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 48, justifyContent: 'center', paddingHorizontal: 4, opacity: demo || busy ? 0.5 : pressed ? 0.7 : 1 })}>
@@ -148,13 +149,6 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   </AccessiblePanel>;
 }
 
-function ToggleRow({ label, helper, value, onChange, disabled, first = false }: { label: string; helper: ReactNode; value: boolean; onChange: (value: boolean) => void; disabled: boolean; first?: boolean }) {
-  const { colors } = useMarketTheme();
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }}>
-    <View style={{ flex: 1, gap: 2 }}><Text style={{ color: colors.ink, fontSize: 16, fontWeight: '700' }}>{label}</Text><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>{helper}</Text></View>
-    <MarketSwitch label={label} value={value} disabled={disabled} onValueChange={onChange} />
-  </View>;
-}
 
 function MenuPhotoEditor({ item, services, onSaved, onClose }: {
   item: MenuItem; services: MarketServices; onSaved: (message: string) => Promise<void>; onClose: () => void;
