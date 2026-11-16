@@ -169,6 +169,22 @@ try {
       assert.equal(orders.length, 1); assert.equal(orders[0].p_location, null, 'no fix, still ordered');
       assert.equal(orders[0].p_delivery.address_id, addressId(1));
 
+      // A phone that never answers (unanswered prompt, no fix) falls back to the same sheet after about 8 s, and ordering still works.
+      await context.grantPermissions(['geolocation']); await reset(); await toCart(); await text('Deliver to Home').waitFor();
+      await page.evaluate(() => { navigator.geolocation.getCurrentPosition = () => {}; navigator.geolocation.watchPosition = () => 0; });
+      await button('Place order').click();
+      await button('Please wait…').waitFor();
+      await text('We couldn\'t confirm where you are').waitFor({ timeout: 20000 });
+      assert.equal(orders.length, 0);
+      // Change address from the sheet, then close the picker: focus goes back to Place order, not to the page.
+      await button('Change address').click(); await visible(page.getByRole('heading', { name: 'Delivery address', exact: true })).first().waitFor();
+      await button('Close').click();
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Place order');
+      await button('Place order').click(); await text('We couldn\'t confirm where you are').waitFor({ timeout: 20000 });
+      await button('Yes, place order').click(); await page.waitForURL(/\/orders\//);
+      assert.equal(orders.length, 1); assert.equal(orders[0].p_location, null);
+      await context.setGeolocation({ ...HOME, accuracy: 12 });
+
       // ADDRESS_CHANGED: addresses are read again, the message is shown, nothing is left pending.
       await context.grantPermissions(['geolocation']); await context.setGeolocation({ ...HOME, accuracy: 12 });
       await reset(); await toCart(); await text('Deliver to Home').waitFor();

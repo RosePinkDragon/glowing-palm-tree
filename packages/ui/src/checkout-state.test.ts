@@ -178,3 +178,10 @@ test('the phone-to-pin distance decides whether the customer confirms first', as
   assert.deepEqual(validateContact({ name: ' Rohan Sawant ', phone: '98765 43210' }), { name: 'Rohan Sawant', phone: '+919876543210' });
   assert.throws(() => validateContact({ name: 'R', phone: '12' }));
 });
+
+test('the phone fix is dropped, not awaited forever, when it fails or never answers', async () => {
+  const { withTimeout } = await import('./checkout-model.ts');
+  assert.equal(await withTimeout(Promise.resolve(5), 50), 5);
+  assert.equal(await withTimeout(Promise.reject(new Error('denied')), 50), null);
+  assert.equal(await withTimeout(new Promise(() => {}), 20), null);
+});

@@ -5,7 +5,7 @@ import * as Crypto from 'expo-crypto';
 import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, setCartItemQuantity, type BusinessSlug, type CartLine, type LocationFix, type MenuItem, type Order, type SavedAddress } from '@market/core';
 import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
 import { CheckoutAddressDialogs, CheckoutAddressSummary, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
-import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, validateContact, type OrderConfirmation } from './checkout-model';
+import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, phoneFixTimeoutMs, validateContact, withTimeout, type OrderConfirmation } from './checkout-model';
 import { useMarketTheme } from './theme';
 import { AuthPanel } from './AuthPanel';
 import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, readAttempt, sameIdentity, type CheckoutAttempt } from './checkout-state';
@@ -48,7 +48,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const currentReorder = reorder && sameIdentity(reorder.identity, market.identity.current) ? reorder : null;
   const { cart, setCart, details, setDetails, receipt, setReceipt } = draft;
   const [busy, setBusy] = useState(false); const [localError, setLocalError] = useState('');
-  const sending = useRef(false);
+  const sending = useRef(false), placeTrigger = useRef<HTMLElement | null>(null);
   const [confirming, setConfirming] = useState<{ address: SavedAddress; fix: LocationFix | null; confirmation: Exclude<OrderConfirmation, { kind: 'direct' }>; totalPaise: number } | null>(null);
   const [revision, setRevision] = useState<RevisedQuote | null>(null);
   const [closedRefusal, setClosedRefusal] = useState<{ business: typeof market.business; identity: typeof market.identity.current } | null>(null);
@@ -144,13 +144,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (sending.current || locked) return;
     if (!market.session) { navigation.current?.login('/cart'); setLocalError('Sign in before placing your order. Your cart will stay here.'); return; }
     const address = addrs.selected;
+    placeTrigger.current = capturePanelFocus();
     if (!address) { setLocalError(addrs.addresses?.length ? 'Choose a delivery address first.' : 'Add a delivery address first.'); addrs.open(); return; }
     sending.current = true; setBusy(true); setLocalError('');
     let next: { fix: LocationFix | null; confirmation: OrderConfirmation; totalPaise: number } | null = null;
     try {
       const { pricing } = validateOrder();
       // A current phone location only decides whether to ask; being denied or unavailable never blocks the order.
-      const fix = await requestLocation().catch(() => null);
+      const fix = await withTimeout(requestLocation(), phoneFixTimeoutMs);
       next = { fix, confirmation: confirmationFor(fix, address), totalPaise: pricing.total_paise };
     } catch (e) { setLocalError(messageOf(e)); } finally { sending.current = false; setBusy(false); }
     if (!next) return;
@@ -245,5 +246,5 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Profile' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Profile' ? 'Edit profile' : 'Notifications'}</MarketText><MarketText>{page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
-  return <><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(); }} confirm={() => { const chosen = confirming; setConfirming(null); void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
+  return <><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null); void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
 }

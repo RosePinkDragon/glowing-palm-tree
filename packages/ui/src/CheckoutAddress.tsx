@@ -36,7 +36,8 @@ export function useCheckoutAddresses(market: Market, enabled: boolean) {
     return () => { active = false; };
   }, [enabled, userId, market.services, market.identity, market.identityVersion, reload]);
   const selected = addresses?.find(address => address.id === selectedId && selectable(address)) ?? null;
-  const open = () => { trigger.current = capturePanelFocus(); setNotice(''); setDialog('picker'); };
+  /** `from` is the control to return focus to when the opener is about to unmount (the confirmation sheet's button). */
+  const open = (from?: HTMLElement | null) => { trigger.current = from ?? capturePanelFocus(); setNotice(''); setDialog('picker'); };
   const close = () => { setDialog(null); restorePanelFocus(trigger.current); };
   const saveNew = async (draft: AddressDraft) => {
     const created = await market.services.saveAddress(draft);
@@ -74,7 +75,7 @@ export function CheckoutAddressSummary({ ctrl }: { ctrl: CheckoutAddresses }) {
         <Text style={{ color: colors.ink, fontSize: 17, lineHeight: 24, ...bold }}>{selected ? `Deliver to ${addressTitle(selected)}` : 'No address chosen'}</Text>
         <Text style={muted}>{selected ? `${addressLine(selected)}${selected.distanceM !== null ? ` · ${formatDistance(selected.distanceM)}` : ''}` : 'Choose where we should deliver this order.'}</Text>
       </View>
-      <Pressable accessibilityRole="button" accessibilityLabel={selected ? 'Change delivery address' : 'Choose delivery address'} onPress={ctrl.open} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={selected ? 'Change delivery address' : 'Choose delivery address'} onPress={() => ctrl.open()} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
         <Text style={{ color: colors.primary, fontSize: 15, ...bold }}>{selected ? 'Change' : 'Choose'}</Text>
       </Pressable>
     </View> : null}

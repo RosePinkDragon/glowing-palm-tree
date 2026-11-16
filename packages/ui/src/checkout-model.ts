@@ -53,3 +53,12 @@ export const addressOutsideReason = 'Outside delivery area';
 
 /** Whether an address can be picked: only inside this restaurant's area. */
 export const selectable = (address: SavedAddress) => address.inArea;
+
+/** How long checkout waits for the phone before treating it as no location; web geolocation has no timeout of its own. */
+export const phoneFixTimeoutMs = 8000;
+/** The fix, or null when it fails or doesn't answer in time. Never rejects, so it can't hold checkout up. */
+export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), ms); });
+  return Promise.race([work.catch(() => null), late]).finally(() => clearTimeout(timer));
+}
