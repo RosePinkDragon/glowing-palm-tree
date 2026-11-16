@@ -8,11 +8,8 @@ import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
 import type { OwnerOrdersState } from './OwnerOrders';
-import Svg, { Path } from 'react-native-svg';
+import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
-
-// Phone handset outline for the cancel hint (decorative).
-const phonePath = 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z';
 
 type Tone = 'primary' | 'secondary' | 'danger';
 /** 48px-minimum action used by order cards, the details footer and the cancel sheet. */
@@ -27,7 +24,7 @@ export function ActionButton({ label, name, tone = 'secondary', grow, disabled, 
 }
 
 /** A link styled as a 48px button. Web gets a real anchor (tel:/https:); native opens the URL through Linking. */
-function LinkButton({ label, name, href, tone = 'secondary', external }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary'; external?: boolean }) {
+function LinkButton({ label, name, href, tone = 'secondary', external, icon }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary'; external?: boolean; icon?: MarketIconName }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const [failed, setFailed] = useState(false);
@@ -35,7 +32,7 @@ function LinkButton({ label, name, href, tone = 'secondary', external }: { label
   const web = Platform.OS === 'web';
   return <View style={{ gap: 4 }}>
     <Text accessibilityRole="link" accessibilityLabel={name ?? label} {...(web ? ({ href, ...(external ? { hrefAttrs: { target: '_blank', rel: 'noopener noreferrer' } } : {}) } as object) : { onPress: () => { setFailed(false); Linking.openURL(href).catch(() => setFailed(true)); } })}
-      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
+      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{icon ? <><MarketIcon inline name={icon} color={primary ? colors.onPrimary : colors.ink} size={16} />{' '}</> : null}{label}</Text>
     {failed ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>Could not open this link on this device.</Text> : null}
   </View>;
 }
@@ -87,12 +84,12 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
           <Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{order.delivery.name}</Text>
           <MarketText variant="muted">{order.delivery.phone}</MarketText>
         </View>
-        {call ? <View style={{ minWidth: 96 }}><LinkButton tone="primary" label="Call" name={`Call ${order.delivery.name}`} href={call} /></View> : null}
+        {call ? <View style={{ minWidth: 96 }}><LinkButton tone="primary" icon="phone" label="Call" name={`Call ${order.delivery.name}`} href={call} /></View> : null}
       </View>
       {!call ? <MarketText variant="muted">This phone number can't be dialled. Check it before calling.</MarketText> : null}
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 10 }}>
-        <MarketText>{order.delivery.addressLine}</MarketText>
-        {maps ? <LinkButton external label="Open in Maps" href={maps} /> : null}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}><MarketIcon name="pin" color={colors.muted} nudge={3} /><View style={{ flex: 1 }}><MarketText>{order.delivery.addressLine}</MarketText></View></View>
+        {maps ? <LinkButton external icon="map" label="Open in Maps" href={maps} /> : null}
       </View>
     </MarketSection>
     <MarketSection title="Items">
@@ -110,7 +107,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
     {confirming ? <AccessiblePanel sheet title={`Cancel order ${reference}?`} onClose={closeSheet}>
       <MarketText>{`${order.delivery.name}'s order for ${formatINRFromPaise(order.totalPaise)} will be cancelled, and it will show as cancelled in their app. This can't be undone.`}</MarketText>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>
-        <Svg aria-hidden accessible={false} importantForAccessibility="no" width={18} height={18} viewBox="0 0 24 24" style={{ marginTop: 3 }}><Path d={phonePath} fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg>
+        <MarketIcon name="phone" color={colors.primary} nudge={3} />
         <View style={{ flex: 1 }}><MarketText>A quick call to say why helps, for example if a dish has run out.</MarketText></View>
       </View>
       <ActionButton tone="danger" label={busy ? 'Cancelling…' : 'Cancel the order'} disabled={locked} onPress={() => { setConfirming(false); run('cancelled'); }} />

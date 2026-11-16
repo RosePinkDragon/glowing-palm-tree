@@ -31,3 +31,10 @@ test('pill and chip text stays readable on its background in both themes (WCAG 1
     for (const [name, text, ground] of pairs) assert.ok(contrastRatio(text, ground) >= 4.5, `${theme.name}: ${name} ${text} on ${ground} = ${contrastRatio(text, ground).toFixed(2)}`);
   }
 });
+
+test('the amber paused banner keeps its title and body readable in both themes (WCAG 1.4.3, 4.5:1)', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    for (const [name, text] of [['title', c.warning], ['body', c.ink]] as const) assert.ok(contrastRatio(text, c.warningTint) >= 4.5, `${theme.name}: banner ${name} ${text} on ${c.warningTint}`);
+  }
+});
