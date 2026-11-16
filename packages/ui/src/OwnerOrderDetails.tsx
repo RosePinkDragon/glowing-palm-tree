@@ -7,7 +7,7 @@ import { MarketLine, MarketSection } from './MarketList';
 import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
-import type { OwnerOrdersState } from './OwnerOrders';
+import { ownerReference, type OwnerOrdersState } from './OwnerOrders';
 import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
@@ -43,7 +43,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       : <MarketStatus kind="empty" title="This order is no longer available" message="It may have been removed. Go back to the Orders list." />}
   </AccessiblePanel>;
 
-  const reference = (order.orderNumber ?? orderReference(order.id));
+  const reference = ownerReference(order);
   const busy = queue.busyIds.has(order.id);
   const locked = busy || queue.demo;
   const next = nextAction(order.status);

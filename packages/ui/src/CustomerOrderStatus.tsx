@@ -1,4 +1,4 @@
-import { useRef, type ComponentRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ComponentRef, type ReactNode } from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketLinkButton, MarketText } from './components';
@@ -32,12 +32,13 @@ function StatusHeader({ order, eyebrow, title, detail }: { order: Order; eyebrow
   const { colors, statusHeader } = useMarketTheme();
   const fonts = useMarketFonts();
   const band = statusHeader === 'band';
-  const heading = (color: string, size: number, align?: 'center') => <Text accessibilityRole="header" aria-level={1}
+  const heading = (color: string, size: number, align?: 'center') => <Text accessibilityRole="header" aria-level={2}
     style={{ color, fontSize: size, lineHeight: size * 1.2, textAlign: align, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{title}</Text>;
   const body = (color: string, align?: 'center') => <Text style={{ color, fontSize: 15, lineHeight: 22, textAlign: align, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{detail}</Text>;
-  const stage = trackingTimeline(order).findIndex(s => s.state === 'current');
-  if (band) return <View role="status" accessibilityLiveRegion="polite" style={{ gap: 8, padding: 20, borderRadius: 22, backgroundColor: colors.primary }}>
-    <Text style={{ color: colors.bandAccent, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, textTransform: 'uppercase', ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{eyebrow}</Text>
+  const cancelled = order.status === 'cancelled';
+  const stage = order.status === 'delivered' || cancelled ? -1 : trackingTimeline(order).findIndex(s => s.state === 'current');
+  if (band) return <View role="status" accessibilityLiveRegion="polite" style={{ gap: 8, padding: 20, borderRadius: 22, backgroundColor: cancelled ? colors.bandMuted : colors.band }}>
+    <Text style={{ color: cancelled ? colors.bandMutedAccent : colors.bandAccent, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, textTransform: 'uppercase', ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{eyebrow}</Text>
     {heading(colors.onPrimary, 30)}
     {body(colors.onPrimary)}
     {stage >= 0 ? <View aria-hidden style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
@@ -50,29 +51,32 @@ function StatusHeader({ order, eyebrow, title, detail }: { order: Order; eyebrow
     {body(colors.muted, 'center')}
   </View>;
   return <View role="status" accessibilityLiveRegion="polite" style={{ gap: 10, alignItems: 'flex-start' }}>
-    <MarketPill label={eyebrow} tone={order.status === 'cancelled' ? 'neutral' : 'brand'} dot={order.status !== 'cancelled'} />
+    <MarketPill caps label={eyebrow} tone={order.status === 'cancelled' ? 'quiet' : 'warning'} dot={order.status !== 'cancelled'} />
     {heading(colors.ink, 30)}
     {body(colors.muted)}
   </View>;
 }
 
-function StageMark({ state, cancelled }: { state: 'complete' | 'current' | 'pending'; cancelled?: boolean }) {
+function StageMark({ state, cancelled, neutral }: { state: 'complete' | 'current' | 'pending'; cancelled?: boolean; neutral?: boolean }) {
   const { colors } = useMarketTheme();
   const box = { width: 26, height: 26, borderRadius: 13, alignItems: 'center' as const, justifyContent: 'center' as const };
+  if (neutral) return <View aria-hidden style={{ ...box, backgroundColor: colors.muted }}><MarketIcon name="check" color={colors.onPrimary} size={14} /></View>;
   if (cancelled) return <View aria-hidden style={{ ...box, backgroundColor: colors.danger }}><MarketIcon name="close" color={colors.onPrimary} size={14} /></View>;
   if (state === 'complete') return <View aria-hidden style={{ ...box, backgroundColor: colors.primary }}><MarketIcon name="check" color={colors.onPrimary} size={14} /></View>;
-  if (state === 'current') return <View aria-hidden style={{ ...box, borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.tint }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary }} /></View>;
+  if (state === 'current') return <View aria-hidden style={{ ...box, width: 32, height: 32, borderRadius: 16, marginHorizontal: -3, marginVertical: -3, backgroundColor: colors.tint }}>
+    <View style={{ ...box, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.surface }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary }} /></View>
+  </View>;
   return <View aria-hidden style={{ ...box, borderWidth: 2, borderColor: colors.border, backgroundColor: colors.surface }} />;
 }
 
-function StageRow({ label, time, state, last, cancelled }: { label: string; time: string | null; state: 'complete' | 'current' | 'pending'; last: boolean; cancelled?: boolean }) {
+function StageRow({ label, time, state, last, cancelled, neutral, connector = true }: { label: string; time: string | null; state: 'complete' | 'current' | 'pending'; last: boolean; cancelled?: boolean; neutral?: boolean; connector?: boolean }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const spoken = `${label}, ${cancelled ? 'cancelled' : state === 'complete' ? 'done' : state === 'current' ? 'now' : 'not yet'}${time ? `, ${time}` : ''}`;
   return <View accessible accessibilityLabel={spoken} role="listitem" style={{ flexDirection: 'row', gap: 14 }}>
     <View style={{ alignItems: 'center', width: 26 }}>
-      <StageMark state={state} cancelled={cancelled} />
-      {!last ? <View aria-hidden style={{ width: 2, flex: 1, minHeight: 18, backgroundColor: state === 'complete' ? colors.primary : colors.border }} /> : null}
+      <StageMark state={state} cancelled={cancelled} neutral={neutral} />
+      {!last && connector ? <View aria-hidden style={{ width: 2, flex: 1, minHeight: 18, backgroundColor: state === 'complete' ? colors.primary : colors.border }} /> : null}
     </View>
     <View style={{ flex: 1, paddingBottom: last ? 0 : 16, gap: 2 }}>
       <Text style={{ color: state === 'pending' ? colors.muted : colors.ink, fontSize: 16, lineHeight: 22, ...(state !== 'pending' && fonts.bodyBold ? { fontFamily: fonts.bodyBold } : state !== 'pending' ? { fontWeight: '700' as const } : fonts.body ? { fontFamily: fonts.body } : {}) }}>{label}</Text>
@@ -85,7 +89,7 @@ function Timeline({ order }: { order: Order }) {
   if (order.status === 'cancelled') {
     const ended = terminalTime(order);
     return <MarketSection><View role="list">
-      <StageRow label="Order placed" time={shortTime(order.createdAtISO)} state="complete" last={false} />
+      <StageRow label="Order placed" time={shortTime(order.createdAtISO)} state="complete" last={false} neutral connector={false} />
       <StageRow label="Cancelled by the restaurant" time={ended ? shortTime(ended) : null} state="complete" cancelled last />
     </View></MarketSection>;
   }
@@ -97,12 +101,12 @@ function Timeline({ order }: { order: Order }) {
 }
 
 function Lines({ order }: { order: Order }) {
-  const { colors } = useMarketTheme();
+  const { colors, receiptRule } = useMarketTheme();
   const cancelled = order.status === 'cancelled';
   return <MarketSection>
     {order.lines.map((line, i) => <MarketLine key={`${line.menuItemId}-${i}`} left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} />)}
     <MarketLine left={<Text style={{ color: colors.muted }}>Delivery</Text>} right={<Text style={{ color: colors.muted, fontSize: 15 }}>{formatINRFromPaise(order.deliveryFeePaise)}</Text>} />
-    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
+    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 10 }}>
       <MarketLine bold left={cancelled ? 'Total' : 'Paid in cash'} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
     </View>
   </MarketSection>;
@@ -117,20 +121,31 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 }
 
 export function OrderStatusView({ order, restaurant, phone, updates, onReorder }: {
-  order: Order; restaurant: string; phone: string | null;
-  /** Shown only while the order is in progress and order updates are off. */
-  updates?: { busy: boolean; turnOn: () => void; message?: string };
+  /** undefined while the restaurant is still loading: say nothing about calling yet. */
+  order: Order; restaurant: string; phone: string | null | undefined;
+  /** offer: show "Get updates" (order in progress, updates off). message: result of turning them on. */
+  updates: { offer: boolean; busy: boolean; turnOn: () => void; message: string };
   onReorder?: ReorderAction;
 }) {
-  const { colors, statusHeader } = useMarketTheme();
+  const { colors, statusHeader, voice } = useMarketTheme();
   const trigger = useRef<ComponentRef<typeof Pressable>>(null);
   const restoreFocus = () => {
     if (Platform.OS === 'web') restorePanelFocus(trigger.current as unknown as HTMLElement | null);
     else setTimeout(() => { const handle = findNodeHandle(trigger.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }, 0);
   };
-  const copy = statusCopy(order, restaurant, statusHeader, indiaParts, formatINRFromPaise(order.totalPaise));
+  const updatesStatus = useRef<ComponentRef<typeof View>>(null);
+  const tapped = useRef(false);
   const active = order.status !== 'delivered' && order.status !== 'cancelled';
-  const call = (label: string, primary = false) => phone ? <MarketLinkButton tone={primary ? 'primary' : 'secondary'} icon="phone" label={label} name={`Call ${restaurant}`} href={phone} />
+  // Turning updates on removes the offer (and its focused button): keep focus on the result instead.
+  useEffect(() => {
+    if (updates.offer || !tapped.current) return;
+    tapped.current = false;
+    const node = updatesStatus.current as unknown as { focus?: () => void } | null;
+    if (Platform.OS === 'web') node?.focus?.();
+    else { const handle = findNodeHandle(updatesStatus.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
+  }, [updates.offer]);
+  const copy = statusCopy(order, restaurant, statusHeader, indiaParts, formatINRFromPaise(order.totalPaise), voice);
+  const call = (label: string, icon: boolean) => phone === undefined ? null : phone ? <MarketLinkButton tone={icon ? 'brand' : 'secondary'} icon={icon ? 'phone' : undefined} compact={!icon} label={label} name={`Call ${restaurant}`} href={phone} />
     : <MarketText variant="muted">Restaurant phone is unavailable. Please try Help & support.</MarketText>;
   const reorder = (label: string) => onReorder ? <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`${label} for order ${orderName(order)}`} onPress={() => onReorder(order, restoreFocus)}
     style={({ pressed }) => ({ flex: 1, minHeight: 48, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: pressed ? 0.85 : 1 })}>
@@ -140,20 +155,24 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
   const addressTitle = order.address ? order.address.label === 'other' ? order.address.customLabel ?? 'Other' : order.address.label === 'home' ? 'Home' : 'Work' : null;
 
   return <View style={{ gap: 16 }}>
-    <MarketText variant="heading">{`Order ${orderName(order)}`}</MarketText>
+    <Text accessibilityRole="header" aria-level={1} style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>{`Order ${orderName(order)}`}</Text>
     <StatusHeader order={order} eyebrow={copy.eyebrow} title={copy.title} detail={copy.detail} />
     {order.status !== 'delivered' ? <Timeline order={order} /> : null}
-    {active && updates ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 18, backgroundColor: colors.tint }}>
-      <MarketIcon name="bell" color={colors.primary} />
+    {active && updates.offer ? <View style={{ gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <MarketIcon name="bell" color={colors.updatesIcon} />
       <View style={{ flex: 1 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>Get updates on this order</Text><Text style={{ color: colors.muted, fontSize: 14 }}>A notification at every step</Text></View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Turn on order updates" disabled={updates.busy} onPress={updates.turnOn}
-        style={{ minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface, opacity: updates.busy ? 0.6 : 1 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Turn on order updates" disabled={updates.busy} onPress={() => { tapped.current = true; updates.turnOn(); }}
+        style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.surface, opacity: updates.busy ? 0.6 : 1 }}>
         <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '700' }}>Turn on</Text>
       </Pressable>
+    </View>
     </View> : null}
-    {updates?.message ? <View role="status" accessibilityLiveRegion="polite"><MarketText>{updates.message}</MarketText></View> : null}
+    {/* Always mounted so a result is announced; focusable so focus can land here after the offer closes. */}
+    <View ref={updatesStatus} role="status" accessibilityLiveRegion="polite" {...(Platform.OS === 'web' ? { tabIndex: -1 } as object : {})}>
+      {updates.message ? <Text style={{ color: colors.ink, fontSize: 14, lineHeight: 20 }}>{updates.message}</Text> : null}
+    </View>
     {active ? <MarketSection title="Order details">
-      <DetailRow label="Items">{order.lines.map(line => `${line.quantity} × ${line.name}`).join(', ')}</DetailRow>
+      <DetailRow label={voice === 'we' ? 'Dishes' : 'Items'}>{order.lines.map(line => `${line.quantity} × ${line.name}`).join(', ')}</DetailRow>
       <DetailRow label="Deliver to">{addressTitle ? `${addressTitle} · ${address}` : address}</DetailRow>
       <DetailRow label="Payment">{`${formatINRFromPaise(order.totalPaise)} cash on delivery`}</DetailRow>
     </MarketSection> : <Lines order={order} />}
@@ -161,10 +180,10 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
       <MarketIcon name="pin" color={colors.primary} nudge={2} />
       <View style={{ flex: 1, gap: 2 }}>{addressTitle ? <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>{addressTitle}</Text> : null}<Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{address}</Text></View>
     </View></MarketSection> : null}
-    {active ? call(`Call ${restaurant}`) : null}
+    {active ? call(`Call ${restaurant}`, true) : null}
     {order.status === 'cancelled' ? <>
       <MarketText variant="muted">Want to know why? The restaurant can tell you.</MarketText>
-      <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}><View style={{ flex: 1, minWidth: 150 }}>{call(`Call ${restaurant}`)}</View>{onReorder ? <View style={{ flex: 1, minWidth: 150, flexDirection: 'row' }}>{reorder('Order again')}</View> : null}</View>
+      <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}><View style={{ flex: 1, minWidth: 140 }}>{call(voice === 'we' ? 'Call us' : `Call ${restaurant}`, false)}</View>{onReorder ? <View style={{ flex: 1, minWidth: 140, flexDirection: 'row' }}>{reorder('Order again')}</View> : null}</View>
     </> : null}
     {order.status === 'delivered' ? <View style={{ flexDirection: 'row' }}>{reorder('Order this again')}</View> : null}
   </View>;

@@ -65,7 +65,8 @@ export function MarketNavigation({ items }: { items: { label: string; onPress: (
 }
 
 /** A link styled as a 48px button. Web gets a real anchor (tel:/https:); native opens the URL through Linking. */
-export function MarketLinkButton({ label, name, href, tone = 'secondary', external, icon }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary'; external?: boolean; icon?: MarketIconName }) {
+/** tone: primary (filled), secondary (ink on white), brand (brand-coloured text and border on white). */
+export function MarketLinkButton({ label, name, href, tone = 'secondary', external, icon, compact = false }: { label: string; name?: string; href: string; tone?: 'primary' | 'secondary' | 'brand'; external?: boolean; icon?: MarketIconName; compact?: boolean }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const [failed, setFailed] = useState(false);
@@ -73,7 +74,7 @@ export function MarketLinkButton({ label, name, href, tone = 'secondary', extern
   const web = Platform.OS === 'web';
   return <View style={{ gap: 4 }}>
     <Text accessibilityRole="link" accessibilityLabel={name ?? label} {...(web ? ({ href, ...(external ? { hrefAttrs: { target: '_blank', rel: 'noopener noreferrer' } } : {}) } as object) : { onPress: () => { setFailed(false); Linking.openURL(href).catch(() => setFailed(true)); } })}
-      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{icon ? <><MarketIcon inline name={icon} color={primary ? colors.onPrimary : colors.ink} size={16} />{' '}</> : null}{label}</Text>
+      style={{ minHeight: 48, minWidth: 48, paddingHorizontal: compact ? 10 : 20, paddingVertical: 13, textAlign: 'center', borderRadius: 14, borderWidth: 1, borderColor: primary || tone === 'brand' ? colors.primary : colors.border, backgroundColor: primary ? colors.primary : colors.surface, overflow: 'hidden', color: primary ? colors.onPrimary : tone === 'brand' ? colors.primary : colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{icon ? <><MarketIcon inline name={icon} color={primary ? colors.onPrimary : tone === 'brand' ? colors.primary : colors.ink} size={16} />{' '}</> : null}{label}</Text>
     {failed ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 13 }}>Could not open this link on this device.</Text> : null}
   </View>;
 }

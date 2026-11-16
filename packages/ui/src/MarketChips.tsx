@@ -19,7 +19,7 @@ export function MarketChip({ label, selected, onPress, accessibilityLabel, count
   </Pressable>;
 }
 
-export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger';
+export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'warning';
 
 /**
  * A small status or label pill. Tones: brand (featured, order status), positive (Live),
@@ -27,8 +27,10 @@ export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 
  * Pass `status` to make it a live status region with its own accessible name.
  * Place it in a row or content-sized parent: it sizes to its content and lets the parent align it.
  */
-export function MarketPill({ label, tone, dot = false, star = false, status }: {
+export function MarketPill({ label, tone, dot = false, star = false, status, caps = false }: {
   label: string; tone: PillTone; dot?: boolean; star?: boolean; status?: string;
+  /** Letter-spaced capitals, as on the customer order status pill (#47). */
+  caps?: boolean;
 }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
@@ -39,11 +41,12 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     quiet: { bg: colors.neutralTint, text: colors.muted, border: undefined, dot: colors.muted },
     outline: { bg: colors.surface, text: colors.muted, border: colors.inputBorder, dot: colors.muted },
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
+    warning: { bg: colors.warningTint, text: colors.warning, border: undefined, dot: colors.warning },
   }[tone];
   return <View {...(status ? { role: 'status' as const, 'aria-label': status } : {})}
     style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, minHeight: 24, borderRadius: 12, backgroundColor: look.bg, borderWidth: look.border ? 1 : 0, borderColor: look.border }}>
     {dot ? <View aria-hidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: look.dot }} /> : null}
     {star ? <Text accessible={false} aria-hidden style={{ fontSize: 11, color: look.text }}>★</Text> : null}
-    <Text style={{ color: look.text, fontSize: 12, lineHeight: 18, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{label}</Text>
+    <Text style={{ color: look.text, fontSize: 12, lineHeight: 18, ...(caps ? { textTransform: 'uppercase' as const, letterSpacing: 1.2 } : {}), ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{label}</Text>
   </View>;
 }

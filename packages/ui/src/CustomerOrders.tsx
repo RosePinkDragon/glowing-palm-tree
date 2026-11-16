@@ -24,7 +24,7 @@ export function OrderCard({ order, onTrack, onReorder }: { order: Order; onTrack
   };
   return <MarketCard>
     <MarketText variant="heading">{`Order ${orderName(order)}`}</MarketText>
-    <View role="status" accessibilityLiveRegion="polite"><MarketText>Status: {label(order)}</MarketText></View>
+    <MarketText>Status: {label(order)}</MarketText>
     <MarketText variant="muted">{shortTime(order.createdAtISO)}</MarketText>
     {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText><DietMark diet={line.diet} /></View>)}
     <MarketText>Delivery: {formatINRFromPaise(order.deliveryFeePaise)} · Total: {formatINRFromPaise(order.totalPaise)}</MarketText>
@@ -69,10 +69,10 @@ export function CustomerOrderDetail({ market, id, receipt, onReorder, onHelp }: 
   const saved = receipt?.id === id ? receipt : null;
   const shown = current?.order ?? (!current?.resolved ? saved : null);
   // The consent offer appears only while the order is in progress and updates are off (existing consent flow).
-  const updates = shown && activeOrder(shown) && market.preferences.ready && !market.preferences.prefs.push
-    ? { busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage || undefined } : undefined;
+  const offer = !!shown && activeOrder(shown) && market.preferences.ready && !market.preferences.prefs.push;
+  const updates = { offer, busy: market.preferences.busy, turnOn: () => market.preferences.setPush(true), message: market.preferences.pushMessage };
   return <View style={{ gap: 16 }}>
-    {shown ? <OrderStatusView order={shown} restaurant={name} phone={phone} updates={updates} onReorder={onReorder} /> : null}
+    {shown ? <OrderStatusView order={shown} restaurant={name} phone={market.businessReady ? phone : undefined} updates={updates} onReorder={onReorder} /> : null}
     {current?.error ? <MarketStatus kind="error" title="Could not load your orders" message={current.error} action={<MarketButton label="Retry orders" onPress={() => setRetry(n => n + 1)} />} /> : null}
     {(!current || current.loading) && !shown && !current?.resolved ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
     {current?.loading && current.resolved ? <MarketText variant="muted">Refreshing order…</MarketText> : null}

@@ -182,7 +182,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.keyboard.press('Tab');
   await page.waitForFunction(() => document.activeElement?.textContent === 'Cancel');
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => /^(Reorder order|Order this again for order) 000024$/.test(document.activeElement?.getAttribute('aria-label') ?? ''));
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Reorder order 000024');
   gate.release(); assert.equal(await raw(), initial, 'cancel while fetching preserves draft and restores the drawer trigger');
   const freshItem = { ...item, price_paise: 17500, category_id: '56000000-0000-4000-8000-000000000002', menu_categories: { name: 'Fresh meals', sort_order: 0 } };
   fixture.menu = [freshItem];
@@ -207,11 +207,11 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await cancel(); assert.equal(await raw(), existing, 'Cancel leaves existing cart byte-for-byte unchanged');
-  await choice(); await page.keyboard.press('Escape'); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); await page.waitForFunction(() => /^(Reorder order|Order this again for order) 000024$/.test(document.activeElement?.getAttribute('aria-label') ?? ''));
+  await choice(); await page.keyboard.press('Escape'); await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' }); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Order this again for order 000024');
   assert.equal(await raw(), existing, 'Escape leaves existing cart unchanged');
   await choice(); await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
   await page.getByRole('heading', { name: 'Reorder', exact: true }).waitFor({ state: 'hidden' });
-  await page.waitForFunction(() => /^(Reorder order|Order this again for order) 000024$/.test(document.activeElement?.getAttribute('aria-label') ?? ''));
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Order this again for order 000024');
   assert.equal(await raw(), existing, 'browser back dismissal leaves the cart unchanged');
   await choice(); await page.getByRole('button', { name: 'Add to cart', exact: true }).evaluate(button => { button.click(); button.click(); });
   await page.getByText(/Reorder added to your cart at current menu prices/).filter({ visible: true }).waitFor();

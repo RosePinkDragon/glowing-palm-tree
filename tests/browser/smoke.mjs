@@ -1147,7 +1147,7 @@ async function tracking47() {
         await page.screenshot({ path: `dist/browser/${slug}-tracking-desktop.png`, fullPage: true });
         pushStatus('out_for_delivery', '2026-11-16T06:50:00Z');
         await visible(slug === 'kokani-dine-inn' ? 'Out for delivery' : 'Your food is on its way').first().waitFor();
-        await page.getByText(/left the kitchen at .*Please keep ₹170 ready in cash\.$/).filter({ visible: true }).waitFor();
+        await page.getByText(/left (the|our) kitchen at .*Please keep ₹170 ready in cash\.$/).filter({ visible: true }).waitFor();
         pushStatus('delivered', '2026-11-16T07:05:00Z');
         await visible(slug === 'kokani-dine-inn' ? 'Enjoy your meal' : 'Delivered. Enjoy!').waitFor();
         await visible('Paid in cash').waitFor(); await visible('₹170').waitFor();
