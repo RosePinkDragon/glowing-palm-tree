@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Image, Platform, Pressable, Switch, Text, TextInput, View } from 'react-native';
+import { Image, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { MarketSwitch } from './MarketSwitch';
 import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
 import { dietLabels, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
@@ -13,7 +14,6 @@ import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './Accessi
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const focusById = (id: string) => { if (Platform.OS === 'web' && typeof document !== 'undefined') setTimeout(() => document.getElementById(id)?.focus(), 0); };
 /** Green on / dark grey off: both tracks keep 3:1 contrast against white. */
-export const switchColors = { trackColor: { false: '#857873', true: '#2E7D32' }, thumbColor: '#FFFFFF', activeThumbColor: '#FFFFFF', ios_backgroundColor: '#857873' } as const;
 const dietChoices: { diet: Diet; short: string }[] = [{ diet: 'veg', short: 'Veg' }, { diet: 'egg', short: 'Egg' }, { diet: 'non_veg', short: 'Non-veg' }];
 const fieldIds: Record<keyof DishDraftErrors, string> = { name: 'dish-name', category: 'dish-category', price: 'dish-price', description: 'dish-description', diet: 'dish-diet-veg' };
 
@@ -152,7 +152,7 @@ function ToggleRow({ label, helper, value, onChange, disabled, first = false }: 
   const { colors } = useMarketTheme();
   return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }}>
     <View style={{ flex: 1, gap: 2 }}><Text style={{ color: colors.ink, fontSize: 16, fontWeight: '700' }}>{label}</Text><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>{helper}</Text></View>
-    <Switch accessibilityLabel={label} value={value} disabled={disabled} onValueChange={onChange} {...switchColors} />
+    <MarketSwitch label={label} value={value} disabled={disabled} onValueChange={onChange} />
   </View>;
 }
 

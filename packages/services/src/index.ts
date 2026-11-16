@@ -285,7 +285,7 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await db.from('business_memberships').select('display_name').eq('business_id', business.id).eq('user_id', user.user.id).eq('role', 'admin').maybeSingle();
     fail(error, 'Could not load your owner name');
     const name = (data as { display_name?: unknown } | null)?.display_name;
-    return typeof name === 'string' && name.trim() ? name : null;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
   };
   const requireAdminBusiness = async (): Promise<Business> => {
     if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage the menu.');

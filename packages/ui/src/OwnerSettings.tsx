@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Pressable, Switch, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { switchColors } from './DishEditor';
+import { MarketSwitch } from './MarketSwitch';
 import { messageOf, type useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { ownerInitials } from './owner-navigation';
@@ -13,13 +13,15 @@ type Market = ReturnType<typeof useMarket>;
 export function OwnerSettings({ market }: { market?: Market }) {
   const { colors, name } = useMarketTheme();
   const fonts = useMarketFonts();
-  const [ownerName, setOwnerName] = useState<string | null>(null);
+  // undefined while loading, so the card never flashes the contact before the name arrives.
+  const [ownerName, setOwnerName] = useState<string | null | undefined>(undefined);
   const [signOutError, setSignOutError] = useState('');
   const session = market?.session;
   const settings = market?.preferences;
   useEffect(() => {
     if (!market || !session) return;
     let active = true;
+    setOwnerName(undefined);
     // A missing name is not an error: fall back to the account identifier.
     market.services.getOwnerDisplayName().then(value => { if (active) setOwnerName(value); }, () => { if (active) setOwnerName(null); });
     return () => { active = false; };
@@ -49,17 +51,19 @@ export function OwnerSettings({ market }: { market?: Market }) {
 
   const contact = session.user.phone ? `+${session.user.phone}` : session.user.email ?? 'Signed in';
   const displayName = ownerName ?? contact;
+  const loadingName = ownerName === undefined;
   const switchRow = (key: string, title: string, detail: string, value: boolean, onChange: (next: boolean) => void, last = false) =>
-    row(key, title, detail, <Switch accessibilityLabel={title} accessibilityHint={detail} value={value} disabled={!settings.ready || settings.busy} onValueChange={onChange} {...switchColors} />, last);
+    row(key, title, detail, <MarketSwitch label={title} hint={detail} value={value} disabled={!settings.ready} busy={settings.busy} onValueChange={onChange} />, last);
 
   return <View style={{ gap: 20 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
       <View aria-hidden style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: colors.onPrimary, fontSize: 16, ...bold }}>{ownerInitials(displayName)}</Text>
+        {loadingName ? null : <Text style={{ color: colors.onPrimary, fontSize: 16, ...bold }}>{ownerInitials(displayName)}</Text>}
       </View>
       <View style={{ flex: 1, gap: 2 }}>
+        {loadingName ? <View aria-label="Loading your name" role="progressbar" style={{ gap: 6 }}><View style={{ width: 140, height: 16, borderRadius: 8, backgroundColor: colors.border }} /><View style={{ width: 100, height: 12, borderRadius: 6, backgroundColor: colors.border }} /></View> : <>
         <Text accessibilityRole="header" aria-level={2} style={{ ...body(17), ...bold }}>{displayName}</Text>
-        <Text style={muted}>{ownerName ? `${contact} · Owner` : 'Owner'}</Text>
+        <Text style={muted}>{ownerName ? `${contact} · Owner` : 'Owner'}</Text></>}
       </View>
     </View>
     {!market.services.persistenceAvailable() ? <Text style={muted}>This session is stored only for this visit because device storage is unavailable.</Text> : null}

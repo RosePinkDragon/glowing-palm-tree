@@ -702,5 +702,6 @@ test('owner display name reads only the signed-in owner row and falls back to nu
     assert.equal(query?.get('user_id'), 'eq.name-owner'); assert.equal(query?.get('business_id'), 'eq.tenant-name');
     reply = null; assert.equal(await service.getOwnerDisplayName(), null);
     reply = { display_name: '  ' }; assert.equal(await service.getOwnerDisplayName(), null);
+    reply = { display_name: ' Suresh ' }; assert.equal(await service.getOwnerDisplayName(), 'Suresh');
   } finally { service.dispose(); globalThis.fetch = original; }
 });
