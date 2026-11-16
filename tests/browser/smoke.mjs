@@ -918,6 +918,8 @@ const prepareCart = async (page, add = true) => {
       await detailsButton(0x1A4).click();
       await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
       await focused(page, `Cancel order ${ref(0x1A4)}?`);
+      const sheetTitle = await page.getByRole('heading', { name: `Cancel order ${ref(0x1A4)}?`, exact: true }).boundingBox();
+      assert.ok(sheetTitle.y > page.viewportSize().height / 2, 'the cancel confirmation rises from the bottom as a sheet');
       await page.getByText("Rahul More's order for ₹180.00 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
       await page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true }).waitFor();
       await page.screenshot({ path: `/tmp/review101/${slug}-cancel.png` });
