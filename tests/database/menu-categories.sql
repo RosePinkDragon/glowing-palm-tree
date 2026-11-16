@@ -84,14 +84,16 @@ end $$;
 select set_config('test.category.items','[{"menu_item_id":"24300000-0000-4000-8000-000000000002","quantity":1,"diet":"veg"}]',true);
 select set_config('test.category.pricing','{"lines":[{"menu_item_id":"24300000-0000-4000-8000-000000000002","quantity":1,"unit_price_paise":10000,"line_total_paise":10000}],"subtotal_paise":10000,"delivery_fee_paise":0,"min_order_paise":0,"total_paise":10000}',true);
 select set_config('test.category.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,true);
+-- The checkout customer's saved address, inside the fictional square (saved-address path, no typed address).
+insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source) values ('43200000-0000-4000-8000-000000000001','home','Category house','Synthetic Road',0.5,0.5,'pin');
 set role authenticated;
 select set_config('request.jwt.claim.sub','43200000-0000-4000-8000-000000000001',true);
-select set_config('test.category.order',public.place_order('ammu-sammu',current_setting('test.category.items')::jsonb,'{"name":"Category","phone":"123","address_line":"Synthetic test address"}',current_setting('test.category.fix')::jsonb,'64300000-0000-4000-8000-000000000001',current_setting('test.category.pricing')::jsonb)->>'id',true);
+select set_config('test.category.order',public.place_order('ammu-sammu',current_setting('test.category.items')::jsonb,public.test_delivery('Category'),current_setting('test.category.fix')::jsonb,'64300000-0000-4000-8000-000000000001',current_setting('test.category.pricing')::jsonb)->>'id',true);
 select public.test_assert((select diet='egg' and unit_price_paise=10000 from public.order_items where order_id=current_setting('test.category.order')::uuid), 'final-schema checkout snapshots authoritative diet and accepted price');
 select set_config('request.jwt.claim.sub','43200000-0000-4000-8000-000000000003',true);
 update public.menu_items set diet='non_veg',price_paise=11000 where id='24300000-0000-4000-8000-000000000002';
 select public.test_assert((select diet='egg' from public.order_items where order_id=current_setting('test.category.order')::uuid), 'later reclassification preserves past-order diet');
 select set_config('request.jwt.claim.sub','43200000-0000-4000-8000-000000000001',true);
-select public.test_assert(public.place_order('ammu-sammu',current_setting('test.category.items')::jsonb,'{"name":"Category","phone":"123","address_line":"Synthetic test address"}',current_setting('test.category.fix')::jsonb,'64300000-0000-4000-8000-000000000002',current_setting('test.category.pricing')::jsonb)->>'outcome'='pricing_changed', 'final-schema checkout requires changed-price acceptance');
+select public.test_assert(public.place_order('ammu-sammu',current_setting('test.category.items')::jsonb,public.test_delivery('Category'),current_setting('test.category.fix')::jsonb,'64300000-0000-4000-8000-000000000002',current_setting('test.category.pricing')::jsonb)->>'outcome'='pricing_changed', 'final-schema checkout requires changed-price acceptance');
 reset role;
 rollback;

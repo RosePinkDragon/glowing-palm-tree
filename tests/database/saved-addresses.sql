@@ -201,12 +201,6 @@ select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20
 do $$ begin
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000012',public.test_addr_delivery(current_setting('test.home')::uuid,3),null); raise exception 'deleted address accepted'; exception when sqlstate 'PT412' then null; end;
 end $$;
--- The previous typed-address + fresh-GPS checkout still works until the apps move over.
-select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000013','{"name":"Legacy","phone":"123","address_line":"Typed address"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()))->>'outcome')='placed','legacy checkout still places');
-select public.test_assert((select saved_address_id is null and location_accuracy=10 from public.orders where idempotency_key='64800000-0000-4000-8000-000000000013'),'legacy order keeps GPS evidence');
-do $$ begin
-  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000014','{"name":"Legacy","phone":"123","address_line":"Typed address"}',null); raise exception 'legacy without GPS accepted'; exception when invalid_parameter_value then null; end;
-end $$;
 -- At most 20 saved addresses per customer.
 insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) select 'other','House '||n,'Street',0.3,0.3,'pin' from generate_series(1,19) n;
 do $$ begin

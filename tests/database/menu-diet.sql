@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
--- Self-contained: run after all migrations and seed, or after the older suites.
+-- Self-contained: run on the fully migrated, seeded schema (needs no other suite).
 create or replace function public.test_assert(ok boolean, message text) returns void
 language plpgsql as $$ begin if not coalesce(ok,false) then raise exception 'assertion failed: %',message; end if; end $$;
 insert into auth.users(id) select ('43000000-0000-4000-8000-' || lpad(n::text,12,'0'))::uuid from generate_series(1,6) n on conflict do nothing;
@@ -11,13 +11,18 @@ insert into public.business_memberships(business_id,user_id,role) values
 ('10000000-0000-4000-8000-000000000002','43000000-0000-4000-8000-000000000005','admin'),
 ('10000000-0000-4000-8000-000000000001','43000000-0000-4000-8000-000000000006','admin') on conflict do nothing;
 delete from public.business_memberships where user_id='43000000-0000-4000-8000-000000000006';
+select set_config('test.diet.cat',public.test_category('10000000-0000-4000-8000-000000000001','Diet test')::text,true);
+select set_config('test.diet.cat2',public.test_category('10000000-0000-4000-8000-000000000002','Diet test')::text,true);
+-- Customer 1's saved address, inside the fictional service square installed below.
+insert into public.customer_addresses(id,customer_id,label,house,street_area,latitude,longitude,location_source) values
+('74300000-0000-4000-8000-000000000001','43000000-0000-4000-8000-000000000001','home','Diet house','Synthetic Road',0.5,0.5,'pin');
 select public.test_assert((select bool_and(diet is null) from public.menu_items where id in ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002')), 'seed data has no inferred classification');
 select public.test_assert(not has_function_privilege('anon','public.require_menu_diet()','execute') and not has_function_privilege('authenticated','public.require_menu_diet()','execute'), 'trigger function is not a client API');
 select public.test_assert(not has_function_privilege('anon','public.place_order(text,jsonb,jsonb,jsonb,uuid,jsonb)','execute'), 'place_order stays unavailable to guests');
 select public.test_assert(not has_column_privilege('authenticated','public.order_items','diet','insert') and not has_column_privilege('authenticated','public.order_items','diet','update'), 'snapshot has no direct client write privilege');
 -- A trusted unclassified fixture, unrelated to the sample flag.
-insert into public.menu_items(id,business_id,name,category,price_paise) values
-('23000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Unclassified setup dish','Diet test',10000);
+insert into public.menu_items(id,business_id,name,category_id,price_paise) values
+('23000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Unclassified setup dish',current_setting('test.diet.cat')::uuid,10000);
 set role anon;
 select public.test_assert((select diet is null from public.menu_items where id='23000000-0000-4000-8000-000000000001'), 'guest can read unknown without a fake mark');
 do $$ begin
@@ -29,20 +34,20 @@ select set_config('request.jwt.claim.sub','43000000-0000-4000-8000-000000000001'
 update public.menu_items set diet='veg' where id='23000000-0000-4000-8000-000000000001';
 select public.test_assert((select diet is null from public.menu_items where id='23000000-0000-4000-8000-000000000001'), 'customer diet update denied');
 do $$ begin
-  begin insert into public.menu_items(business_id,name,category,price_paise,diet) values('10000000-0000-4000-8000-000000000001','Customer dish','Diet test',100,'veg'); raise exception 'customer inserted diet'; exception when insufficient_privilege then null; end;
+  begin insert into public.menu_items(business_id,name,category_id,price_paise,diet) values('10000000-0000-4000-8000-000000000001','Customer dish',current_setting('test.diet.cat')::uuid,100,'veg'); raise exception 'customer inserted diet'; exception when insufficient_privilege then null; end;
 end $$;
 select set_config('request.jwt.claim.sub','43000000-0000-4000-8000-000000000003',false);
 -- Updating another field does not force an invented classification for old data.
 update public.menu_items set description='Waiting for owner classification' where id='23000000-0000-4000-8000-000000000001';
 select public.test_assert((select diet is null from public.menu_items where id='23000000-0000-4000-8000-000000000001'), 'unknown may stay unknown');
 do $$ begin
-  begin insert into public.menu_items(business_id,name,category,price_paise) values('10000000-0000-4000-8000-000000000001','No diet','Diet test',100); raise exception 'new unclassified client dish accepted'; exception when invalid_parameter_value then null; end;
-  begin insert into public.menu_items(business_id,name,category,price_paise,is_demo) values('10000000-0000-4000-8000-000000000001','Sample bypass','Diet test',100,true); raise exception 'sample flag bypass accepted'; exception when invalid_parameter_value then null; end;
-  begin insert into public.menu_items(business_id,name,category,price_paise,diet) values('10000000-0000-4000-8000-000000000002','Cross business','Diet test',100,'veg'); raise exception 'cross business insert accepted'; exception when insufficient_privilege then null; end;
+  begin insert into public.menu_items(business_id,name,category_id,price_paise) values('10000000-0000-4000-8000-000000000001','No diet',current_setting('test.diet.cat')::uuid,100); raise exception 'new unclassified client dish accepted'; exception when invalid_parameter_value then null; end;
+  begin insert into public.menu_items(business_id,name,category_id,price_paise,is_demo) values('10000000-0000-4000-8000-000000000001','Sample bypass',current_setting('test.diet.cat')::uuid,100,true); raise exception 'sample flag bypass accepted'; exception when invalid_parameter_value then null; end;
+  begin insert into public.menu_items(business_id,name,category_id,price_paise,diet) values('10000000-0000-4000-8000-000000000002','Cross business',current_setting('test.diet.cat2')::uuid,100,'veg'); raise exception 'cross business insert accepted'; exception when insufficient_privilege then null; end;
   begin update public.menu_items set diet='fish' where id='23000000-0000-4000-8000-000000000001'; raise exception 'invalid enum accepted'; exception when invalid_text_representation then null; end;
 end $$;
-insert into public.menu_items(id,business_id,name,category,price_paise,diet) values
-('23000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','Classified dish','Diet test',10000,'egg');
+insert into public.menu_items(id,business_id,name,category_id,price_paise,diet) values
+('23000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','Classified dish',current_setting('test.diet.cat')::uuid,10000,'egg');
 update public.menu_items set diet='veg' where id='23000000-0000-4000-8000-000000000002';
 do $$ begin
   begin update public.menu_items set diet=null where id='23000000-0000-4000-8000-000000000002'; raise exception 'known diet erased'; exception when invalid_parameter_value then null; end;
@@ -66,10 +71,10 @@ end $$;
 select set_config('test.diet.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,false);
 -- Deliberately forged diet must not influence the stored snapshot.
 select set_config('test.diet.items','[{"menu_item_id":"23000000-0000-4000-8000-000000000002","quantity":1,"diet":"non_veg"},{"menu_item_id":"23000000-0000-4000-8000-000000000001","quantity":1,"diet":"veg"}]',false);
-select set_config('test.diet.pricing',jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id','23000000-0000-4000-8000-000000000002','quantity',1,'unit_price_paise',10000,'line_total_paise',10000),jsonb_build_object('menu_item_id','23000000-0000-4000-8000-000000000001','quantity',1,'unit_price_paise',10000,'line_total_paise',10000)),'subtotal_paise',20000,'delivery_fee_paise',delivery_fee_paise,'min_order_paise',min_order_paise,'total_paise',20000+delivery_fee_paise)::text,false) from public.businesses where slug='ammu-sammu';
-select set_config('test.diet.delivery','{"name":"Diet Test","phone":"123","address_line":"Synthetic test address"}',false);
+select set_config('test.diet.pricing',public.test_quote('ammu-sammu',current_setting('test.diet.items')::jsonb)::text,false);
 set role authenticated;
 select set_config('request.jwt.claim.sub','43000000-0000-4000-8000-000000000001',false);
+select set_config('test.diet.delivery',public.test_delivery('Diet Test')::text,false);
 select set_config('test.diet.order',public.place_order('ammu-sammu',current_setting('test.diet.items')::jsonb,current_setting('test.diet.delivery')::jsonb,current_setting('test.diet.fix')::jsonb,'63000000-0000-4000-8000-000000000043',current_setting('test.diet.pricing')::jsonb)->>'id',false);
 select public.test_assert((select diet='veg' from public.order_items where order_id=current_setting('test.diet.order')::uuid and menu_item_id='23000000-0000-4000-8000-000000000002'), 'snapshot comes from authoritative menu, not forged cart');
 select public.test_assert((select diet is null from public.order_items where order_id=current_setting('test.diet.order')::uuid and menu_item_id='23000000-0000-4000-8000-000000000001'), 'unknown is snapshotted as unknown');
