@@ -6,7 +6,11 @@ import { DietMark } from './DietMark';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
 import type { OwnerOrdersState } from './OwnerOrders';
+import Svg, { Path } from 'react-native-svg';
 import { useMarketFonts, useMarketTheme } from './theme';
+
+// Phone handset outline for the cancel hint (decorative).
+const phonePath = 'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z';
 
 type Tone = 'primary' | 'secondary' | 'danger';
 /** 48px-minimum action used by order cards, the details footer and the cancel sheet. */
@@ -118,9 +122,12 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       {historyNewestFirst(order.history).map((entry, index) => <Row key={index} left={historyLine(entry)} right={clockTime(entry.createdAtISO)} />)}
       {!order.history?.length ? <MarketText variant="muted">No history available.</MarketText> : null}
     </Section>
-    {confirming ? <AccessiblePanel title={`Cancel order ${reference}?`} onClose={closeSheet}>
+    {confirming ? <AccessiblePanel sheet title={`Cancel order ${reference}?`} onClose={closeSheet}>
       <MarketText>{`${order.delivery.name}'s order for ${formatINRFromPaise(order.totalPaise)} will be cancelled, and it will show as cancelled in their app. This can't be undone.`}</MarketText>
-      <View style={{ padding: 12, borderRadius: 12, backgroundColor: colors.tint }}><MarketText>A quick call to say why helps, for example if a dish has run out.</MarketText></View>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>
+        <Svg aria-hidden accessible={false} importantForAccessibility="no" width={18} height={18} viewBox="0 0 24 24" style={{ marginTop: 3 }}><Path d={phonePath} fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></Svg>
+        <View style={{ flex: 1 }}><MarketText>A quick call to say why helps, for example if a dish has run out.</MarketText></View>
+      </View>
       <ActionButton tone="danger" label={busy ? 'Cancelling…' : 'Cancel the order'} disabled={locked} onPress={() => { setConfirming(false); run('cancelled'); }} />
       <ActionButton label="Keep the order" disabled={busy} onPress={closeSheet} />
     </AccessiblePanel> : null}

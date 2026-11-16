@@ -918,6 +918,18 @@ const prepareCart = async (page, add = true) => {
       await detailsButton(0x1A4).click();
       await page.getByRole('button', { name: 'Cancel order', exact: true }).click();
       await focused(page, `Cancel order ${ref(0x1A4)}?`);
+      const sheetTitle = await page.getByRole('heading', { name: `Cancel order ${ref(0x1A4)}?`, exact: true }).boundingBox();
+      assert.ok(sheetTitle.y > page.viewportSize().height / 2, 'the cancel confirmation rises from the bottom as a sheet');
+      // On a short screen the sheet stays within 90% of the height and scrolls to its buttons.
+      const fullSize = page.viewportSize(); await page.setViewportSize({ width: fullSize.width, height: 300 });
+      const hint = page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true });
+      await page.waitForTimeout(300);
+      const shortTitle = await page.getByRole('heading', { name: `Cancel order ${ref(0x1A4)}?`, exact: true }).boundingBox();
+      assert.ok(shortTitle.y >= 300 * 0.1 - 2, 'the sheet stays within 90% of a short screen instead of growing off the top');
+      const keep = page.getByRole('button', { name: 'Keep the order', exact: true }); await keep.scrollIntoViewIfNeeded();
+      const keepBox = await keep.boundingBox(); assert.ok(keepBox.y >= 0 && keepBox.y + keepBox.height <= 300, 'Keep is reachable by scrolling');
+      assert.equal(await hint.locator('xpath=ancestor::div[1]/preceding-sibling::*[local-name()="svg"][@aria-hidden="true"]').count(), 1, 'the call-hint icon is hidden from assistive tech');
+      await page.setViewportSize(fullSize);
       await page.getByText("Rahul More's order for ₹180.00 will be cancelled, and it will show as cancelled in their app. This can't be undone.", { exact: true }).waitFor();
       await page.getByText('A quick call to say why helps, for example if a dish has run out.', { exact: true }).waitFor();
       await page.screenshot({ path: `/tmp/review101/${slug}-cancel.png` });
