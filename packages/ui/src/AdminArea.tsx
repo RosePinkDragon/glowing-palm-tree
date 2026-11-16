@@ -6,6 +6,7 @@ import { MarketButton, MarketCard, MarketStatus, MarketText } from './components
 import { AddDishButton, AdminMenu, type AdminMenuAddDish } from './AdminMenu';
 import { OrdersConnectionPill, OwnerOrders, useOwnerOrders } from './OwnerOrders';
 import { OwnerScreen, OwnerTabBar } from './OwnerShell';
+import { OwnerToday } from './OwnerToday';
 import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
 import { useMarketTheme } from './theme';
 import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
@@ -41,7 +42,7 @@ export function AdminArea({ services, banner, account, ordersSlot, onNewOrders }
       {banner}
       {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot ?? <OwnerOrderingSwitch services={services} />} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
-      {tab === 'today' ? <MarketStatus kind="empty" title="Today's summary is coming soon" message="A summary of today's orders will appear here in a later update. Use Orders to see current orders." /> : null}
+      {tab === 'today' ? <OwnerToday services={services} /> : null}
       {tab === 'settings' ? <OwnerSettings account={account} /> : null}
     </OwnerScreen>
     <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} badges={{ orders: queue.newCount }} />
