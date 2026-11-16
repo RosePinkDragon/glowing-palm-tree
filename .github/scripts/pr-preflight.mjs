@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BRANCH, evaluate, linkedIssue } from './delivery-policy.mjs';
+import { POLICY_FILE, checkMigrationPolicy, parseOverride } from './migration-policy.mjs';
 
 // Arguments are passed directly to executables; command output is never included in errors.
 function execute(command, args, cwd) {
@@ -43,7 +46,7 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
     const renamed = /^R[0-9]+$/.test(status);
     const second = renamed ? tokens.shift() : undefined;
     if (!/^(?:[AMDTUXB]|R[0-9]+)$/.test(status) || !first || (renamed && !second)) throw new Error('Unable to parse complete main-relative diff.');
-    files.push(renamed ? { filename: second, previous_filename: first } : { filename: first });
+    files.push(renamed ? { filename: second, previous_filename: first, status: 'R' } : { filename: first, status: status[0] });
   }
   const issue = json(run, ['api', `repos/${repository}/issues/${issueNumber}`]);
   const result = evaluate({ head: { ref: branch }, body: `Issue: #${issueNumber}` }, issue, files, repository);
@@ -67,11 +70,27 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
     if (sameHead && pr.base.ref !== 'main') throw new Error('The existing PR must target main before it can be updated.');
     if (sameIssue && !sameHead) throw new Error(`Open PR #${pr.number} belongs to this issue; merge the predecessor before publishing another slice.`);
   }
-  return { branch, repository, issue: issueNumber, base: 'main', count: result.count };
+  // Migration policy: skipped when the repository has no policy file; unreadable or invalid policy fails closed.
+  let policy = null;
+  try { policy = JSON.parse(readFileSync(join(cwd, POLICY_FILE), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw new Error(`${POLICY_FILE} is unreadable or invalid JSON.`); }
+  let warnings = [];
+  if (policy) {
+    const own = pulls.find(pr => pr.head.ref === branch && pr.head.repo.full_name.toLowerCase() === repository.toLowerCase());
+    const override = (process.env.MIGRATION_POLICY_OVERRIDE ?? '').trim() || parseOverride(own?.body);
+    const verdict = checkMigrationPolicy({
+      mode: policy.mode, override,
+      files: files.map(file => ({ status: file.status, path: file.filename, previous: file.previous_filename })),
+    });
+    if (verdict.errors.length) throw new Error(verdict.errors.join('\n'));
+    warnings = verdict.warnings;
+  }
+  return { branch, repository, issue: issueNumber, base: 'main', count: result.count, warnings };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const result = preflight(process.argv.slice(2));
+    for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
     console.log(`Preflight passed: ${result.branch} -> main; ${result.count}/15 reviewable files for issue #${result.issue}.`);
   } catch (error) {
     console.error(error.message);
