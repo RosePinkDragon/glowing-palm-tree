@@ -36,6 +36,11 @@ create schema restaurant_settings_private;
 revoke all on schema restaurant_settings_private from public, anon, authenticated;
 grant usage on schema restaurant_settings_private to authenticated;
 
+-- Owner self-service follows the same private definer/public invoker boundary.
+create schema owner_settings_private;
+revoke all on schema owner_settings_private from public, anon, authenticated;
+grant usage on schema owner_settings_private to authenticated;
+
 create type public.diet_classification as enum ('veg', 'non_veg', 'egg');
 
 -- 2. Tables and constraints --------------------------------------------------------------------
@@ -800,6 +805,43 @@ create function public.save_restaurant_settings(
     p_delivery_fee_paise, p_min_order_paise, p_expected_version)
 $$;
 
+-- The caller can rename only their own membership in this restaurant. No direct table writes
+-- are granted. The existing name constraint remains the validation source of truth.
+create function owner_settings_private.set_display_name(p_business_slug text, p_display_name text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); session uuid; business uuid; member public.business_memberships%rowtype; failed_constraint text;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  begin session := (auth.jwt()->>'session_id')::uuid;
+  exception when invalid_text_representation then raise exception 'invalid session' using errcode='42501'; end;
+  if session is null then raise exception 'invalid session' using errcode='42501'; end if;
+  perform 1 from auth.sessions where id=session and user_id=caller
+    and (not_after is null or not_after > clock_timestamp()) for share;
+  if not found then raise exception 'invalid session' using errcode='42501'; end if;
+  select id into business from public.businesses where slug=p_business_slug;
+  -- This lock also serializes the rename with transition_order's FOR SHARE snapshot read.
+  select * into member from public.business_memberships
+    where business_id=business and user_id=caller and role='admin' for update;
+  if not found then raise exception 'owner access unavailable' using errcode='42501'; end if;
+  if p_display_name is null then
+    raise exception 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.' using errcode='22023', detail='displayName';
+  end if;
+  begin
+    update public.business_memberships set display_name=p_display_name
+      where business_id=business and user_id=caller and role='admin' returning * into member;
+  exception when check_violation then
+    get stacked diagnostics failed_constraint = constraint_name;
+    if failed_constraint <> 'membership_display_name_valid' then raise; end if;
+    raise exception 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.' using errcode='22023', detail='displayName';
+  end;
+  return jsonb_build_object('business_id',member.business_id,'user_id',member.user_id,'display_name',member.display_name);
+end $$;
+
+create function public.set_owner_display_name(p_business_slug text, p_display_name text)
+returns jsonb language sql security invoker set search_path = '' as $$
+  select owner_settings_private.set_display_name(p_business_slug,p_display_name)
+$$;
+
 -- Owners change the open/closed switch only through this function; clients have no direct update
 -- grant on businesses. The business row is locked, so an order and a closing at the same moment
 -- are serialized: the order is either placed before the close or refused.
@@ -1243,6 +1285,10 @@ grant select, insert, update on public.order_number_counters to service_role;
 grant usage, select on sequence public.order_status_history_id_seq to service_role;
 
 -- Functions. Default privileges grant EXECUTE broadly, so revoke everything, then grant explicitly.
+revoke all on function owner_settings_private.set_display_name(text,text), public.set_owner_display_name(text,text)
+  from public, anon, authenticated, service_role;
+grant execute on function owner_settings_private.set_display_name(text,text), public.set_owner_display_name(text,text)
+  to authenticated;
 revoke all on function public.record_customer_notification(), public.protect_customer_notification_read(),
   public.list_customer_notifications(text,integer,timestamptz,uuid), public.mark_customer_notification_read(text,uuid),
   public.mark_all_customer_notifications_read(text), public.customer_notification_unread_count(text),
