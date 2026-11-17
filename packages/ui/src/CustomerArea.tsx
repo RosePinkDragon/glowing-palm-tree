@@ -70,8 +70,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     return () => window.removeEventListener('storage', changed);
   }, [businessId]);
   const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
-  // Signed-in customers' addresses are read so the top bar can show the selected one.
-  const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady);
+  // Addresses are only read once there is something to order; the top bar shows the selected one from then on.
+  const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady && cart.length > 0);
   const refused = !!closedRefusal && closedRefusal.business === market.business && sameIdentity(closedRefusal.identity, market.identity.current);
   const orderingAllowed = demo || (market.businessReady && !!market.business?.orderingEnabled && market.business.acceptingOrders && !refused);
   const orderingMessage = refused || market.businessReady && market.business && !market.business.acceptingOrders ? closedMessage(businessId)

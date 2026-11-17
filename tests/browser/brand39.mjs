@@ -17,7 +17,7 @@ if (shots) await mkdir(shots, { recursive: true });
 try {
   for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
     const name = brand ? 'Kokani Dine Inn' : 'Ammu Sammu';
-    const server = await serveWeb(`apps/${slug}-customer/dist/web`);
+    const server = await serveWeb(`apps/${slug}-customer/dist/web`, { firstLaunch: true });
     const businessId = `39100000-0000-4000-8000-00000000000${brand + 1}`;
     const business = { id: businessId, slug, name, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     const item = { id: '39200000-0000-4000-8000-000000000001', name: 'Brand fixture meal', description: 'Synthetic fixture', category_id: '39300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
@@ -66,10 +66,11 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).waitFor();
       assert.equal(await page.getByRole('button', { name: 'Browse the menu' }).count(), 0);
       await context.close();
-      // Signed in: selected saved address in the top bar, welcome dismissed once.
+      // Signed in: selected saved address in the top bar once the cart has an item, welcome dismissed once.
       for (const [label, viewport] of [['mobile-390x844', { width: 390, height: 844 }], ['desktop-1280x800', { width: 1280, height: 800 }]]) {
         ({ context, page } = await open(true, viewport));
         await page.getByRole('button', { name: 'Browse the menu' }).click();
+        await page.getByRole('button', { name: 'Add to cart' }).click(); // addresses are read only once the cart has something
         const line = page.getByRole('button', { name: 'Delivery address: Home · Flat 3, Bharne Naka. Change', exact: true });
         await line.waitFor();
         await page.getByText('Brand fixture meal').first().waitFor();
