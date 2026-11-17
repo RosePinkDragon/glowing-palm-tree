@@ -337,8 +337,9 @@ const prepareCart = async (page, add = true) => {
   assert.equal(await usage.isChecked(), false, 'Space toggles once');
   await admin.getByText('Phone numbers, delivery fee, minimum order', { exact: true }).filter({ visible: true }).waitFor();
   await admin.getByText('Who can manage Ammu Sammu', { exact: true }).filter({ visible: true }).waitFor();
-  assert.equal(await admin.getByText('Coming soon', { exact: true }).filter({ visible: true }).count(), 4, 'restaurant, owners, ring and test alert are announced');
-  assert.equal(await admin.getByRole('button', { name: /Restaurant details|Owners|Ring|test alert|Coming soon/ }).count(), 0, 'placeholders are not interactive');
+  assert.equal(await admin.getByText('Coming soon', { exact: true }).filter({ visible: true }).count(), 3, 'owners, ring and test alert are announced');
+  assert.equal(await admin.getByRole('button', { name: /Owners|Ring|test alert|Coming soon/ }).count(), 0, 'placeholders are not interactive');
+  assert.equal(await admin.getByRole('button', { name: 'Restaurant details', exact: true }).filter({ visible: true }).count(), 1, 'Restaurant details (#60) opens its screen');
   assert.equal(await admin.getByRole('button', { name: /Turn (analytics|notifications)/ }).count(), 0, 'the old preference buttons are gone');
   await ownerTab('Orders').click();
   await admin.getByRole('button', { name: 'Done', exact: true }).waitFor();
@@ -1050,7 +1051,7 @@ if (!categoriesOnly) await import('./account.mjs');
 if (!categoriesOnly) await import('./addresses48.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
 if (!categoriesOnly) await import('./owner-menu.mjs');
-if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); }
+if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); await import('./owner60.mjs'); }
 
 }
 if (!categoriesOnly) await tracking47();

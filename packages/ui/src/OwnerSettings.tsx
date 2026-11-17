@@ -9,9 +9,9 @@ import { ownerInitials } from './owner-navigation';
 
 type Market = ReturnType<typeof useMarket>;
 
-// Owners' Settings (owners' screen p. 10). Restaurant details (#60), Owners (#59) and the ring
-// and test-alert controls (#54) are announced as coming soon and are not interactive.
-export function OwnerSettings({ market }: { market?: Market }) {
+// Owners' Settings (owners' screen p. 10). Restaurant details (#60) opens its screen; Owners (#59) and the
+// ring and test-alert controls (#54) are announced as coming soon and are not interactive.
+export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Market; onOpenRestaurantDetails?: () => void }) {
   const { colors, name } = useMarketTheme();
   const fonts = useMarketFonts();
   // undefined while loading, so the card never flashes the contact before the name arrives.
@@ -58,7 +58,11 @@ export function OwnerSettings({ market }: { market?: Market }) {
     </View>
     {!market.services.persistenceAvailable() ? <Text style={muted}>This session is stored only for this visit because device storage is unavailable.</Text> : null}
     <MarketGroup title="Restaurant">
-      <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />
+      {onOpenRestaurantDetails
+        ? <Pressable accessibilityRole="button" accessibilityLabel="Restaurant details" accessibilityHint="Phone numbers, delivery fee, minimum order" onPress={onOpenRestaurantDetails} style={({ pressed }) => ({ backgroundColor: pressed ? colors.tint : 'transparent' })}>
+          <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={<MarketIcon name="chevronRight" color={colors.muted} />} />
+        </Pressable>
+        : <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />}
       <MarketRow title="Owners" detail={`Who can manage ${name}`} end={soon} />
     </MarketGroup>
     <MarketGroup title="New order alerts on this phone">

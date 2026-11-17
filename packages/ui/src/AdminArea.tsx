@@ -11,6 +11,7 @@ import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from 
 import { useMarketTheme } from './theme';
 import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
 import { OwnerSettings } from './OwnerSettings';
+import { OwnerRestaurantDetails } from './OwnerRestaurantDetails';
 import type { useMarket } from './useMarket';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
@@ -23,6 +24,7 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   const [attempt, setAttempt] = useState(0);
   const [tab, setTab] = useState<OwnerTabId>(defaultOwnerTab);
   const [addDish, setAddDish] = useState<AdminMenuAddDish | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // One order list and realtime subscription for every tab, so the Orders badge stays current.
   const queue = useOwnerOrders(services, access === 'allowed', onNewOrders);
   useEffect(() => {
@@ -39,13 +41,15 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
     {access === 'denied' ? <MarketStatus kind="error" title="Access denied" message="Your account is not an administrator for this business. Contact the business owner for access." /> : null}
     {account}
   </OwnerScreen>;
+  // Restaurant details (#60) is a full screen reached from Settings; Back returns to the Settings tab.
+  if (detailsOpen && tab === 'settings') return <OwnerRestaurantDetails services={services} onBack={() => setDetailsOpen(false)} />;
   return <View style={{ flex: 1 }}>
     <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}>
       {banner}
       {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot ?? <OwnerOrderingSwitch services={services} />} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <OwnerToday services={services} /> : null}
-      {tab === 'settings' ? <OwnerSettings market={market} /> : null}
+      {tab === 'settings' ? <OwnerSettings market={market} onOpenRestaurantDetails={() => setDetailsOpen(true)} /> : null}
     </OwnerScreen>
     <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} badges={{ orders: queue.newCount }} />
   </View>;

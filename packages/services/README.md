@@ -1,7 +1,7 @@
 # Restaurant settings service (#60 backend)
 
 Both businesses expose `getRestaurantSettings()` and `saveRestaurantSettings(input)`
-through `createMarketServices`. These methods require the admin audience; server
+through `createMarketServices`. The read also returns the developer-controlled `orderPrefix` and a `deliveryArea` status (`radius` from a `radius-<m>m` version, `verified`, or `unverified`) taken from the business row's status columns, never the polygon. These methods require the admin audience; server
 authorization is always authoritative. Public `getBusiness()` includes
 `contactPhone`, `whatsappPhone`, `settingsVersion` and the current fee/minimum;
 existing business Realtime invalidations prompt consumers to refresh those values.

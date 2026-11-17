@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMarketServices, restaurantAmountPaise, RestaurantSettingsValidationError, ServiceError, validateRestaurantSettings, type SaveRestaurantSettingsInput } from './index.ts';
+import { createMarketServices, mapRestaurantSettingsView, restaurantAmountPaise, RestaurantSettingsValidationError, ServiceError, validateRestaurantSettings, type SaveRestaurantSettingsInput } from './index.ts';
 
 const input: SaveRestaurantSettingsInput = { contactPhone: '022 2345 6789', whatsappPhone: '9876543210', deliveryFeePaise: 1234, minOrderPaise: 45678, expectedVersion: 3 };
 test('settings validation normalizes Indian phones and reports every invalid field', () => {
@@ -26,10 +26,11 @@ test('rupee conversion preserves exact paise and rejects rounding, non-decimal a
 });
 
 const jwt = (sub = 'owner', sessionId = 'session') => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub, session_id: sessionId, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`;
-const businessRow = { id: 'business', slug: 'ammu-sammu', name: 'Restaurant', contact_phone: '+912223456789', whatsapp_phone: '+919876543210', delivery_fee_paise: 1234, min_order_paise: 45678, settings_version: 3, accepting_orders: true, ordering_enabled: true, is_demo: false };
+const businessRow = { id: 'business', slug: 'ammu-sammu', name: 'Restaurant', contact_phone: '+912223456789', whatsapp_phone: '+919876543210', delivery_fee_paise: 1234, min_order_paise: 45678, settings_version: 3, order_prefix: 'AMS', service_area_source: 'owner survey', service_area_version: 'radius-12000m', service_area_verified_at: '2026-11-10T00:00:00Z', accepting_orders: true, ordering_enabled: true, is_demo: false };
 async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu', audience: 'admin' | 'customer' = 'admin') {
   const original = globalThis.fetch;
   const state = {
+    selects: [] as string[],
     calls: [] as { url: URL; headers: Headers; body: Record<string, unknown> }[],
     error: null as { code: string; message: string; details?: string } | null,
     result: undefined as unknown,
@@ -48,6 +49,7 @@ async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu', au
     if (target.pathname.endsWith('/businesses')) {
       if (target.searchParams.has('slug')) assert.equal(target.searchParams.get('slug'), `eq.${slug}`);
       else assert.equal(target.searchParams.get('id'), 'eq.business');
+      state.selects.push(target.searchParams.get('select') ?? '');
       return Response.json({ ...businessRow, slug });
     }
     assert.equal(target.pathname, '/rest/v1/rpc/save_restaurant_settings');
@@ -70,8 +72,10 @@ test('both restaurants read public updated terms and save only four normalized f
       const business = await service.getBusiness();
       assert.equal(business.whatsappPhone, businessRow.whatsapp_phone);
       assert.equal(business.settingsVersion, 3);
-      assert.equal((await service.getRestaurantSettings()).contactPhone, businessRow.contact_phone);
-      const saved = await service.saveRestaurantSettings({ ...input, acceptingOrders: false, orderPrefix: 'HACK' } as SaveRestaurantSettingsInput);
+      const read = await service.getRestaurantSettings();
+      assert.equal(read.contactPhone, businessRow.contact_phone); assert.equal(read.orderPrefix, 'AMS'); assert.deepEqual(read.deliveryArea, { kind: 'radius', radiusM: 12000 });
+      assert.ok(state.selects.some(select => select.includes('order_prefix') && select.includes('service_area_version')) && state.selects.every(select => !/(^|,)service_area(,|$)|kitchen_location/.test(select)), 'the polygon is never requested');
+            const saved = await service.saveRestaurantSettings({ ...input, acceptingOrders: false, orderPrefix: 'HACK' } as SaveRestaurantSettingsInput);
       assert.deepEqual(saved, { contactPhone: '+912223456789', whatsappPhone: '+919876543210', deliveryFeePaise: 1234, minOrderPaise: 45678, version: 4 });
       assert.deepEqual(state.calls[0].body, { p_business_slug: slug, p_contact_phone: '+912223456789', p_whatsapp_phone: '+919876543210', p_delivery_fee_paise: 1234, p_min_order_paise: 45678, p_expected_version: 3 });
       assert.equal(state.calls[0].headers.get('authorization'), `Bearer ${state.token}`);
@@ -136,4 +140,14 @@ test('a save awaiting membership cannot act as a different owner or a replacemen
       else { assert.equal(result.error?.code, 'SESSION_CHANGED'); assert.equal(state.calls.length, 0); }
     } finally { release(); cleanup(); }
   }
+});
+
+test('the settings read maps order prefix and delivery-area status strictly, without the polygon', () => {
+  const row = { contact_phone: null, whatsapp_phone: null, delivery_fee_paise: 0, min_order_paise: 0, settings_version: 1, order_prefix: 'KDI', service_area_source: 'survey', service_area_version: 'radius-2500m', service_area_verified_at: '2026-11-10T00:00:00Z' };
+  assert.deepEqual(mapRestaurantSettingsView(row).deliveryArea, { kind: 'radius', radiusM: 2500 });
+  assert.equal(mapRestaurantSettingsView(row).orderPrefix, 'KDI');
+  assert.deepEqual(mapRestaurantSettingsView({ ...row, service_area_version: 'hand-drawn-v2' }).deliveryArea, { kind: 'verified' });
+  assert.deepEqual(mapRestaurantSettingsView({ ...row, service_area_version: 'radius-100m' }).deliveryArea, { kind: 'verified' }, 'out-of-range radius is not shown as a distance');
+  for (const patch of [{ service_area_verified_at: null }, { service_area_source: null }, { service_area_version: '  ' }, { service_area_source: undefined, service_area_version: undefined, service_area_verified_at: undefined }]) assert.deepEqual(mapRestaurantSettingsView({ ...row, ...patch }).deliveryArea, { kind: 'unverified' });
+  for (const patch of [{ order_prefix: undefined }, { order_prefix: 'ams' }, { order_prefix: 'A' }, { service_area_version: 5 }, { service_area_verified_at: 1 }]) assert.throws(() => mapRestaurantSettingsView({ ...row, ...patch }), (error: unknown) => error instanceof ServiceError && error.code === 'INVALID_RESPONSE');
 });
