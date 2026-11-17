@@ -3,8 +3,8 @@ import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, setCartItemQuantity, type BusinessSlug, type CartLine, type LocationFix, type MenuItem, type Order, type SavedAddress } from '@market/core';
-import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
-import { CheckoutAddressDialogs, CheckoutAddressSummary, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
+import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
+import { CheckoutAddressDialogs, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
 import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, phoneFixTimeoutMs, validateContact, withTimeout, type OrderConfirmation } from './checkout-model';
 import { MarketFontsProvider, useMarketTheme } from './theme';
 import { useBrandFonts } from './brand-fonts';
@@ -28,10 +28,11 @@ import { DishPhoto } from './DishPhoto';
 import { PhotoMenu, type MenuViewport } from './CustomerMenu';
 import { DishDetails } from './DishDetails';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
-import { ReorderNotice, ReorderPanel } from './ReorderPanel';
+import { ReorderPanel } from './ReorderPanel';
 import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 import { CustomerAddresses } from './CustomerAddresses';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
+import { CartPage } from './CustomerCart';
 
 const money = formatINRFromPaise;
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
@@ -230,7 +231,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
 
     {page === 'Menu' && photoMenu ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{market.business ? <MarketText variant="muted">{[market.business.minOrderPaise > 0 ? `Min. order ${money(market.business.minOrderPaise)}` : '', `Delivery ${money(market.business.deliveryFeePaise)}`, 'Cash on delivery'].filter(Boolean).join(' · ')}</MarketText> : null}</View> : null}
 
-    {!(page === 'Menu' && photoMenu) && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
+    {!(page === 'Menu' && photoMenu) && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
     {!demo && (page === 'Menu' || page === 'Cart') ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
@@ -248,9 +249,11 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       <View nativeID="regular-menu" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>{orderedMenu.filter(item => category === null || item.categoryId === category).map(item => renderMenuItem(item))}</View>
       {!market.menu.length ? <MarketStatus kind="empty" title="No menu items yet" message="Please check back later." /> : null}</>}
     </View> : null}
-    {page === 'Cart' ? <View style={{ gap: 16 }}><MarketText variant="heading">{demo ? 'Sample cart' : 'Your cart'}</MarketText>{cartMessage ? <ReorderNotice message={cartMessage} /> : null}{demo ? <MarketText variant="muted">Example items and prices are for browsing only. Checkout is unavailable.</MarketText> : null}{!draft.ready && !draft.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : !cart.length ? <MarketStatus kind="empty" title="Your cart is empty" message="Explore the menu to get started." /> : cart.map(line => <MarketCard key={line.item.id}><MarketText variant="heading">{line.item.name}</MarketText><DietMark diet={line.item.diet} /><MarketText>{!line.item.isAvailable && !line.item.isDemo ? 'Last shown price: ' : ''}{money(line.item.pricePaise)} × {line.quantity} = {money(line.item.pricePaise * line.quantity)}</MarketText>{!line.item.isAvailable && !line.item.isDemo ? <><MarketText>This dish is unavailable. Remove it before checkout.</MarketText><MarketButton label={`Remove unavailable ${line.item.name}`} variant="secondary" disabled={locked} onPress={() => changeCart(lines => removeCartItem(lines, line.item.id))} /></> : null}<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}><MarketButton label={`Remove one ${line.item.name}`} variant="secondary" disabled={locked} onPress={() => changeCart(lines => { const current = lines.find(value => value.item.id === line.item.id); return current && current.quantity > 1 ? setCartItemQuantity(lines, line.item.id, current.quantity - 1) : removeCartItem(lines, line.item.id); })} />{orderingAllowed ? <MarketButton label={`Add one ${line.item.name}`} variant="secondary" disabled={locked || line.quantity >= 10 || (!line.item.isAvailable && !demo)} onPress={() => changeCart(lines => { const current = lines.find(value => value.item.id === line.item.id); return current ? setCartItemQuantity(lines, line.item.id, current.quantity + 1) : lines; }, true)} /> : null}</View></MarketCard>)}
-      {cart.length ? <MarketCard><MarketText variant="heading">Delivery details</MarketText><MarketText>{unavailable ? 'Subtotal (available dishes)' : 'Subtotal'}: {money(subtotal)}</MarketText><MarketText>Delivery fee: {money(market.business?.deliveryFeePaise ?? 0)}</MarketText><MarketText>Minimum order: {money(market.business?.minOrderPaise ?? 0)}</MarketText><MarketText>Total: {money(subtotal + (market.business?.deliveryFeePaise ?? 0))}</MarketText><MarketText variant="muted">Payment: cash on delivery. Any price changes require your acceptance before ordering.</MarketText><MarketField label="Name" value={details.name} editable={!locked} onChangeText={name => setDetails({ ...details, name })} /><MarketField label="Mobile number" value={details.phone} editable={!locked} keyboardType="phone-pad" onChangeText={phone => setDetails({ ...details, phone })} /><CheckoutAddressSummary ctrl={addrs} />{orderingAllowed ? <MarketButton label={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'} disabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)} onPress={() => void checkout()} /> : null}{localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{localError}</Text> : null}</MarketCard> : null}
-    </View> : null}
+    {page === 'Cart' ? <CartPage demo={demo} cartMessage={cartMessage} ready={draft.ready} cartError={draft.cartError} cart={cart} locked={locked} orderingAllowed={orderingAllowed} hasUnavailable={unavailable}
+      subtotalPaise={subtotal} deliveryFeePaise={market.business?.deliveryFeePaise ?? 0} minOrderPaise={market.business?.minOrderPaise ?? 0} details={details} setDetails={setDetails} addrs={addrs}
+      placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
+      placeDisabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
+      localError={localError} change={changeCart} onPlace={() => void checkout()} onBrowse={() => navigation.current?.go('/')} /> : null}
     {page === 'Account' || page === 'Login' ? <AuthPanel market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}
     {page === 'Order' ? <CustomerOrderDetail market={market} id={orderId ?? ''} receipt={receipt} onReorder={startReorder} onHelp={() => navigation.current?.go(`/help?id=${orderId}`)} /> : null}

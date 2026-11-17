@@ -56,29 +56,42 @@ function useRowStyle() {
   return { colors, fonts, bold: fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const } };
 }
 
-/** The "Deliver to" block in the cart card. */
+/** The "Deliver to" card at the top of checkout (customer p. 4): icon tile, address, Change, and the in-area strip. */
 export function CheckoutAddressSummary({ ctrl }: { ctrl: CheckoutAddresses }) {
-  const { colors, bold } = useRowStyle();
+  const { colors, fonts, bold } = useRowStyle();
+  const { statusHeader } = useMarketTheme();
   const { addresses, error, selected } = ctrl;
   const muted = { color: colors.muted, fontSize: 15, lineHeight: 22 };
-  if (!ctrl.enabled) return <Text style={muted}>Sign in to choose a delivery address.</Text>;
-  return <View style={{ gap: 10 }}>
-    <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 16, ...bold }}>Delivery address</Text>
+  const card = { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 20, padding: 16, gap: 12 };
+  if (!ctrl.enabled) return <View style={card}><Text style={muted}>Sign in to choose a delivery address.</Text></View>;
+  const band = statusHeader === 'band';
+  const icon: MarketIconName = selected ? rowIcon(selected) : 'pin';
+  return <View style={card}>
+    <Text accessibilityRole="header" style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Delivery address</Text>
     {error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 22 }}>{error}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={ctrl.refresh} /></> : null}
     {addresses === null && !error ? <Text accessibilityRole="progressbar" style={muted}>Loading your saved addresses…</Text> : null}
     {addresses && !addresses.length && !error ? <>
       <MarketStatus kind="empty" title="No saved addresses yet" message="Add an address to deliver to. It is saved for next time, in both restaurant apps." />
       <MarketButton label="Add a new address" onPress={() => { ctrl.open(); ctrl.setDialog('form'); }} />
     </> : null}
-    {addresses?.length ? <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ color: colors.ink, fontSize: 17, lineHeight: 24, ...bold }}>{selected ? `Deliver to ${addressTitle(selected)}` : 'No address chosen'}</Text>
-        <Text style={muted}>{selected ? `${addressLine(selected)}${selected.distanceM !== null ? ` · ${formatDistance(selected.distanceM)}` : ''}` : 'Choose where we should deliver this order.'}</Text>
+    {addresses?.length ? <>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+        <View aria-hidden style={{ width: 44, height: 44, borderRadius: band ? 22 : 14, alignItems: 'center', justifyContent: 'center', backgroundColor: band ? colors.band : colors.tint }}>
+          <MarketIcon name={icon} color={band ? colors.onPrimary : colors.primary} size={20} />
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={{ color: colors.ink, fontSize: 17, lineHeight: 24, ...bold }}>{selected ? `Deliver to ${addressTitle(selected)}` : 'No address chosen'}</Text>
+          <Text style={{ ...muted, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{selected ? `${addressLine(selected)}${selected.distanceM !== null ? ` · ${formatDistance(selected.distanceM)}` : ''}` : 'Choose where we should deliver this order.'}</Text>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel={selected ? 'Change delivery address' : 'Choose delivery address'} onPress={() => ctrl.open()} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
+          <Text style={{ color: colors.primary, fontSize: 15, ...bold }}>{selected ? 'Change' : 'Choose'}</Text>
+        </Pressable>
       </View>
-      <Pressable accessibilityRole="button" accessibilityLabel={selected ? 'Change delivery address' : 'Choose delivery address'} onPress={() => ctrl.open()} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 8 }}>
-        <Text style={{ color: colors.primary, fontSize: 15, ...bold }}>{selected ? 'Change' : 'Choose'}</Text>
-      </Pressable>
-    </View> : null}
+      {selected ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, backgroundColor: colors.positiveTint }}>
+        <MarketIcon name="check" color={colors.positive} size={16} />
+        <Text style={{ color: colors.positive, fontSize: 14, lineHeight: 20 }}>Inside our delivery area</Text>
+      </View> : null}
+    </> : null}
   </View>;
 }
 

@@ -1148,6 +1148,14 @@ async function tracking47() {
         const dietLabel = diet => ({ veg: 'Vegetarian', non_veg: 'Non-vegetarian', egg: 'Contains egg' })[diet];
         const marks = async () => (await dietMarks().evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))));
         assert.deepEqual(await marks(), [dietLabel('veg'), dietLabel('non_veg')], 'active order shows snapshot diet marks in line order');
+        // Each line and its mark form one group, with more space between lines than inside a line; Items sits beside its list like the other detail rows.
+        const lineGroups = page.getByRole('group', { name: /^\d+ × / }).filter({ visible: true });
+        assert.equal(await lineGroups.count(), 3, 'one group per order line');
+        assert.equal(await lineGroups.first().getByRole('img').count(), 1, 'the first line holds its own diet mark');
+        assert.equal(await lineGroups.nth(2).getByRole('img').count(), 0, 'the unmarked line shows no mark');
+        const [g1, g2, label] = await Promise.all([lineGroups.nth(0).boundingBox(), lineGroups.nth(1).boundingBox(), visible(slug === 'kokani-dine-inn' ? 'Dishes' : 'Items').boundingBox()]);
+        assert.ok(g2.y - (g1.y + g1.height) >= 8, 'lines are separated more than a line is from its mark');
+        assert.ok(Math.abs(label.y - g1.y) < 12, 'the Items label is level with the first line, not above the list');
         // #153: a failed catalog refresh keeps the already-loaded contact number callable.
         menuFails = true;
         const refreshFailed = page.waitForResponse(response => response.url().includes('/rest/v1/menu_items') && response.status() === 500);

@@ -88,7 +88,18 @@ try {
       assert.equal(await button('Check my delivery location').count(), 0);
       await text('Deliver to Home').waitFor();
       await text('Flat 3, Sai Krupa Apartments, Bharne Naka · 1.2 km').waitFor();
+      // Checkout layout (#39 slice 4): in-area strip, bill summary with a final total, cash on delivery, and a pinned To pay / Place order bar.
+      await text('Inside our delivery area').waitFor();
+      await text('Cash on delivery').waitFor();
+      assert.equal(await visible(page.getByText('To pay', { exact: true })).count(), 2, 'To pay in the bill and in the pinned bar');
+      await text('This is the final amount. You pay it in cash when the food arrives. Any price changes need your OK before you order.').waitFor();
+      const bar = await button('Place order').evaluate(node => { const bar = node.parentElement.getBoundingClientRect(), view = window.innerHeight; return { inView: bar.bottom <= view + 1 && bar.top >= 0, height: node.getBoundingClientRect().height }; });
+      assert.equal(bar.inView, true, 'Place order bar is on screen without scrolling'); assert.ok(bar.height >= 44, 'Place order is at least 44px tall');
+      for (const label of [/^Remove one /, /^Add one /]) { const box = await visible(page.getByRole('button', { name: label })).first().boundingBox(); assert.ok(box.width >= 44 && box.height >= 44, 'stepper buttons are at least 44px'); }
       await shot('cart');
+      await page.setViewportSize({ width: 1280, height: 800 }); await shot('cart-desktop');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'desktop checkout has no horizontal overflow');
+      await page.setViewportSize({ width: 390, height: 844 });
 
       // Picker: in-area rows are radios, the outside one is visible but disabled with its reason.
       await button('Change delivery address').click();
