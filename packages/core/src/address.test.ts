@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addressLine, addressTitle, remoteOrderFlag, validateAddressDraft, type AddressDraft } from './address.ts';
+import { addressLine, addressTitle, formatDistance, remoteOrderFlag, validateAddressDraft, type AddressDraft } from './address.ts';
 import { DomainValidationError } from './domain.ts';
 
 const draft: AddressDraft = { label: 'home', house: ' 12, Shivaji Nagar ', streetArea: ' Station Road, Khed ', landmark: '  ', latitude: 17.7189, longitude: 73.3961, locationSource: 'pin' };
@@ -40,6 +40,15 @@ test('titles and one-line addresses', () => {
   assert.equal(addressTitle({ label: 'other' }), 'Other');
   assert.equal(addressLine({ house: '12', streetArea: 'Station Road' }), '12, Station Road');
   assert.equal(addressLine({ house: '12', streetArea: 'Station Road', landmark: 'Near temple' }), '12, Station Road, Near temple');
+});
+
+test('distance formatting: metres under 1 km, one decimal under 10 km, whole km above, empty when unknown', () => {
+  for (const unknown of [null, undefined, NaN, -1, Infinity]) assert.equal(formatDistance(unknown), '');
+  assert.equal(formatDistance(0), '10 m');
+  assert.equal(formatDistance(847), '850 m');
+  assert.equal(formatDistance(2400), '2.4 km');
+  assert.equal(formatDistance(9960), '10.0 km');
+  assert.equal(formatDistance(34000), '34 km');
 });
 
 test('remote order flag: saved-address orders only, distance wording and rounding', () => {

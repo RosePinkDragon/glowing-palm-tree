@@ -716,6 +716,11 @@ test('saved-address orders map their snapshot; typed-address and partial rows do
   assert.equal(order.placedFromDistanceM, 2400);
   assert.equal(mapOrder({ ...base, ...snapshot, placed_from_distance_m: null }, slug).placedFromDistanceM, null, 'unknown phone distance stays unknown');
   assert.equal(mapOrder({ ...base, ...snapshot, placed_from_distance_m: -1 }, slug).placedFromDistanceM, null);
+  assert.equal(order.kitchenDistanceM, null, 'a snapshot without the kitchen distance stays unknown');
+  assert.equal(mapOrder({ ...base, ...snapshot, kitchen_distance_m: 2400 }, slug).kitchenDistanceM, 2400);
+  assert.equal(mapOrder({ ...base, ...snapshot, kitchen_distance_m: 0 }, slug).kitchenDistanceM, 0);
+  for (const bad of [-1, 2.5, Number.NaN, '2400' as unknown as number]) assert.equal(mapOrder({ ...base, ...snapshot, kitchen_distance_m: bad }, slug).kitchenDistanceM, null, `invalid ${String(bad)}`);
+  assert.equal('kitchenDistanceM' in mapOrder({ ...base, kitchen_distance_m: 2400 }, slug), false, 'typed-address orders carry no distance');
   assert.equal('address' in mapOrder(base, slug), false, 'typed-address order');
   assert.equal('address' in mapOrder({ ...base, ...snapshot, address_label: 'office' }, slug), false, 'unknown label is not trusted');
   assert.equal('address' in mapOrder({ ...base, ...snapshot, address_house: null }, slug), false, 'partial snapshot is not trusted');
