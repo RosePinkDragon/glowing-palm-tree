@@ -60,6 +60,12 @@ export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLi
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
 export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
+export interface CustomerNotification {
+  id: string; businessId: BusinessSlug; orderId: string; eventStatus: OrderStatus;
+  title: string; body: string; readAtISO: string | null; createdAtISO: string;
+}
+export interface NotificationPageOptions { cursor?: OrderCursor | null; limit?: number }
+export interface NotificationPage { notifications: CustomerNotification[]; nextCursor: OrderCursor | null }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
 export class ServiceError extends Error {
@@ -140,6 +146,37 @@ function orderPageOptions(value: OrderPageOptions): { cursor: OrderCursor | null
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ServiceError('INVALID_ORDER_QUERY', 'Order page size must be a whole number from 1 to 50.');
   if (cursor !== null && !validOrderCursor(cursor)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order page cursor is invalid.');
   return { cursor: cursor === null ? null : { createdAtISO: cursor.createdAtISO, id: cursor.id }, limit };
+}
+
+function notificationPageOptions(value: NotificationPageOptions): { cursor: OrderCursor | null; limit: number } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ServiceError('INVALID_NOTIFICATION_QUERY', 'Choose a valid notification page.');
+  const { cursor = null, limit = 20 } = value;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (cursor !== null && !validOrderCursor(cursor))) {
+    throw new ServiceError('INVALID_NOTIFICATION_QUERY', 'Choose a page size from 1 to 100 and a valid notification cursor.');
+  }
+  return { cursor: cursor ? { ...cursor } : null, limit };
+}
+const notificationStatuses = new Set<string>(['placed', 'accepted', 'preparing', 'out_for_delivery', 'delivered', 'cancelled']);
+const invalidNotificationResponse = () => new ServiceError('INVALID_RESPONSE', 'The server returned invalid notifications.');
+function notificationTime(value: string): bigint {
+  // Date parses offsets correctly but loses sub-millisecond digits; restore them for keyset comparisons.
+  const fraction = /\.(\d{1,6})/.exec(value)?.[1] ?? '';
+  return BigInt(Date.parse(value)) * 1000n + BigInt(fraction.padEnd(6, '0').slice(3));
+}
+function mapCustomerNotification(value: unknown, userId: string, businessId: string, slug: BusinessSlug): CustomerNotification {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidNotificationResponse();
+  const row = value as Record<string, unknown>;
+  const text = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f\u007f]/.test(v);
+  if (row.user_id !== userId || row.business_id !== businessId || typeof row.id !== 'string' || !orderIdPattern.test(row.id) ||
+    typeof row.order_id !== 'string' || !orderIdPattern.test(row.order_id) || typeof row.event_status !== 'string' || !notificationStatuses.has(row.event_status) ||
+    !text(row.title, 120) || !text(row.body, 1000) || !validOrderCursor({ id: row.id, createdAtISO: row.created_at }) ||
+    (row.read_at !== null && !validOrderCursor({ id: row.id, createdAtISO: row.read_at }))) throw invalidNotificationResponse();
+  return { id: row.id, businessId: slug, orderId: row.order_id, eventStatus: row.event_status as OrderStatus,
+    title: row.title, body: row.body, createdAtISO: row.created_at as string, readAtISO: row.read_at as string | null };
+}
+function failNotification(error: { message: string; code?: string } | null): void {
+  if (error) throw new ServiceError(error.code === '22023' || error.code === '22P02' || error.code === '22007' ? 'INVALID_NOTIFICATION_QUERY' :
+    error.code === '42501' ? 'NOTIFICATION_ACCESS_DENIED' : 'NOTIFICATION_REQUEST_FAILED', 'Could not update or load your notifications.', error);
 }
 
 /** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
@@ -357,6 +394,51 @@ export function createMarketServices(options: ServiceOptions) {
     scope.ensureCurrent(); fail(error, 'Could not load your order');
     return data ? mapOrder(data as OrderRow, slug) : null;
   };
+  const customerNotificationScope = async () => {
+    try { return await customerOrderScope(); }
+    catch (error) {
+      if (error instanceof ServiceError && error.cause && typeof error.cause === 'object' && 'name' in error.cause && error.cause.name === 'AuthSessionMissingError') {
+        throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to view notifications.', error);
+      }
+      throw error;
+    }
+  };
+  const listNotifications = async (options: NotificationPageOptions = {}): Promise<NotificationPage> => {
+    const { cursor, limit } = notificationPageOptions(options), scope = await customerNotificationScope();
+    const { data, error } = await scope.db.rpc('list_customer_notifications', {
+      p_business_slug: slug, p_limit: limit, p_before_created_at: cursor?.createdAtISO ?? null, p_before_id: cursor?.id ?? null,
+    });
+    scope.ensureCurrent(); failNotification(error);
+    if (!Array.isArray(data) || data.length > limit + 1) throw invalidNotificationResponse();
+    const rows = data.map(row => mapCustomerNotification(row, scope.userId, scope.businessId, slug));
+    const seen = new Set<string>();
+    let previous = cursor;
+    for (const row of rows) {
+      const key = row.id.toLowerCase();
+      if (seen.has(key) || (previous && (notificationTime(row.createdAtISO) > notificationTime(previous.createdAtISO) ||
+        (notificationTime(row.createdAtISO) === notificationTime(previous.createdAtISO) && key >= previous.id.toLowerCase())))) throw invalidNotificationResponse();
+      seen.add(key); previous = { id: row.id, createdAtISO: row.createdAtISO };
+    }
+    const notifications = rows.slice(0, limit), last = notifications.at(-1);
+    return { notifications, nextCursor: rows.length > limit && last ? { id: last.id, createdAtISO: last.createdAtISO } : null };
+  };
+  const markNotificationRead = async (id: string): Promise<boolean> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_NOTIFICATION_QUERY', 'Choose a valid notification.');
+    const scope = await customerNotificationScope();
+    const { data, error } = await scope.db.rpc('mark_customer_notification_read', { p_business_slug: slug, p_notification_id: id });
+    scope.ensureCurrent(); failNotification(error);
+    if (typeof data !== 'boolean') throw invalidNotificationResponse();
+    return data;
+  };
+  const notificationCount = async (rpc: 'mark_all_customer_notifications_read' | 'customer_notification_unread_count'): Promise<number> => {
+    const scope = await customerNotificationScope();
+    const { data, error } = await scope.db.rpc(rpc, { p_business_slug: slug });
+    scope.ensureCurrent(); failNotification(error);
+    if (!Number.isSafeInteger(data) || data < 0 || data > 2147483647) throw invalidNotificationResponse();
+    return data;
+  };
+  const markAllNotificationsRead = () => notificationCount('mark_all_customer_notifications_read');
+  const getUnreadNotificationCount = () => notificationCount('customer_notification_unread_count');
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
     async signIn(email: string, password: string) { const { data, error } = await requireClient().auth.signInWithPassword({ email, password }); fail(error, 'Could not sign in'); return data; },
@@ -687,7 +769,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
