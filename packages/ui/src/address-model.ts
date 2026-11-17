@@ -23,12 +23,7 @@ export function formFromAddress(address: SavedAddress): AddressForm {
 }
 
 /** "850 m" under 1 km, one decimal under 10 km, whole km above; empty when the restaurant's kitchen point is unknown. */
-export function formatDistance(metres: number | null): string {
-  if (metres === null || !Number.isFinite(metres) || metres < 0) return '';
-  if (metres < 1000) return `${Math.max(10, Math.round(metres / 10) * 10)} m`;
-  const km = metres / 1000;
-  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
-}
+export { formatDistance } from '@market/core';
 
 /** The draft to send, or per-field messages. Location copy is specific to GPS, since there is no map yet. */
 export function checkAddressForm(form: AddressForm): { draft: AddressDraft } | { errors: AddressFormErrors } {

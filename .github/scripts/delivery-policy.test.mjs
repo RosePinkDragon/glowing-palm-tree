@@ -24,8 +24,11 @@ function fixture(options = {}) {
       if (options.policyFailure) return response({}, options.policyFailure);
       return response({ type: 'file', path: 'supabase/migration-policy.json', encoding: 'base64', content: Buffer.from(JSON.stringify(options.policy || { mode: 'pre-release-baseline' })).toString('base64') });
     }
-    if (path.endsWith('/check-runs') && init.method === 'POST') { const id = nextId++; checks.push({ id, head: JSON.parse(init.body).head_sha }); return response({ id }); }
-    if (/\/check-runs\/\d+$/.test(path) && init.method === 'PATCH') return response({});
+    if (path.endsWith('/check-runs') && init.method === 'POST') {
+      if (options.failStartHead === JSON.parse(init.body).head_sha) return response({}, 403);
+      const id = nextId++; checks.push({ id, head: JSON.parse(init.body).head_sha }); return response({ id });
+    }
+    if (/\/check-runs\/\d+$/.test(path) && init.method === 'PATCH') return response({}, options.failFinishId === Number(path.split('/').at(-1)) ? 503 : 200);
     if (path.endsWith('/pulls') && u.searchParams.get('state') === 'open') return options.listFailure ? response({}, 503) : response(list);
     const pm = path.match(/\/pulls\/(\d+)$/);
     if (pm) {
@@ -176,11 +179,47 @@ test('issue and PR body changes fail, volatile repo metadata is ignored', async 
   }
 });
 
-test('shared head including fork is rejected and failures do not prevent other PRs', async () => {
+test('shared heads including forks fail their checks without failing the batch or unrelated PRs', async () => {
   const a = pr(1, 'same'), b = pr(2, 'same'), c = pr(3, 'different'); b.head.repo.id = 99;
-  const { runner, calls } = fixture({ prs: [a, b, c] }); await assert.rejects(runner.runBatch());
+  const { runner, calls } = fixture({ prs: [a, b, c] }); await runner.runBatch();
   const patched = calls.filter(c => c.method === 'PATCH'); assert.equal(patched.length, 3);
   assert.equal(patched[0].payload.conclusion, 'failure'); assert.equal(patched[1].payload.conclusion, 'failure'); assert.equal(patched[2].payload.conclusion, 'success');
+  assert.match(patched[0].payload.output.summary, /distinct head commit/);
+  assert.doesNotMatch(patched[0].payload.output.summary, /could not verify/);
+});
+
+test('dependent and ordinary evaluator denials remain per-PR verdicts in a mixed batch', async () => {
+  const dependent = pr(8, 'dependent'); dependent.base.ref = 'feature/monorepo-3-first';
+  const invalid = pr(9, 'invalid'); invalid.head.ref = 'not-a-policy-branch';
+  const { runner, calls } = fixture({ prs: [dependent, pr(), invalid, pr(10, 'last-valid')] });
+  await runner.runBatch();
+  const results = calls.filter(c => c.method === 'PATCH').map(c => c.payload);
+  assert.deepEqual(results.map(c => c.conclusion), ['failure', 'success', 'failure', 'success']);
+  assert.match(results[0].output.summary, /Merge its predecessor and retarget/);
+  assert.match(results[2].output.summary, /Branch must be/);
+});
+
+test('API, evaluator and check-publication failures still fail a mixed batch and evaluate unrelated PRs', async () => {
+  for (const failure of [
+    { failPr: 8 },
+    { evaluator: (p, ...args) => { if (p.number === 8) throw new Error('evaluator outage'); return evaluate(p, ...args); } },
+    { failStartHead: 'broken' },
+    { failFinishId: 2 },
+  ]) {
+    const { runner, calls } = fixture({ ...failure, prs: [pr(7, 'first'), pr(8, 'broken'), pr(9, 'last')] });
+    await assert.rejects(runner.runBatch(), /PR 8:/);
+    const lastCheck = calls.find(c => c.method === 'POST' && c.payload.head_sha === 'last');
+    assert.ok(lastCheck, 'unrelated last PR gets a check');
+    const writes = calls.filter(c => c.method === 'PATCH');
+    assert.equal(writes.at(-1).payload.conclusion, 'success', 'unrelated last PR remains successful');
+  }
+});
+
+test('publishing an expected dependent-PR rejection can still fail the workflow on an API error', async () => {
+  const dependent = pr(8, 'dependent'); dependent.base.ref = 'feature/monorepo-3-first';
+  const { runner, calls } = fixture({ prs: [dependent, pr()], failFinishId: 1 });
+  await assert.rejects(runner.runBatch(), /could not complete check/);
+  assert.equal(calls.filter(c => c.method === 'PATCH').at(-1).payload.conclusion, 'success');
 });
 
 test('event check starts before failing open PR scan', async () => {

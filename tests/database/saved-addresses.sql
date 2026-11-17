@@ -218,6 +218,37 @@ end $$;
 -- Owners see the order's copy, never the saved address itself.
 select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000003',true);
 select public.test_assert((select address_house='14, Shivaji Nagar' from public.orders where id=(current_setting('test.placed')::jsonb->>'id')::uuid),'owner sees the order snapshot');
+-- Kitchen-to-pin distance (#100): stored at order time from the kitchen point to the saved pin
+-- (kitchen 0.5,0.5 to pin 0.4,0.4 is about 15.7 km), checked against an independent st_distance.
+reset role;
+do $$ declare ns text := current_setting('test.pg_ns'); expected double precision; stored integer; begin
+  execute format('select %1$I.st_distance(%1$I.st_setsrid(%1$I.st_makepoint(0.5,0.5),4326)::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint(0.4,0.4),4326)::%1$I.geography)', ns) into expected;
+  select kitchen_distance_m into stored from public.orders where id=(current_setting('test.placed')::jsonb->>'id')::uuid;
+  perform public.test_assert(stored between 15600 and 15800 and abs(stored - expected) <= 5, 'order stores the kitchen-to-pin distance in metres');
+end $$;
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000003',true);
+-- Owners and customers can read it but never write it: it is a snapshot like the address copy.
+select public.test_assert(has_column_privilege('authenticated','public.orders','kitchen_distance_m','select')
+  and not has_column_privilege('authenticated','public.orders','kitchen_distance_m','update')
+  and not has_column_privilege('authenticated','public.orders','kitchen_distance_m','insert'),'kitchen distance is read-only for clients');
+do $$ begin
+  begin update public.orders set kitchen_distance_m=1 where id=(current_setting('test.placed')::jsonb->>'id')::uuid; raise exception 'owner changed the kitchen distance'; exception when insufficient_privilege then null; end;
+end $$;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+do $$ begin
+  begin update public.orders set kitchen_distance_m=1 where id=(current_setting('test.placed')::jsonb->>'id')::uuid; raise exception 'customer changed the kitchen distance'; exception when insufficient_privilege then null; end;
+end $$;
+-- Without a kitchen point the distance is unknown (null), and ordering still works.
+reset role;
+update public.businesses set kitchen_location=null where slug='ammu-sammu';
+set role authenticated;
+select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
+select public.test_assert((public.test_addr_place('64800000-0000-4000-8000-000000000021',public.test_addr_delivery(current_setting('test.home')::uuid,3),null)->>'outcome')='placed','order places without a kitchen point');
+select public.test_assert((select kitchen_distance_m is null from public.orders where idempotency_key='64800000-0000-4000-8000-000000000021'),'no kitchen point leaves the distance unknown');
+reset role;
+do $$ begin execute format('update public.businesses set kitchen_location = %1$I.st_setsrid(%1$I.st_makepoint(0.5, 0.5), 4326) where slug = ''ammu-sammu''', current_setting('test.pg_ns')); end $$;
+set role authenticated;
 -- Deleting keeps past orders and their retries; new orders with it are refused.
 select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001',true);
 delete from public.customer_addresses where id=current_setting('test.home')::uuid;

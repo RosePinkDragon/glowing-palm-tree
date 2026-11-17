@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOrderTransition, callLink, canCancel, historyLine, historyNewestFirst, mapsUrl, nextAction, placedLabel, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, parseRupees, queueFilters, rupeesInput, shortAddress } from './admin-model.ts';
+import { applyOrderTransition, callLink, canCancel, historyLine, historyNewestFirst, mapsUrl, nextAction, placedLabel, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, nextStatuses, orderReference, ordersForFilter, parseRupees, queueFilters, rupeesInput, shortAddress, cardArea, pinCheckLine } from './admin-model.ts';
 import type { Order } from '@market/core';
 
 test('rupees are converted exactly and invalid or unsafe amounts rejected', () => {
@@ -52,6 +52,14 @@ test('order reference, elapsed time and address summary', () => {
   assert.equal(elapsedLabel('not a date', now), 'just now');
   assert.equal(shortAddress('  Station   Road '), 'Station Road');
   assert.equal(shortAddress('x'.repeat(50), 10), `${'x'.repeat(9)}…`);
+  const saved = { address: { label: 'home' as const, house: '3', streetArea: 'Station Road', locationSource: 'pin' as const }, delivery: { name: 'N', phone: 'P', addressLine: '3, Station Road, Khed' } };
+  assert.equal(cardArea({ ...saved, kitchenDistanceM: 2400 }), 'Station Road · 2.4 km');
+  assert.equal(cardArea({ ...saved, kitchenDistanceM: 800 }), 'Station Road · 800 m');
+  assert.equal(cardArea({ ...saved, kitchenDistanceM: null }), 'Station Road', 'unknown distance is omitted');
+  assert.equal(cardArea({ delivery: saved.delivery, kitchenDistanceM: 2400 }), '3, Station Road, Khed', 'legacy orders keep the typed line');
+  assert.equal(pinCheckLine({ ...saved, kitchenDistanceM: 1200 }), '1.2 km · pin checked inside delivery area');
+  assert.equal(pinCheckLine({ ...saved, kitchenDistanceM: null }), '');
+  assert.equal(pinCheckLine({ kitchenDistanceM: 1200 }), '', 'legacy orders make no in-area claim');
 });
 
 test('details next action follows the state machine and terminal orders have none', () => {

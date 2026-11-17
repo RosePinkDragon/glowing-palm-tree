@@ -143,7 +143,10 @@ create table public.customer_addresses (
 
 -- Orders carry an immutable copy of the saved address they were placed with (address_* columns,
 -- saved_address_id/version, no foreign key so deleting the address never alters the order) and the
--- phone's distance from that pin at order time (null when unknown) for the owners' flag.
+-- phone's distance from that pin at order time (null when unknown) for the owners' flag, and the
+-- restaurant's kitchen-to-pin distance at order time (null when the business has no kitchen point).
+-- Like every other snapshot column, clients can read but never write them: orders has no client
+-- INSERT/UPDATE grant, so only place_order (and the service role) can set kitchen_distance_m.
 -- order_number is assigned by the assign_order_number trigger.
 create table public.orders (
   id uuid primary key default gen_random_uuid(),
@@ -169,6 +172,7 @@ create table public.orders (
   saved_address_id uuid,
   saved_address_version integer check (saved_address_version is null or saved_address_version > 0),
   placed_from_distance_m integer check (placed_from_distance_m is null or placed_from_distance_m >= 0),
+  kitchen_distance_m integer check (kitchen_distance_m is null or kitchen_distance_m >= 0),
   unique (customer_id, business_id, idempotency_key), unique (business_id, id),
   constraint business_order_number_unique unique (business_id, order_number),
   constraint order_address_evidence check (saved_address_id is not null and saved_address_version is not null
@@ -496,7 +500,7 @@ declare
   subtotal bigint := 0; total bigint; order_id uuid := gen_random_uuid(); request_digest text;
   crypto_schema text; rejected public.checkout_pricing_rejections%rowtype; quote jsonb; quote_lines jsonb := '[]'::jsonb; seen uuid[] := array[]::uuid[];
   addr public.customer_addresses%rowtype; spatial_schema text; covered boolean;
-  phone_lat double precision; phone_lon double precision; phone_at timestamptz; phone_distance double precision;
+  phone_lat double precision; phone_lon double precision; phone_at timestamptz; phone_distance double precision; kitchen_distance double precision;
 begin
   if caller is null or p_idempotency_key is null then raise exception 'authentication and idempotency key required' using errcode='22023'; end if;
   select * into b from public.businesses where slug=p_business_slug for share;
@@ -549,6 +553,11 @@ begin
   execute format('select %1$I.st_covers($1::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint($2,$3),4326)::%1$I.geography)', spatial_schema)
     into covered using b.service_area, addr.longitude, addr.latitude;
   if not coalesce(covered,false) then raise exception 'delivery unavailable' using errcode='22023'; end if;
+  -- Kitchen-to-pin distance for the owners' queue card; unknown when no kitchen point is set.
+  if b.kitchen_location is not null then
+    execute format('select %1$I.st_distance($1::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint($2,$3),4326)::%1$I.geography)', spatial_schema)
+      into kitchen_distance using b.kitchen_location, addr.longitude, addr.latitude;
+  end if;
   -- The phone fix never blocks an order: anything missing, malformed, coarser
   -- than 150 m, old or in the future just leaves the distance unknown. It is
   -- the customer's own claim, so owners treat it as a hint, never as proof.
@@ -592,11 +601,11 @@ begin
   if subtotal < b.min_order_paise or total > 2147483647 then raise exception 'invalid order total' using errcode='22023'; end if;
   insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,
     address_label,address_custom_label,address_house,address_street_area,address_landmark,address_location_source,
-    saved_address_id,saved_address_version,placed_from_distance_m,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
+    saved_address_id,saved_address_version,placed_from_distance_m,kitchen_distance_m,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
   values(order_id,b.id,caller,trim(p_delivery->>'name'),trim(p_delivery->>'phone'),
     concat_ws(', ',addr.house,addr.street_area,addr.landmark),addr.latitude,addr.longitude,
     addr.label,addr.custom_label,addr.house,addr.street_area,addr.landmark,addr.location_source,
-    addr.id,addr.version,round(phone_distance)::integer,subtotal::integer,b.delivery_fee_paise,total::integer,p_idempotency_key,request_digest)
+    addr.id,addr.version,round(phone_distance)::integer,round(kitchen_distance)::integer,subtotal::integer,b.delivery_fee_paise,total::integer,p_idempotency_key,request_digest)
   returning * into existing;
   for item in select value from jsonb_array_elements(p_items) loop
     select * into strict menu from public.menu_items where id=(item->>'menu_item_id')::uuid;

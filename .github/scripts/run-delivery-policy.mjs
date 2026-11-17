@@ -50,7 +50,10 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
         await finishCheck(checkId, ['PR closed or head changed during evaluation.']);
         return true;
       }
-      if (shared) throw new Error('Multiple open PRs share this head commit; each open PR needs a distinct head commit.');
+      if (shared) {
+        await finishCheck(checkId, ['Multiple open PRs share this head commit; each open PR needs a distinct head commit.']);
+        return true;
+      }
       // GitHub retains a PR's base snapshot when unrelated commits land on main.
       // Workflow checkout supplies trusted policy code; target ref supplies scope.
       if (pr.base.ref !== 'main') {
