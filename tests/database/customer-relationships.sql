@@ -59,8 +59,8 @@ do $$ declare detail text; begin
 end $$;
 reset role;
 update customer_lifecycle_private.accounts set state='active' where customer_id='35200000-0000-4000-8000-000000000001';
--- Simulate completed leave; stable lock survives, explicit rejoin gets a new generation.
-delete from public.customer_businesses where customer_id='35200000-0000-4000-8000-000000000001' and business_id='10000000-0000-4000-8000-000000000001';
+-- Simulate completed leave with a retained marker; explicit rejoin gets a new generation.
+update public.customer_businesses set state='left' where customer_id='35200000-0000-4000-8000-000000000001' and business_id='10000000-0000-4000-8000-000000000001';
 set local role authenticated;
 select public.test_assert(public.join_business('ammu-sammu')->>'generation'<>(select receipt->>'generation' from receipts),'fresh generation after relationship removal');
 select set_config('request.jwt.claim.sub','35200000-0000-4000-8000-000000000002',true);

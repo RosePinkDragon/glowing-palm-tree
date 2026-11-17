@@ -129,22 +129,24 @@ Register the four native identifiers with Firebase when native integration is im
 
 ### Customer relationship foundation (#52, PR A)
 
-Customer login integration must explicitly call `services.joinBusiness()` before enabling
-checkout. This backend-only slice provides the contract; screen/Auth callback wiring is a
-separate client delivery. Do not auto-join from `placeOrder` or its recovery path. Existing
-orders backfill one relationship per customer/business with the earliest order timestamp;
-no-order accounts join explicitly. The baseline backfill is bootstrap-only and must never
-be rerun after leave becomes available. Existing relationships/generations are preserved.
+Checkout enrolls a never-linked customer in the same transaction under the account lock;
+no client join call is required for a first order. A retained `left` marker distinguishes a
+completed leave from never linked. Checkout refuses `left` and `leave_pending`, including
+replays, without changing the generation. Explicit `services.joinBusiness()` may reactivate
+`left` with a fresh generation/timestamp; pending leave still blocks join. PR B must retain
+this marker rather than deleting all evidence of the relationship. Active replays preserve
+the existing order, relationship generation and timestamp. Failed checkout rolls back new
+enrollment. Existing orders backfill the earliest customer/business timestamp at baseline
+bootstrap only; never rerun backfill after leave becomes available.
 
-`customer_lifecycle_private.accounts` is the durable per-user lock/state row. Its row is
-created lazily (or by backfill), survives relationship deletion and is removed only with
-the Auth account. Trusted lifecycle writers must acquire it before inspecting or mutating
-relationships. Lock order is session (where validated), account, business, checkout key,
-then address/menu/order rows. The existing checkout authentication contract is unchanged;
-join validates/locks the live Auth session. Checkout requires an active relationship even
-for an idempotency replay; retained history reads continue through existing order RLS.
-No relationship is created by checkout. Account `deletion_pending` blocks both join and
-checkout; a relationship's `leave_pending` blocks both for that business only.
+`customer_lifecycle_private.accounts` is the durable per-user lock/state row, created
+lazily or by backfill and removed only with the Auth account. The full lock order is
+**users KEY SHARE → sessions SHARE (where validated) → accounts FOR UPDATE → business
+→ advisory checkout key → address/menu/order rows**. `lock_account` takes users KEY SHARE
+before touching accounts, and join takes users KEY SHARE before validating/locking the
+session. This prevents inversion against Auth deletion cascading through sessions/accounts.
+The existing checkout authentication contract is unchanged; join validates the live session.
+Account `deletion_pending` blocks both paths. History remains readable through existing RLS.
 
 PR B, only after A merges, supplies the leave request/receipt, last-business and active-order
 checks, cleanup and `purge_customer_notifications` call. Its order transitions must share

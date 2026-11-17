@@ -104,7 +104,7 @@ create table public.customer_businesses (
   business_id uuid not null references public.businesses(id),
   joined_at timestamptz not null default clock_timestamp(),
   generation uuid not null default gen_random_uuid(),
-  state text not null default 'active' check (state in ('active','leave_pending')),
+  state text not null default 'active' check (state in ('active','leave_pending','left')),
   primary key (customer_id,business_id)
 );
 alter table public.customer_businesses enable row level security;
@@ -657,13 +657,15 @@ end $$;
 -- address_id/address_version); the phone fix in p_location is optional and only measures
 -- the distance the order was placed from. The exact accepted-pricing quote is required.
 -- Internal only: callers derive identity themselves; clients cannot choose a lock target.
--- Lock order: verified session (join), account, business, checkout key, address/menu/order.
+-- Lock order: users KEY SHARE, sessions SHARE (join), accounts UPDATE, business SHARE,
+-- checkout advisory key, address/menu/order rows. Users first also serializes Auth cascades.
 -- Future leave/status paths must take account before order rows; never reverse this order.
 create function customer_lifecycle_private.lock_account(p_customer uuid)
 returns void language plpgsql security definer set search_path = '' as $$
 declare account_state text;
 begin
-  if p_customer is null or not exists(select 1 from auth.users where id=p_customer) then
+  perform 1 from auth.users where id=p_customer for key share;
+  if not found then
     raise exception 'authentication required' using errcode='42501';
   end if;
   insert into customer_lifecycle_private.accounts(customer_id) values(p_customer) on conflict do nothing;
@@ -678,6 +680,8 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare caller uuid := auth.uid(); session uuid; business uuid; relationship public.customer_businesses%rowtype;
 begin
   if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
   begin session := (auth.jwt()->>'session_id')::uuid;
   exception when invalid_text_representation then raise exception 'invalid session' using errcode='42501'; end;
   if session is null then raise exception 'invalid session' using errcode='42501'; end if;
@@ -688,11 +692,14 @@ begin
   select id into business from public.businesses where slug=p_business_slug;
   if not found then raise exception 'business unavailable' using errcode='22023', detail='INVALID_BUSINESS'; end if;
   select * into relationship from public.customer_businesses where customer_id=caller and business_id=business;
-  if found and relationship.state <> 'active' then
+  if found and relationship.state = 'leave_pending' then
     raise exception 'business lifecycle pending' using errcode='PT409', detail='BUSINESS_LIFECYCLE_PENDING';
   end if;
   if not found then
     insert into public.customer_businesses(customer_id,business_id) values(caller,business) returning * into relationship;
+  elsif relationship.state = 'left' then
+    update public.customer_businesses set state='active',generation=gen_random_uuid(),joined_at=clock_timestamp()
+      where customer_id=caller and business_id=business returning * into relationship;
   end if;
   return jsonb_build_object('customer_id',caller,'business_id',business,'generation',relationship.generation,
     'joined_at',relationship.joined_at,'state',relationship.state);
@@ -720,12 +727,13 @@ begin
   perform customer_lifecycle_private.lock_account(caller);
   select * into b from public.businesses where slug=p_business_slug for share;
   if not found then raise exception 'business unavailable' using errcode='22023'; end if;
-  -- Never implicitly join or rejoin during checkout, including a replay. History reads remain
-  -- available under existing ownership/RLS even after a later leave removes this relationship.
-  if not exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id) then
+  -- No row means never linked. Enroll only this case, atomically with checkout. A completed
+  -- leave must retain its left marker so a replay/new request cannot silently rejoin.
+  insert into public.customer_businesses(customer_id,business_id) values(caller,b.id) on conflict do nothing;
+  if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state='left') then
     raise exception 'join this business before checkout' using errcode='PT403', detail='BUSINESS_JOIN_REQUIRED';
   end if;
-  if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state <> 'active') then
+  if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state='leave_pending') then
     raise exception 'business lifecycle pending' using errcode='PT409', detail='BUSINESS_LIFECYCLE_PENDING';
   end if;
   select n.nspname into strict crypto_schema from pg_catalog.pg_extension e

@@ -211,7 +211,6 @@ const NOT_ACCEPTING_ORDERS_SQLSTATE = 'PT409';
 const ADDRESS_CHANGED_SQLSTATE = 'PT412';
 const addressChanged = (cause?: unknown) => new ServiceError('ADDRESS_CHANGED', 'This address was changed or removed, maybe in the other app. Check it and try again.', cause);
 
-/** The storage key is isolated by backend, business and audience. */
 // Lifecycle conflicts have distinct details; unrelated PT409 errors retain their existing mapping.
 function lifecycleError(error: { code?: string; details?: string | null } | null): void {
   if (error?.code === 'PT403' && error.details === 'BUSINESS_JOIN_REQUIRED') throw new ServiceError('BUSINESS_JOIN_REQUIRED', 'Join this restaurant before placing an order.', error);
@@ -219,6 +218,7 @@ function lifecycleError(error: { code?: string; details?: string | null } | null
   if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'Your account is being updated. Retry when it finishes.', error);
 }
 
+/** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
   return `market:${encodeURIComponent(url.replace(/\/+$/, ''))}:${slug}:${audience}`;
 }
@@ -472,8 +472,8 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const markAllNotificationsRead = () => notificationCount('mark_all_customer_notifications_read');
   const getUnreadNotificationCount = () => notificationCount('customer_notification_unread_count');
-  // Join is explicit: login/screen integration calls this before enabling checkout. Never
-  // auto-join from a placement retry, which could undo a completed leave in another tab.
+  // Explicit join also supports returning after leave. Checkout enrolls only never-linked
+  // customers; retained left markers prevent automatic rejoin from placement/recovery.
   const joinBusiness = async (): Promise<CustomerBusinessRelationship> => {
     const db = requireClient(), started = generation;
     if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to join a restaurant.');
