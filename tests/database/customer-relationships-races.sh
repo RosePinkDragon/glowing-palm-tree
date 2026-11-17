@@ -11,9 +11,7 @@ relationship_hold() {
   [[ $ready == true ]] || { echo "Lifecycle race never reached barrier: $name" >&2; return 1; }
 }
 relationship_sql >/dev/null <<'SQL'
-alter table auth.users disable trigger test_customer_relationships;
 insert into auth.users(id) values ('35200000-0000-4000-8000-000000000009');
-alter table auth.users enable trigger test_customer_relationships;
 insert into auth.sessions(id,user_id) values ('35200000-0000-4000-8000-000000000009','35200000-0000-4000-8000-000000000009');
 insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source) values ('35200000-0000-4000-8000-000000000009','home','Lifecycle house','Lifecycle road',0.5,0.5,'pin');
 update public.businesses set accepting_orders=true where slug='ammu-sammu';
@@ -33,6 +31,22 @@ relationship_sql >/dev/null <<'SQL'
 select public.test_assert(not exists(select 1 from public.customer_businesses where customer_id='35200000-0000-4000-8000-000000000009'),'failed first checkout rolls back enrollment');
 update public.businesses set accepting_orders=true where slug='ammu-sammu';
 SQL
+# A normal-return pricing rejection and its replay must not enroll a never-linked caller.
+{
+ echo "$relationship_auth";
+ echo "select public.test_assert(public.place_order('ammu-sammu','$race_items',public.test_delivery('Lifecycle race'),null,'65200000-0000-4000-8000-000000000098','{}')->>'outcome'='pricing_changed','stale first quote refused');";
+} | relationship_sql >/dev/null
+relationship_sql >/dev/null <<'SQL'
+select public.test_assert(not exists(select 1 from public.customer_businesses where customer_id='35200000-0000-4000-8000-000000000009') and not exists(select 1 from public.orders where customer_id='35200000-0000-4000-8000-000000000009'),'pricing_changed leaves no relationship or order');
+SQL
+{
+ echo "$relationship_auth";
+ echo "select public.test_assert(public.place_order('ammu-sammu','$race_items',public.test_delivery('Lifecycle race'),null,'65200000-0000-4000-8000-000000000098','{}')->>'outcome'='pricing_changed','rejection replay remains refused');";
+} | relationship_sql >/dev/null
+relationship_sql >/dev/null <<'SQL'
+select public.test_assert(not exists(select 1 from public.customer_businesses where customer_id='35200000-0000-4000-8000-000000000009'),'pricing rejection replay never enrolls');
+SQL
+# Corrected pricing uses a fresh key; the rejected key remains terminal by existing contract.
 # Never-linked checkout succeeds without any client join call, and replay preserves its generation.
 relationship_place 65200000-0000-4000-8000-000000000001 | relationship_sql >/dev/null
 relationship_sql >/dev/null <<'SQL'
@@ -44,9 +58,7 @@ relationship_sql >/dev/null <<'SQL'
 select public.test_assert(not exists((select * from public.customer_businesses where customer_id='35200000-0000-4000-8000-000000000009') except select * from public.test_first_relationship),'first order replay preserves generation/timestamp');
 drop table public.test_first_relationship;
 -- Separate never-linked customer for concurrent distinct first orders.
-alter table auth.users disable trigger test_customer_relationships;
 insert into auth.users(id) values ('35200000-0000-4000-8000-000000000008');
-alter table auth.users enable trigger test_customer_relationships;
 insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source) values ('35200000-0000-4000-8000-000000000008','home','Concurrent house','Road',0.5,0.5,'pin');
 SQL
 relationship_original_auth=$relationship_auth
@@ -135,9 +147,7 @@ drop table public.test_left_relationship;
 SQL
 # Auth deletion races: existing account row reproduces the original cascade inversion.
 relationship_sql >/dev/null <<'SQL'
-alter table auth.users disable trigger test_customer_relationships;
 insert into auth.users(id) values ('35200000-0000-4000-8000-000000000007');
-alter table auth.users enable trigger test_customer_relationships;
 insert into customer_lifecycle_private.accounts(customer_id) values ('35200000-0000-4000-8000-000000000007');
 SQL
 relationship_sql >/dev/null <<'SQL' &
@@ -159,9 +169,7 @@ SQL
 wait "$relationship_pid"
 # Delete first: lock_account waits for users, then rejects the deleted identity cleanly.
 relationship_sql >/dev/null <<'SQL'
-alter table auth.users disable trigger test_customer_relationships;
 insert into auth.users(id) values ('35200000-0000-4000-8000-000000000007');
-alter table auth.users enable trigger test_customer_relationships;
 insert into customer_lifecycle_private.accounts(customer_id) values ('35200000-0000-4000-8000-000000000007');
 SQL
 relationship_sql >/dev/null <<'SQL' &

@@ -727,9 +727,8 @@ begin
   perform customer_lifecycle_private.lock_account(caller);
   select * into b from public.businesses where slug=p_business_slug for share;
   if not found then raise exception 'business unavailable' using errcode='22023'; end if;
-  -- No row means never linked. Enroll only this case, atomically with checkout. A completed
-  -- leave must retain its left marker so a replay/new request cannot silently rejoin.
-  insert into public.customer_businesses(customer_id,business_id) values(caller,b.id) on conflict do nothing;
+  -- Read-only gate: left/pending relationships refuse checkout. A completed leave must
+  -- retain its left marker; replays and pricing rejections must never enroll a customer.
   if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state='left') then
     raise exception 'join this business before checkout' using errcode='PT403', detail='BUSINESS_JOIN_REQUIRED';
   end if;
@@ -830,6 +829,9 @@ begin
     return jsonb_build_object('outcome','pricing_changed','pricing',quote);
   end if;
   if subtotal < b.min_order_paise or total > 2147483647 then raise exception 'invalid order total' using errcode='22023'; end if;
+  -- Enroll only when creating a new order, after all normal-return replay/rejection paths.
+  -- Still under the account lock; failure of the order transaction rolls this back too.
+  insert into public.customer_businesses(customer_id,business_id) values(caller,b.id) on conflict do nothing;
   insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,
     address_label,address_custom_label,address_house,address_street_area,address_landmark,address_location_source,
     saved_address_id,saved_address_version,placed_from_distance_m,kitchen_distance_m,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)

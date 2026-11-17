@@ -21,13 +21,3 @@ create function public.test_delivery(p_name text default 'Test Customer') return
 create function public.test_category(p_business uuid, p_name text) returns uuid language sql as $$
   insert into public.menu_categories(business_id,name) values (p_business,p_name)
   on conflict (business_id,name) do update set name = excluded.name returning id $$;
-
--- Legacy checkout suites predate explicit join. Trusted fixture setup supplies both restaurant
--- relationships; production Auth has no such trigger. Lifecycle suite disables this per fixture.
-create function public.test_customer_relationships() returns trigger language plpgsql security definer set search_path='' as $$
-begin
-  insert into public.customer_businesses(customer_id,business_id) select new.id,id from public.businesses;
-  return new;
-end $$;
-revoke all on function public.test_customer_relationships() from public,anon,authenticated,service_role;
-create trigger test_customer_relationships after insert on auth.users for each row execute function public.test_customer_relationships();

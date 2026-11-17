@@ -133,11 +133,15 @@ Checkout enrolls a never-linked customer in the same transaction under the accou
 no client join call is required for a first order. A retained `left` marker distinguishes a
 completed leave from never linked. Checkout refuses `left` and `leave_pending`, including
 replays, without changing the generation. Explicit `services.joinBusiness()` may reactivate
-`left` with a fresh generation/timestamp; pending leave still blocks join. PR B must retain
-this marker rather than deleting all evidence of the relationship. Active replays preserve
-the existing order, relationship generation and timestamp. Failed checkout rolls back new
-enrollment. Existing orders backfill the earliest customer/business timestamp at baseline
-bootstrap only; never rerun backfill after leave becomes available.
+`left` with a fresh generation/timestamp; pending leave still blocks join. PR B must keep
+the `left` row and never delete it: auto-enrollment cannot distinguish a deleted relationship
+from a never-linked customer. Active replays preserve the existing order, relationship
+generation and timestamp. Enrollment is inserted only immediately before a new order,
+after all pricing checks. Pricing rejections and both replay paths never insert or change
+a relationship. Exceptions roll enrollment back with the order. Corrected pricing retries
+use a fresh idempotency key; the original rejected key remains terminal. Existing orders
+backfill the earliest customer/business timestamp at baseline bootstrap only; never rerun
+backfill after leave becomes available.
 
 `customer_lifecycle_private.accounts` is the durable per-user lock/state row, created
 lazily or by backfill and removed only with the Auth account. The full lock order is

@@ -12,10 +12,8 @@ do $$ declare f text; begin
   perform public.test_assert((select proconfig @> array['search_path=""'] and prosecdef=(f like 'customer_lifecycle_private.%') from pg_proc where oid=f::regprocedure),'trusted boundary '||f);
  end loop;
 end $$;
--- Unlike legacy test fixtures, these users start genuinely unlinked.
-alter table auth.users disable trigger test_customer_relationships;
+-- New accounts start unlinked; checkout suites exercise real auto-enrollment.
 insert into auth.users(id) values ('35200000-0000-4000-8000-000000000001'),('35200000-0000-4000-8000-000000000002');
-alter table auth.users enable trigger test_customer_relationships;
 insert into auth.sessions(id,user_id) select id,id from auth.users where id::text like '35200000-%';
 create temp table before_relationships as select to_jsonb(a) row from public.customer_addresses a;
 create temp table receipts(receipt jsonb);
