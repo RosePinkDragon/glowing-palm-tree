@@ -22,7 +22,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
-self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured)
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
 shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
@@ -170,5 +170,6 @@ select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009'
 update public.customer_addresses set house='Edited during checkout' where id='74800000-0000-4000-8000-000000000001';
 SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
+  source tests/database/restaurant-settings-races.sh
 done
-echo 'Baseline, final-schema suites and races passed in both PostGIS layouts.'
+echo 'Baseline, final-schema suites and races (including restaurant settings) passed in both PostGIS layouts.'

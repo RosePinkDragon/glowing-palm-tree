@@ -30,6 +30,12 @@ create extension if not exists postgis with schema extensions;
 create schema menu_photo_private;
 revoke all on schema menu_photo_private from public, anon, authenticated;
 
+-- Only the invoker wrapper public.save_restaurant_settings is exposed over the API. The privileged
+-- implementation stays in a schema outside the Data API, with explicit caller/session checks.
+create schema restaurant_settings_private;
+revoke all on schema restaurant_settings_private from public, anon, authenticated;
+grant usage on schema restaurant_settings_private to authenticated;
+
 create type public.diet_classification as enum ('veg', 'non_veg', 'egg');
 
 -- 2. Tables and constraints --------------------------------------------------------------------
@@ -52,6 +58,9 @@ create table public.businesses (
     constraint business_order_prefix_unique unique,
   -- Contact values are intentionally unconfigured until the owners supply them.
   contact_phone text check (contact_phone is null or contact_phone ~ '^\+[1-9][0-9]{7,14}$'),
+  whatsapp_phone text check (whatsapp_phone is null or whatsapp_phone ~ '^\+91[6-9][0-9]{9}$'),
+  -- Bumped by trigger when the owner-editable settings change, so an open settings form can detect staleness.
+  settings_version integer not null default 1 check (settings_version > 0),
   created_at timestamptz not null default now()
 );
 do $$
@@ -361,6 +370,15 @@ begin
   return new;
 end $$;
 
+-- Keeps settings_version in step with owner-editable settings, including trusted administrative edits.
+-- Unrelated updates (including accepting_orders) do not invalidate an open settings form.
+create function restaurant_settings_private.bump_version() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  new.settings_version := old.settings_version + 1;
+  return new;
+end $$;
+
 -- Normalise text, keep identity fixed, and bump the version on every edit so a checkout opened on an
 -- older version is refused rather than silently changed.
 create function public.prepare_customer_address() returns trigger language plpgsql set search_path = '' as $$
@@ -589,6 +607,58 @@ begin
   insert into public.order_status_history(order_id,status,changed_by) values(order_id,'placed',caller);
   return jsonb_build_object('outcome','placed','id',existing.id,'order_number',existing.order_number,'business_id',existing.business_id,'status',existing.status,'version',existing.version,'subtotal_paise',existing.subtotal_paise,'delivery_fee_paise',existing.delivery_fee_paise,'total_paise',existing.total_paise,'created_at',existing.created_at);
 end $$;
+
+-- Restaurant settings: the privileged implementation lives outside the Data API; the invoker wrapper
+-- is the only exposed entry point. No businesses UPDATE grants exist for clients.
+create function restaurant_settings_private.save_settings(
+  p_business_slug text, p_contact_phone text, p_whatsapp_phone text,
+  p_delivery_fee_paise numeric, p_min_order_paise numeric, p_expected_version integer
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); session uuid; b public.businesses%rowtype;
+begin
+  if caller is null then raise exception 'authentication required' using errcode = '42501'; end if;
+  begin session := (auth.jwt()->>'session_id')::uuid;
+  exception when others then raise exception 'invalid session' using errcode = '42501'; end;
+  if session is null then raise exception 'invalid session' using errcode = '42501'; end if;
+  perform 1 from auth.sessions where id = session and user_id = caller and (not_after is null or not_after > clock_timestamp()) for share;
+  if not found then raise exception 'invalid session' using errcode = '42501'; end if;
+  -- Same business lock as checkout/open-close: a concurrent checkout either
+  -- uses the old accepted terms or receives the new quote, never mixed fields.
+  select * into b from public.businesses where slug = p_business_slug for no key update;
+  if not found then raise exception 'business unavailable' using errcode = '42501'; end if;
+  perform 1 from public.business_memberships where business_id = b.id and user_id = caller and role = 'admin' for share;
+  if not found then raise exception 'business unavailable' using errcode = '42501'; end if;
+  if p_expected_version is null or p_expected_version <> b.settings_version then
+    raise exception 'restaurant details changed; refresh before saving' using errcode = '40001';
+  end if;
+  -- Numeric arguments deliberately avoid integer coercion rounding fractional
+  -- paise before validation. No writes occur until all four fields are valid.
+  if p_contact_phone is null or p_contact_phone !~ '^\+91[1-9][0-9]{9}$' then
+    raise exception 'Enter an Indian mobile or landline number.' using errcode = '22023', detail = 'contactPhone';
+  end if;
+  if p_whatsapp_phone is not null and p_whatsapp_phone !~ '^\+91[6-9][0-9]{9}$' then
+    raise exception 'Enter an Indian mobile number or leave it empty.' using errcode = '22023', detail = 'whatsappPhone';
+  end if;
+  if p_delivery_fee_paise is null or p_delivery_fee_paise < 0 or p_delivery_fee_paise > 100000 or trunc(p_delivery_fee_paise) <> p_delivery_fee_paise then
+    raise exception 'Enter a delivery fee from 0 to 1,000 rupees, in whole paise.' using errcode = '22023', detail = 'deliveryFeePaise';
+  end if;
+  if p_min_order_paise is null or p_min_order_paise < 0 or p_min_order_paise > 1000000 or trunc(p_min_order_paise) <> p_min_order_paise then
+    raise exception 'Enter a minimum order from 0 to 10,000 rupees, in whole paise.' using errcode = '22023', detail = 'minOrderPaise';
+  end if;
+  update public.businesses set contact_phone = p_contact_phone, whatsapp_phone = p_whatsapp_phone,
+    delivery_fee_paise = p_delivery_fee_paise::integer, min_order_paise = p_min_order_paise::integer
+    where id = b.id returning * into b;
+  return jsonb_build_object('contact_phone', b.contact_phone, 'whatsapp_phone', b.whatsapp_phone,
+    'delivery_fee_paise', b.delivery_fee_paise, 'min_order_paise', b.min_order_paise, 'settings_version', b.settings_version);
+end $$;
+
+create function public.save_restaurant_settings(
+  p_business_slug text, p_contact_phone text, p_whatsapp_phone text,
+  p_delivery_fee_paise numeric, p_min_order_paise numeric, p_expected_version integer
+) returns jsonb language sql security invoker set search_path = '' as $$
+  select restaurant_settings_private.save_settings(p_business_slug, p_contact_phone, p_whatsapp_phone,
+    p_delivery_fee_paise, p_min_order_paise, p_expected_version)
+$$;
 
 -- Owners change the open/closed switch only through this function; clients have no direct update
 -- grant on businesses. The business row is locked, so an order and a closing at the same moment
@@ -952,6 +1022,8 @@ create trigger assign_order_number before insert or update of order_number,busin
   for each row execute function public.assign_order_number();
 create trigger prepare_customer_address before insert or update on public.customer_addresses
   for each row execute function public.prepare_customer_address();
+create trigger restaurant_settings_version before update of contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise
+  on public.businesses for each row execute function restaurant_settings_private.bump_version();
 create trigger queue_order_notification after insert or update of status on public.orders
 for each row execute function public.queue_order_notification();
 
@@ -1033,7 +1105,9 @@ revoke all on function
   public.claim_menu_photo_cleanup(uuid,text), public.finish_menu_photo_cleanup(uuid,text,uuid,uuid),
   public.prevent_menu_business_change(), public.prevent_category_business_change(), public.require_menu_diet(),
   public.protect_order_prefix(), public.assign_order_number(), public.prepare_customer_address(),
-  public.queue_order_notification(), menu_photo_private.track_photo()
+  public.queue_order_notification(), menu_photo_private.track_photo(),
+  restaurant_settings_private.bump_version(), restaurant_settings_private.save_settings(text,text,text,numeric,numeric,integer),
+  public.save_restaurant_settings(text,text,text,numeric,numeric,integer)
   from public, anon, authenticated;
 -- Signed-in customers and owners (each function checks the caller itself).
 grant execute on function
@@ -1041,7 +1115,9 @@ grant execute on function
   public.register_device_token(text,text,text), public.unregister_device_token(text,text,text),
   public.set_accepting_orders(text,boolean), public.place_order(text,jsonb,jsonb,jsonb,uuid,jsonb),
   public.transition_order(uuid,text,integer), public.reorder_menu_items(text,uuid,uuid[]),
-  public.reorder_menu_categories(text,uuid[]), public.daily_summary(text,date), public.list_addresses(text)
+  public.reorder_menu_categories(text,uuid[]), public.daily_summary(text,date), public.list_addresses(text),
+  restaurant_settings_private.save_settings(text,text,text,numeric,numeric,integer),
+  public.save_restaurant_settings(text,text,text,numeric,numeric,integer)
   to authenticated;
 -- Trusted server code only (the notification dispatcher, the menu-photos Edge Function, setup and account deletion).
 grant execute on function
