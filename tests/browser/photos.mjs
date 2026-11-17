@@ -155,7 +155,9 @@ try {
         assert.equal(await dialog.getByRole('button', { name: 'Add · ₹100', exact: true }).isDisabled(), true);
         await close('No photo dish'); await page.reload({ waitUntil: 'networkidle' });
         const distant = page.getByRole('button', { name: `View details for ${menu.at(-1).name}`, exact: true });
-        await distant.scrollIntoViewIfNeeded(); await eventually(() => requests.some(path => path.includes(`/${menu.at(-1).id}/`)));
+        await distant.scrollIntoViewIfNeeded();
+        // Kokani's a la carte rows are text only (#39): a dish that is not featured never loads a photo in the list; its photo is in the details dialog.
+        if (brand) { await page.waitForTimeout(500); assert.equal(requests.some(path => path.includes(`/${menu.at(-1).id}/`)), false, 'text rows request no photo'); } else await eventually(() => requests.some(path => path.includes(`/${menu.at(-1).id}/`)));
         assert.ok(requests.every(path => /\/(card|detail)\.webp$/.test(path)), 'unoptimized/original image requested');
         await page.reload({ waitUntil: 'networkidle' }); assert.deepEqual((await saved()).lines.map(line => line.quantity), [10, 1]);
         await page.setViewportSize({ width: 1280, height: 900 }); dialog = await open('Photo dish'); await page.screenshot({ path: `dist/browser/${slug}-dish-details-desktop.png` }); await close('Photo dish');
