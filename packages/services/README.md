@@ -64,3 +64,33 @@ or transport failures use `NOTIFICATION_REQUEST_FAILED`. Existing
 `SIGN_IN_REQUIRED`, `SESSION_CHANGED`, `DISPOSED` and `DEMO_MODE` codes also apply.
 There are no feed Realtime subscriptions. The trusted cleanup functions and later
 lifecycle callers are described in `docs/RELEASE.md`; no scheduling is configured.
+
+# Owner name self-service (#53 backend)
+
+`getOwnerProfile()` is an admin-audience read of the current restaurant membership
+and verified Auth user. It returns `{ displayName, phone }`. Phone is read-only,
+comes only from Auth, and remains null when absent/empty; no email or restaurant
+number is substituted. Both digit-only and leading-plus Auth phone forms are
+preserved. Existing `getOwnerDisplayName()` screen callers remain compatible.
+
+`setOwnerDisplayName(displayName)` returns the confirmed saved name. It sends only
+`p_business_slug` and `p_display_name`, never a target user, phone, role or other
+membership fields. Read/save operations bind to the initiating user and session;
+a replacement login (even for the same user) or disposal rejects the result.
+Matching-session token refresh is accepted, and the write pins that session's token.
+
+`validateOwnerDisplayName(value)` mirrors the existing membership constraint:
+already trimmed ASCII spaces, 1–60 Unicode code points, no prohibited controls,
+invisible spacing or bidi characters. ZWJ/ZWNJ remain valid for Indic names.
+It never strips disallowed characters to make a rejected name valid.
+`INVALID_OWNER_NAME` identifies bad input. Lost owner access uses `ADMIN_REQUIRED`,
+missing login uses `SIGN_IN_REQUIRED`, identity/session changes use
+`SESSION_CHANGED`, malformed confirmations use `INVALID_RESPONSE`, and transport
+failures use `OWNER_PROFILE_REQUEST_FAILED` / `OWNER_NAME_SAVE_FAILED`.
+
+The public RPC is an invoker wrapper over a private definer with an empty search
+path, active-session checks and a locked caller membership. Clients gain no direct
+membership writes. Only the selected membership's display name changes. Existing
+history snapshots retain the old name; subsequent steps snapshot the new name.
+No Settings screen, phone/Auth writes, remote database operation or new migration
+is included. Keep #53 open for its remaining screen and native-device acceptance.

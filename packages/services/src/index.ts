@@ -6,6 +6,7 @@ export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
 export interface Business { contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
 export interface RestaurantSettings { contactPhone: string | null; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; version: number }
+export interface OwnerProfile { displayName: string; readonly phone: string | null }
 /** Delivery-area status from the business row (the polygon is never fetched): a verified radius, another verified source, or not verified. */
 export type DeliveryAreaStatus = { kind: 'radius'; radiusM: number } | { kind: 'verified' } | { kind: 'unverified' };
 /** What the owner's Restaurant details screen reads: the editable settings plus developer-controlled facts shown read-only. */
@@ -76,6 +77,23 @@ export class ServiceError extends Error {
 export class RestaurantSettingsValidationError extends ServiceError {
   readonly fields: Partial<Record<SettingsField, string>>;
   constructor(fields: Partial<Record<SettingsField, string>>) { super('INVALID_SETTINGS', 'Check the restaurant details.'); this.name = 'RestaurantSettingsValidationError'; this.fields = fields; }
+}
+
+/** Mirror membership_display_name_valid. btrim trims ASCII spaces; ZWJ/ZWNJ are allowed. */
+export function validateOwnerDisplayName(value: unknown): string {
+  if (typeof value !== 'string' || value.startsWith(' ') || value.endsWith(' ') || [...value].length < 1 || [...value].length > 60 ||
+    /[\u0000-\u001f\u007f-\u009f\u00A0\u00AD\u2000-\u200B\u200E\u200F\u2028-\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]/u.test(value) ||
+    [...value].some(char => char.length === 1 && char.charCodeAt(0) >= 0xd800 && char.charCodeAt(0) <= 0xdfff)) {
+    throw new ServiceError('INVALID_OWNER_NAME', 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.');
+  }
+  return value;
+}
+function ownerNameResponse(value: unknown, userId: string, businessId: string, membership: boolean): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid owner details.');
+  const row = value as Record<string, unknown>;
+  if (row.user_id !== userId || row.business_id !== businessId || (membership && row.role !== 'admin')) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid owner details.');
+  try { return validateOwnerDisplayName(row.display_name); }
+  catch { throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid owner name.'); }
 }
 
 function mapRestaurantSettings(value: unknown): RestaurantSettings {
@@ -467,6 +485,61 @@ export function createMarketServices(options: ServiceOptions) {
     const name = (data as { display_name?: unknown } | null)?.display_name;
     return typeof name === 'string' && name.trim() ? name.trim() : null;
   };
+  // The token is an equality guard here, never proof of authorization. The server verifies it.
+  const ownerProfileScope = async () => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an owner account to manage your owner name.');
+    const initial = await db.auth.getSession();
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your owner details.');
+    const token = initial.data.session?.access_token;
+    const expected = token ? sessionIdentity(token) : null;
+    if (initial.error || !token || !expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in again to manage your owner name.');
+    const ensureCurrent = async () => {
+      if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your owner details.');
+      const current = await db.auth.getSession();
+      const accessToken = current.data.session?.access_token;
+      const identity = accessToken ? sessionIdentity(accessToken) : null;
+      if (disposed || generation !== started || current.error || !accessToken || !identity || current.data.session?.user.id !== expected.userId ||
+        identity.userId !== expected.userId || identity.sessionId !== expected.sessionId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your owner details.');
+      return accessToken;
+    };
+    const verified = await db.auth.getUser(token);
+    await ensureCurrent();
+    if (verified.error) throw new ServiceError('ADMIN_REQUIRED', 'Sign in again to verify your owner access.', verified.error);
+    if (!verified.data.user || verified.data.user.id !== expected.userId) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm your account.');
+    const business = await getBusiness();
+    const readToken = await ensureCurrent();
+    if (typeof business.id !== 'string' || !orderIdPattern.test(business.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid restaurant.');
+    const { data, error } = await db.from('business_memberships').select('business_id, user_id, role, display_name')
+      .eq('business_id', business.id).eq('user_id', expected.userId).eq('role', 'admin').maybeSingle()
+      .setHeader('Authorization', `Bearer ${readToken}`);
+    await ensureCurrent();
+    if (error) throw new ServiceError('OWNER_PROFILE_REQUEST_FAILED', 'Could not load your owner details.', error);
+    if (data === null) throw new ServiceError('ADMIN_REQUIRED', 'Current owner access is required.');
+    const displayName = ownerNameResponse(data, expected.userId, business.id, true);
+    return { db, userId: expected.userId, businessId: business.id, displayName, phone: verified.data.user.phone, ensureCurrent };
+  };
+  const getOwnerProfile = async (): Promise<OwnerProfile> => {
+    const scope = await ownerProfileScope();
+    const phone = scope.phone;
+    if (phone !== undefined && phone !== null && phone !== '' && (typeof phone !== 'string' || !/^\+?[1-9][0-9]{6,14}$/.test(phone))) {
+      throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid account phone.');
+    }
+    return { displayName: scope.displayName, phone: phone || null };
+  };
+  const setOwnerDisplayName = async (displayName: string): Promise<string> => {
+    const valid = validateOwnerDisplayName(displayName), scope = await ownerProfileScope();
+    const token = await scope.ensureCurrent();
+    const { data, error } = await scope.db.rpc('set_owner_display_name', { p_business_slug: slug, p_display_name: valid })
+      .setHeader('Authorization', `Bearer ${token}`);
+    await scope.ensureCurrent();
+    if (error?.code === '22023') throw new ServiceError('INVALID_OWNER_NAME', 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before saving.', error);
+    if (error) throw new ServiceError('OWNER_NAME_SAVE_FAILED', 'Could not save your owner name.', error);
+    const saved = ownerNameResponse(data, scope.userId, scope.businessId, false);
+    if (saved !== valid) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the requested owner name.');
+    return saved;
+  };
   const requireAdminBusiness = async (): Promise<Business> => {
     if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage the menu.');
     const business = await getBusiness();
@@ -769,7 +842,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
