@@ -72,11 +72,11 @@ await context.route(origin + '/**', async route => {
   }
   if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin', display_name: 'Suresh Pawar' } : null);
   if (url.pathname === '/rest/v1/rpc/daily_summary') return json({ date: '2026-11-13', collected_paise: 426000, delivered_count: 11, outstanding_paise: 221000, outstanding_count: 6, placed_count: 14, cancelled_count: 1, top_dishes: [{ name: 'Veg thali', quantity: 12 }] });
-  if (url.pathname === '/rest/v1/rpc/check_delivery_eligibility') return json({ eligible: true });
+  if (url.pathname === '/rest/v1/rpc/list_addresses') return json([{ id: '48200000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 17.719, longitude: 73.397, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 }]);
   if (url.pathname === '/rest/v1/rpc/place_order') {
     const body = req.postDataJSON(); requests.push(body);
     if (!savedOrder) {
-      savedOrder = { order_number: 'AMS-2026110001', id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line, created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemId, name: item.name, quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: new Date().toISOString() }] };
+      savedOrder = { order_number: 'AMS-2026110001', id: orderId, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line ?? 'Flat 3, Bharne Naka', created_at: new Date().toISOString(), order_items: [{ menu_item_id: itemId, name: item.name, quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: new Date().toISOString() }] };
       return route.abort('failed'); // Server committed; response was lost.
     }
     return json({ outcome: 'placed', id: orderId });
@@ -97,16 +97,14 @@ const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: /^Cart \(/ }).click();
   await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Test Customer');
   await page.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).fill('9876543210');
-  await page.getByLabel('Delivery address', { exact: true }).filter({ visible: true }).fill('Synthetic test lane, Khed, Maharashtra');
-  await page.getByRole('button', { name: 'Check my delivery location', exact: true }).click();
-  await page.getByText('Delivery location confirmed. Refresh if your location changes.', { exact: true }).filter({ visible: true }).waitFor();
+  await page.getByText('Deliver to Home', { exact: true }).filter({ visible: true }).waitFor();
 };
   if (!categoriesOnly) {
   const first = await open();
   await first.getByRole('button', { name: 'Add to cart', exact: true }).click();
   await first.getByRole('button', { name: /^Cart \(/ }).click();
   await first.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Guest draft');
-  await first.getByRole('button', { name: 'Check my delivery location', exact: true }).click();
+  await first.getByRole('button', { name: 'Place order', exact: true }).click();
   await first.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email);
   await first.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
   await first.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -441,6 +439,7 @@ const prepareCart = async (page, add = true) => {
           dishes = dishes.map(dish => dish.id === id ? { ...dish, ...values } : dish);
           return json(joined(dishes.find(dish => dish.id === id)));
         }
+        if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]); // signed-in carts read saved addresses (#48)
         throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
       });
       const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));
@@ -1048,6 +1047,7 @@ const prepareCart = async (page, add = true) => {
 } finally { await context?.close(); await browser?.close(); await customerServer?.close(); await adminServer?.close(); }
 
 if (!categoriesOnly) await import('./account.mjs');
+if (!categoriesOnly) await import('./addresses48.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
 if (!categoriesOnly) await import('./owner-menu.mjs');
 if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); }
@@ -1130,8 +1130,12 @@ async function tracking47() {
         assert.equal(await visible('Good food starts here.').count(), 0);
         assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
         assert.equal(await page.evaluate(() => window.__trackingPermissionRequests), 0, 'tracking never requests notification consent automatically');
+        assert.equal(await page.getByText('Notifications are not available yet.', { exact: true }).count(), 0, 'no updates message before a tap');
         await page.getByRole('button', { name: 'Turn on order updates', exact: true }).click();
         assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), 'BODY', 'focus stays on the button after Turn on');
+        // The tapped button disappears once delivered, so park focus on a control that survives and check it stays put.
+        await page.getByRole('button', { name: 'Refresh orders', exact: true }).focus();
+        await page.evaluate(() => { window.__focusBeforeDelivered = document.activeElement; });
         await visible('Notifications are not available yet.').waitFor();
         assert.equal(liveSubscriptions(), 1, 'one order subscription serves the tracking screen');
         const initialNavigations = navigations, initialReads = orderReads;
@@ -1156,6 +1160,7 @@ async function tracking47() {
         await page.getByText(/^Arrived on .* 35 minutes after you ordered\.$/).filter({ visible: true }).waitFor();
         await visible('House 5, Station Road, Khed').waitFor();
         await visible('Order this again').waitFor();
+        assert.equal(await page.evaluate(() => document.activeElement === window.__focusBeforeDelivered), true, 'focus stays on the same element when the order is delivered after a failed Turn on');
         assert.equal(await page.getByRole('button', { name: 'Turn on order updates', exact: true }).count(), 0, 'no consent prompt on terminal order');
         assert.equal(navigations, initialNavigations, 'all transitions arrived without page navigation/reload');
         assert.ok(orderReads > initialReads); assert.equal(liveSubscriptions(), 1);

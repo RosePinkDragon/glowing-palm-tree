@@ -13,7 +13,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
  * Ammu Sammu puts a status pill and headline on the page; Kokani Dine Inn uses a dark band.
  */
 export type ReorderAction = (order: Order, restoreFocus: () => void) => void;
-export const orderName = (order: Order) => order.orderNumber ?? order.id.slice(-6);
+export const orderName = (order: Pick<Order, 'id' | 'orderNumber'>) => order.orderNumber ?? order.id.slice(-6);
 
 const indiaParts = (iso: string) => {
   const date = new Date(iso);
@@ -146,7 +146,7 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
   const updatesStatus = useRef<ComponentRef<typeof View>>(null);
   const tapped = useRef(false);
   const wasBusy = useRef(false);
-  // Only a tap on this screen during this visit may show the app-wide updates message.
+  // Only a tap on this screen during this visit may show the app-wide updates message. Parents key this view by order id, so a different order starts fresh.
   const [asked, setAsked] = useState(false);
   const active = order.status !== 'delivered' && order.status !== 'cancelled';
   const { offer, on, busy } = updates;
@@ -179,8 +179,8 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     <Text accessibilityRole="header" aria-level={1} style={{ color: colors.ink, fontSize: 22, lineHeight: 29, fontWeight: '700' }}>{`Order ${orderName(order)}`}</Text>
     <StatusHeader order={order} eyebrow={copy.eyebrow} title={copy.title} detail={copy.detail} />
     {order.status !== 'delivered' ? <Timeline order={order} /> : null}
-    {/* One wrapper: the tinted card (while offered) and the always-mounted live region share it. An empty wrapper cancels its slot in the parent's gap. */}
-    <View style={showCard ? { gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint } : message ? undefined : { marginTop: -16 }}>
+    {/* One wrapper: the tinted card (while offered) and the always-mounted live region share it. While empty it is absolutely positioned, so it takes no slot in the parent's gap. */}
+    <View style={showCard ? { gap: 10, padding: 16, borderRadius: 18, backgroundColor: colors.updatesTint } : message ? undefined : { position: 'absolute' }}>
       {showCard ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <MarketIcon name="bell" color={colors.updatesIcon} />
         <View style={{ flex: 1 }}><Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>Get updates on this order</Text><Text style={{ color: colors.muted, fontSize: 14 }}>A notification at every step</Text></View>

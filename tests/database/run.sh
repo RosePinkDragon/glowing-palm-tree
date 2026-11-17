@@ -12,14 +12,28 @@ for _ in {1..60}; do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'PostGIS did not become ready' >&2; exit 1; fi
+# Helpers for the database named in $db. sql_file applies a file, sql_in runs stdin quietly, sql_cmd runs one statement.
+sql_file() { docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$1"; }
+sql_in() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 "$@" -U postgres -d "$db" >/dev/null; }
+sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "$1"; }
+mig() { sql_file "supabase/migrations/$1.sql"; }
+
+# ---------------------------------------------------------------------------
+# Staged upgrade runs (UPGRADE-ONLY; retired in #131 slice S4 together with this loop).
+# Applies the historical chain in its staged order to databases holding old data and checks only
+# what an upgrade can break: backfills and data migrations. Behaviour, security and race suites
+# run against the final schema in the second loop, not against these intermediate stages.
+# ---------------------------------------------------------------------------
 for db in fresh existing; do
   docker exec "$container" createdb -U postgres "$db"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/fixture.sql
+  sql_file tests/database/fixture.sql
   if [[ "$db" == existing ]]; then
-    docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
+    sql_cmd 'create extension if not exists postgis with schema public'
   fi
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000000_database_isolation.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" <<'SQL'
+  mig 20261112000000_database_isolation
+  # Legacy rows written while menu_items.category and typed-address orders were the contract.
+  sql_in <<'SQL'
+insert into auth.users(id) values ('30000000-0000-4000-8000-000000000001'),('30000000-0000-4000-8000-000000000003');
 insert into public.businesses(id,slug,name,is_demo) values
 ('10000000-0000-4000-8000-000000000001','ammu-sammu','Ammu Sammu',true),
 ('10000000-0000-4000-8000-000000000002','kokani-dine-inn','Kokani Dine Inn',true);
@@ -27,113 +41,33 @@ insert into public.menu_items(id,business_id,name,category,price_paise,is_demo) 
 ('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Demo meal','Demo',15000,true),
 ('20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','Demo meal','Demo',18000,true);
 SQL
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/isolation.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000001_checkout.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/checkout.sql
-  # Two sessions race the same first request and must both recover one order.
-  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  race_order() {
-    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -U postgres -d "$db" >/dev/null <<'SQL'
-set role authenticated;
-select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
-select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'60000000-0000-4000-8000-000000000099');
-SQL
-  }
-  race_order & first=$!
-  race_order & second=$!
-  failed=0
-  wait "$first" || failed=1
-  wait "$second" || failed=1
-  if (( failed )); then echo 'Concurrent order requests failed' >&2; exit 1; fi
-  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261112000002_notifications.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notifications.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261113194819_customer_order_notification_route.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/notification-routing.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114000000_accepting_orders.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/accepting-orders.sql
-  # An order and a closing at the same moment are serialized by the business row lock.
-  # Output is discarded; errors stay visible (race 2 prints its expected refusal).
-  as_user() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null; }
-  set_open() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',%s);\n" "$1" | as_user; }
-  place_sql() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false); select public.place_order('ammu-sammu','[{\"menu_item_id\":\"20000000-0000-4000-8000-000000000001\",\"quantity\":1}]','{\"name\":\"Race\",\"phone\":\"123\",\"address_line\":\"Test\"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()),'%s');\n" "$1"; }
-  count_orders() { docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select count(*) from public.orders where idempotency_key='$1'"; }
-  # 1. An order in flight finishes; a close during it does not undo or refuse it.
-  set_open true
-  { echo 'begin;'; place_sql 60000000-0000-4000-8000-000000000584; echo 'select pg_sleep(3); commit;'; } | as_user & order_pid=$!
-  sleep 1
-  set_open false
-  wait "$order_pid" || { echo 'In-flight order was refused by a later close' >&2; exit 1; }
-  [[ "$(count_orders 60000000-0000-4000-8000-000000000584)" == 1 ]] || { echo 'In-flight order missing' >&2; exit 1; }
-  # 2. A close in flight finishes first; the order waits and is refused.
-  set_open true
-  { echo "begin; set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',false); select pg_sleep(3); commit;"; } | as_user & close_pid=$!
-  sleep 1
-  refusal=$(place_sql 60000000-0000-4000-8000-000000000585 | docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" 2>&1 >/dev/null) && { echo 'Order accepted during a close' >&2; exit 1; }
-  grep -q 'restaurant is not accepting orders' <<<"$refusal" || { echo "$refusal" >&2; echo 'Order during a close failed for another reason' >&2; exit 1; }
-  wait "$close_pid"
-  [[ "$(count_orders 60000000-0000-4000-8000-000000000585)" == 0 ]] || { echo 'Order placed during a close' >&2; exit 1; }
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114082153_menu_diet_snapshots.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114133057_accepted_checkout_pricing.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-diet.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/pricing.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114140135_menu_featured_item_order.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-featured.sql
-  # Exercise the accepted-pricing signature under simultaneous first requests.
-  set_open true
-  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  race_priced_order() {
-    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -U postgres -d "$db" >/dev/null <<'SQL'
-set role authenticated;
-select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
-select public.place_order('ammu-sammu',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1)),'{"name":"Pricing race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'64000000-0000-4000-8000-000000000099',jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',b.delivery_fee_paise,'min_order_paise',b.min_order_paise,'subtotal_paise',m.price_paise,'total_paise',m.price_paise+b.delivery_fee_paise)) from public.menu_items m join public.businesses b on b.id=m.business_id where m.id='20000000-0000-4000-8000-000000000001';
-SQL
-  }
-  race_priced_order & first=$!
-  race_priced_order & second=$!
-  failed=0
-  wait "$first" || failed=1
-  wait "$second" || failed=1
-  if (( failed )); then echo 'Concurrent accepted-pricing requests failed' >&2; exit 1; fi
-  [[ "$(count_orders 64000000-0000-4000-8000-000000000099)" == 1 ]] || { echo 'Accepted-pricing race did not create exactly one order' >&2; exit 1; }
+  mig 20261112000001_checkout
+  mig 20261112000002_notifications
+  mig 20261113194819_customer_order_notification_route
+  mig 20261114000000_accepting_orders
+  mig 20261114082153_menu_diet_snapshots
+  mig 20261114133057_accepted_checkout_pricing
+  mig 20261114140135_menu_featured_item_order
   # Backfill trims and merges only names within the same business.
-  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into public.menu_items(id,business_id,name,category,price_paise,diet) values ('24300000-0000-4000-8000-000000000099','10000000-0000-4000-8000-000000000001','Backfill',' Demo ',100,'egg')"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261114142756_menu_categories.sql
-  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -v before_migration=1 -U postgres -d "$db" < tests/database/order-numbers.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116103753_order_tracking_numbers.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
-  # Earlier owner transitions from the checkout suite, plus one by an owner who
-  # has since been removed, exercise the snapshot backfill.
-  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "insert into auth.users(id) values ('49800000-0000-4000-8000-0000000000ff'); insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','49800000-0000-4000-8000-0000000000ff' from public.orders order by created_at, id limit 1"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116000000_owner_history_names.sql
-  docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*) = 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.changed_by = '49800000-0000-4000-8000-0000000000ff' and a.actor_name = 'Former owner' and a.actor_id is null), 'removed owner backfills as Former owner') ; select public.test_assert(exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id join public.business_memberships m on m.business_id = o.business_id and m.user_id = h.changed_by where a.actor_name = m.display_name and a.actor_id = h.changed_by), 'current owners backfill with their membership name')"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
-  # Real concurrent RPCs: four unique keys plus two first attempts at one key.
-  set_open true
-  number_before=$(docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select sum(last_number) from public.order_number_counters")
-  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  number_race() {
-    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -v key="$1" -U postgres -d "$db" >/dev/null <<'SQL'
-set role authenticated;
-select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
-select public.place_order('ammu-sammu',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1)),'{"name":"Number race","phone":"123","address_line":"Test"}',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),:'key'::uuid,jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',b.delivery_fee_paise,'min_order_paise',b.min_order_paise,'subtotal_paise',m.price_paise,'total_paise',m.price_paise+b.delivery_fee_paise)) from public.menu_items m join public.businesses b on b.id=m.business_id where m.id='20000000-0000-4000-8000-000000000001';
-SQL
-  }
-  number_pids=()
-  for suffix in 1 2 3 4 5 5; do
-    number_race "64700000-0000-4000-8000-00000000010${suffix}" & number_pids+=("$!")
-  done
-  for pid in "${number_pids[@]}"; do wait "$pid" || { echo 'Numbering race failed' >&2; exit 1; }; done
-  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "select public.test_assert((select count(*)=5 and count(distinct order_number)=5 from public.orders where idempotency_key::text like '64700000-0000-4000-8000-00000000010%'),'concurrent distinct requests have unique numbers and replay creates one'); select public.test_assert((select sum(last_number)=$number_before+5 from public.order_number_counters),'concurrent replay consumes no extra counter')"
+  sql_cmd "insert into public.menu_items(id,business_id,name,category,price_paise,diet) values ('24300000-0000-4000-8000-000000000099','10000000-0000-4000-8000-000000000001','Backfill',' Demo ',100,'egg')"
+  mig 20261114142756_menu_categories
+  sql_cmd "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
+  sql_in -v before_migration=1 < tests/database/order-numbers.sql
+  mig 20261116103753_order_tracking_numbers
+  sql_file supabase/seed.sql
+  sql_in -v backfill_only=1 < tests/database/order-numbers.sql
+  # Earlier owner transitions (one by a current owner) plus one by an owner who has since been
+  # removed, on legacy orders, exercise the snapshot backfill.
+  sql_cmd "insert into public.business_memberships(business_id,user_id,role) values ('10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000003','admin'); insert into auth.users(id) values ('49800000-0000-4000-8000-0000000000ff'); insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','49800000-0000-4000-8000-0000000000ff' from public.orders where business_id='10000000-0000-4000-8000-000000000001' order by created_at, id limit 1; insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','30000000-0000-4000-8000-000000000003' from public.orders where business_id='10000000-0000-4000-8000-000000000001' order by created_at, id offset 1 limit 1"
+  mig 20261116000000_owner_history_names
+  sql_cmd "select public.test_assert((select count(*) = 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.changed_by = '49800000-0000-4000-8000-0000000000ff' and a.actor_name = 'Former owner' and a.actor_id is null), 'removed owner backfills as Former owner') ; select public.test_assert(exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id join public.business_memberships m on m.business_id = o.business_id and m.user_id = h.changed_by where a.actor_name = m.display_name and a.actor_id = h.changed_by), 'current owners backfill with their membership name')"
+  sql_file tests/database/owner-history.sql
   # #48 upgrade path: existing businesses and legacy GPS orders, then the saved-address
   # and kitchen-point migrations. Legacy orders must satisfy the new evidence check,
   # and the kitchen points must land on the existing rows (as in production).
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116160000_saved_addresses.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116180000_kitchen_locations.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/migrations/20261116190000_delivery_radius.sql
+  mig 20261116160000_saved_addresses
+  mig 20261116180000_kitchen_locations
+  mig 20261116190000_delivery_radius
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ declare ns text; n integer; begin
     if not exists (select 1 from public.orders where saved_address_id is null and location_accuracy is not null) then raise exception 'upgrade test has no legacy orders'; end if;
     if exists (select 1 from pg_constraint where conname='order_address_evidence' and not convalidated) then raise exception 'evidence check not validated'; end if;
@@ -148,26 +82,115 @@ SQL
     if n <> 2 then raise exception '12 km delivery areas not set on existing restaurants: %', n; end if;
   end \$\$"
 done
-# Installation order differs from the staged regression suites: apply every
-# migration before seed, proving unknown sample data can be bootstrapped safely.
+
+# ---------------------------------------------------------------------------
+# Final-schema pass: every migration once per PostGIS layout (a fresh install, and one where
+# PostGIS already lives in public), then seed, then every suite and every race.
+# ---------------------------------------------------------------------------
+# Suites that need nothing but the migrated, seeded schema; each rolls back.
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings)
+# Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
+# notification-routing continues from notifications).
+shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
 for db in all_fresh all_existing; do
   docker exec "$container" createdb -U postgres "$db"
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/fixture.sql
+  sql_file tests/database/fixture.sql
   if [[ "$db" == all_existing ]]; then
-    docker exec "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" -c 'create extension if not exists postgis with schema public'
+    sql_cmd 'create extension if not exists postgis with schema public'
   fi
+  # Installation order differs from the staged runs: apply every migration before seed,
+  # proving unknown sample data can be bootstrapped safely.
   for migration in supabase/migrations/*.sql; do
-    docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$migration"
+    sql_file "$migration"
   done
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < supabase/seed.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-categories.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-photos.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/owner-history.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/menu-reorder.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/daily-summary.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/order-numbers.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/saved-addresses.sql
-  docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < tests/database/restaurant-settings.sql
+  sql_file supabase/seed.sql
+  sql_file tests/database/helpers.sql
+  for suite in "${self_contained[@]}"; do sql_file "tests/database/$suite.sql"; done
+  sql_file tests/database/final-fixture.sql
+  for suite in "${shared_fixture[@]}"; do sql_file "tests/database/$suite.sql"; done
+
+  # Races (committed fixtures, real concurrent sessions). All place orders through a saved address
+  # with the exact accepted-pricing quote; customer A's address comes from final-fixture.sql.
+  sql_in <<'SQL'
+do $$ declare ns text; begin
+  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
+  execute format('update public.businesses set is_demo=false,service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''race-test-only'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=0,min_order_paise=0 where slug=''ammu-sammu''',ns);
+end $$;
+update public.menu_items set available=true,is_demo=false,price_paise=15000 where id='20000000-0000-4000-8000-000000000001';
+insert into public.business_memberships(business_id,user_id,role) values ('10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000003','admin') on conflict do nothing;
+SQL
+  race_items='[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]'
+  count_orders() { docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select count(*) from public.orders where idempotency_key='$1'"; }
+  # 1. Two sessions race the same first request and must both recover one order.
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  race_order() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -v items="$race_items" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu',:'items',public.test_delivery('Race'),jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'60000000-0000-4000-8000-000000000099',public.test_quote('ammu-sammu',:'items'));
+SQL
+  }
+  race_order & first=$!
+  race_order & second=$!
+  failed=0
+  wait "$first" || failed=1
+  wait "$second" || failed=1
+  if (( failed )); then echo 'Concurrent order requests failed' >&2; exit 1; fi
+  sql_cmd "select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000099'), 'concurrent retry creates one order')"
+  # An order and a closing at the same moment are serialized by the business row lock.
+  # Output is discarded; errors stay visible (race 3 prints its expected refusal).
+  as_user() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null; }
+  set_open() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',%s);\n" "$1" | as_user; }
+  place_sql() { printf "set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false); select public.place_order('ammu-sammu','%s',public.test_delivery('Race'),jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()),'%s',public.test_quote('ammu-sammu','%s'));\n" "$race_items" "$1" "$race_items"; }
+  # 2. An order in flight finishes; a close during it does not undo or refuse it.
+  set_open true
+  { echo 'begin;'; place_sql 60000000-0000-4000-8000-000000000584; echo 'select pg_sleep(3); commit;'; } | as_user & order_pid=$!
+  sleep 1
+  set_open false
+  wait "$order_pid" || { echo 'In-flight order was refused by a later close' >&2; exit 1; }
+  [[ "$(count_orders 60000000-0000-4000-8000-000000000584)" == 1 ]] || { echo 'In-flight order missing' >&2; exit 1; }
+  # 3. A close in flight finishes first; the order waits and is refused.
+  set_open true
+  { echo "begin; set role authenticated; select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false); select public.set_accepting_orders('ammu-sammu',false); select pg_sleep(3); commit;"; } | as_user & close_pid=$!
+  sleep 1
+  refusal=$(place_sql 60000000-0000-4000-8000-000000000585 | docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" 2>&1 >/dev/null) && { echo 'Order accepted during a close' >&2; exit 1; }
+  grep -q 'restaurant is not accepting orders' <<<"$refusal" || { echo "$refusal" >&2; echo 'Order during a close failed for another reason' >&2; exit 1; }
+  wait "$close_pid"
+  [[ "$(count_orders 60000000-0000-4000-8000-000000000585)" == 0 ]] || { echo 'Order placed during a close' >&2; exit 1; }
+  # 4. Exercise the accepted-pricing signature under simultaneous first requests.
+  set_open true
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  race_priced_order() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -v items="$race_items" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu',:'items',public.test_delivery('Pricing race'),jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),'64000000-0000-4000-8000-000000000099',public.test_quote('ammu-sammu',:'items'));
+SQL
+  }
+  race_priced_order & first=$!
+  race_priced_order & second=$!
+  failed=0
+  wait "$first" || failed=1
+  wait "$second" || failed=1
+  if (( failed )); then echo 'Concurrent accepted-pricing requests failed' >&2; exit 1; fi
+  [[ "$(count_orders 64000000-0000-4000-8000-000000000099)" == 1 ]] || { echo 'Accepted-pricing race did not create exactly one order' >&2; exit 1; }
+  # 5. Real concurrent RPCs: four unique keys plus two first attempts at one key.
+  set_open true
+  number_before=$(docker exec "$container" psql -X -q -t -A -U postgres -d "$db" -c "select sum(last_number) from public.order_number_counters")
+  fix_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  number_race() {
+    docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v fix="$fix_time" -v key="$1" -v items="$race_items" -U postgres -d "$db" >/dev/null <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
+select public.place_order('ammu-sammu',:'items',public.test_delivery('Number race'),jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',:'fix'),:'key'::uuid,public.test_quote('ammu-sammu',:'items'));
+SQL
+  }
+  number_pids=()
+  for suffix in 1 2 3 4 5 5; do
+    number_race "64700000-0000-4000-8000-00000000010${suffix}" & number_pids+=("$!")
+  done
+  for pid in "${number_pids[@]}"; do wait "$pid" || { echo 'Numbering race failed' >&2; exit 1; }; done
+  sql_cmd "select public.test_assert((select count(*)=5 and count(distinct order_number)=5 from public.orders where idempotency_key::text like '64700000-0000-4000-8000-00000000010%'),'concurrent distinct requests have unique numbers and replay creates one'); select public.test_assert((select sum(last_number)=$number_before+5 from public.order_number_counters),'concurrent replay consumes no extra counter')"
   # #48: an address edit made while checkout holds the address waits for it, and
   # the order keeps exactly the version it locked. Committed fixture, last step.
   docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" >/dev/null <<'SQL'
@@ -216,4 +239,4 @@ SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
   source tests/database/restaurant-settings-races.sh
 done
-echo 'Database isolation, checkout, notification, open/closed diet, featured, category, owner-history, menu-reorder daily-summary, order-number, saved-address and restaurant-settings tests passed, including all migrations before seed in both PostGIS schemas.'
+echo 'Final-schema suites and races, including restaurant settings, passed on every migration in both PostGIS layouts; staged upgrade checks passed.'

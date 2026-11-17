@@ -109,3 +109,79 @@ test('accepted terms stay frozen and revised quotes disappear at identity bounda
   assert.equal(original.pricing.min_order_paise, 50);
   assert.equal(original.pricing.lines[0].unit_price_paise, 100);
 });
+
+const savedSource = () => ({ businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: menuItem(), quantity: 1 }], delivery: { name: 'Name', phone: '+919876543210' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 }, location: null });
+
+test('a saved-address attempt keeps the address and a missing phone location for retries', () => {
+  const frozen = freezeAttempt(savedSource());
+  assert.equal(frozen.version, 2);
+  const restored = readAttempt(JSON.stringify(frozen), 'ammu-sammu');
+  assert.deepEqual(restored?.savedAddress, { id: '48200000-0000-4000-8000-000000000001', version: 3 });
+  assert.equal(restored?.location, null);
+  assert.equal('addressLine' in (restored?.delivery ?? {}), false);
+  assert.deepEqual(restored, frozen, 'a retry sends the identical payload');
+  const withFix = freezeAttempt({ ...savedSource(), location: { latitude: 17.7, longitude: 73.4, accuracy: 20, capturedAtISO: '2026-11-17T10:00:00Z' } });
+  assert.equal(readAttempt(JSON.stringify(withFix), 'ammu-sammu')?.location?.accuracy, 20);
+});
+
+test('an older persisted attempt is still read, and unreadable ones fail with the contact message instead of crashing', async () => {
+  const { orderInput } = await import('./checkout-state.ts');
+  const legacy = { version: 1, businessId: 'ammu-sammu', userId: 'user', idempotencyKey: 'key', lines: [], pricing: { lines: [] }, delivery: { name: 'N', phone: '1', addressLine: 'Typed address line' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } };
+  const restored = readAttempt(JSON.stringify(legacy), 'ammu-sammu');
+  assert.equal(restored?.delivery.addressLine, 'Typed address line');
+  assert.equal(orderInput(restored!).delivery.addressLine, 'Typed address line');
+  assert.equal(orderInput(freezeAttempt(savedSource())).delivery.addressLine, '');
+  const unreadable = /could not be read/;
+  assert.throws(() => readAttempt('{not json', 'ammu-sammu'), unreadable);
+  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, location: null }), 'ammu-sammu'), unreadable, 'legacy needs its fix');
+  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, delivery: { name: 'N', phone: '1' } }), 'ammu-sammu'), unreadable, 'legacy needs its typed line');
+  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, savedAddress: { id: 'x', version: 1 } }), 'ammu-sammu'), unreadable);
+  assert.throws(() => readAttempt(JSON.stringify({ ...freezeAttempt(savedSource()), savedAddress: undefined }), 'ammu-sammu'), unreadable, 'version 2 needs its address');
+  assert.throws(() => readAttempt(JSON.stringify({ ...freezeAttempt(savedSource()), savedAddress: { id: 'x', version: 0 } }), 'ammu-sammu'), unreadable);
+  assert.throws(() => readAttempt(JSON.stringify({ ...legacy, version: 3 }), 'ammu-sammu'), unreadable);
+  assert.throws(() => readAttempt('null', 'ammu-sammu'), unreadable);
+});
+
+test('a changed address and one outside the area are definite rejections that release the attempt', async () => {
+  const { isDefiniteOrderRejection } = await import('./checkout-state.ts');
+  const error = (code: string) => Object.assign(new Error('x'), { code });
+  assert.equal(isDefiniteOrderRejection(error('ADDRESS_CHANGED')), true);
+  assert.equal(isDefiniteOrderRejection(error('DELIVERY_UNAVAILABLE')), true);
+  assert.equal(isDefiniteOrderRejection(error('SIGN_IN_REQUIRED')), false);
+  assert.equal(isDefiniteOrderRejection(error('LOCATION_REQUIRED')), false);
+  assert.equal(isDefiniteOrderRejection(error('INVALID_RESPONSE')), false);
+});
+
+test('the phone-to-pin distance decides whether the customer confirms first', async () => {
+  const { confirmationFor, confirmationCopy, distanceMetres, validateContact } = await import('./checkout-model.ts');
+  const pin = { latitude: 17.72, longitude: 73.39 };
+  const fix = (north: number) => ({ latitude: 17.72 + north / 111_195, longitude: 73.39, accuracy: 10, capturedAtISO: '2026-11-17T10:00:00Z' });
+  assert.ok(Math.abs(distanceMetres(pin, { latitude: 17.72, longitude: 74.39 }) - 106_000) < 1500, 'one degree of longitude near 17.7 N');
+  assert.equal(distanceMetres(pin, pin), 0);
+  assert.deepEqual(confirmationFor(fix(0), pin), { kind: 'direct' });
+  assert.deepEqual(confirmationFor(fix(140), pin), { kind: 'direct' }, 'within 150 m places directly');
+  const edge = confirmationFor(fix(151), pin);
+  assert.equal(edge.kind, 'remote');
+  assert.equal(confirmationFor(fix(3200), pin).kind === 'remote' && (confirmationFor(fix(3200), pin) as { notInKhed: boolean }).notInKhed, false);
+  assert.equal((confirmationFor(fix(60_000), pin) as { notInKhed: boolean }).notInKhed, true);
+  assert.deepEqual(confirmationFor(null, pin), { kind: 'unknown' });
+  assert.deepEqual(confirmationFor({ ...fix(0), latitude: Number.NaN }, pin), { kind: 'unknown' });
+  const address = { id: 'a', version: 1, label: 'home' as const, house: 'Flat 3', streetArea: 'Sai Krupa Apartments, Bharne Naka', latitude: 17.72, longitude: 73.39, locationSource: 'pin' as const, updatedAtISO: '', inArea: true, distanceM: 1200 };
+  const near = confirmationCopy(confirmationFor(fix(3200), pin) as never, address, 39000);
+  assert.equal(near.title, 'You\'re 3.2 km from this address');
+  assert.equal(near.lead, 'You\'re ordering to Home, Flat 3, Sai Krupa Apartments, Bharne Naka. Is that right?');
+  assert.match(near.cash, /pay ₹390 in cash/);
+  assert.equal(confirmationCopy({ kind: 'remote', distanceM: 60_000, notInKhed: true }, address, 103000).title, 'You\'re not in Khed right now');
+  const none = confirmationCopy({ kind: 'unknown' }, address, 39000);
+  assert.equal(none.title, 'We couldn\'t confirm where you are');
+  assert.match(none.lead, /Your phone didn't share its location/);
+  assert.deepEqual(validateContact({ name: ' Rohan Sawant ', phone: '98765 43210' }), { name: 'Rohan Sawant', phone: '+919876543210' });
+  assert.throws(() => validateContact({ name: 'R', phone: '12' }));
+});
+
+test('the phone fix is dropped, not awaited forever, when it fails or never answers', async () => {
+  const { withTimeout } = await import('./checkout-model.ts');
+  assert.equal(await withTimeout(Promise.resolve(5), 50), 5);
+  assert.equal(await withTimeout(Promise.reject(new Error('denied')), 50), null);
+  assert.equal(await withTimeout(new Promise(() => {}), 20), null);
+});
