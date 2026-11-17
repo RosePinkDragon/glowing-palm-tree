@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentRef, type MutableRefObject, type RefObject } from 'react';
 import { Platform, Pressable, ScrollView, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
-import { formatINRFromPaise, type BusinessSlug, type CartLine, type MenuItem } from '@market/core';
+import { MAX_QUANTITY, formatINRFromPaise, type BusinessSlug, type CartLine, type MenuItem } from '@market/core';
 import { MarketButton, MarketStatus } from './components';
 import { DietMark } from './DietMark';
 import { DishPhoto } from './DishPhoto';
@@ -8,7 +8,7 @@ import { MarketIcon } from './MarketIcons';
 import { activeSectionId, customerSections, featuredLabel, featuredMenuItems, gridColumns, searchMenuItems } from './menu-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
-const gap = 14, maxCart = 10, chipTarget = 44;
+const gap = 14, maxCart = MAX_QUANTITY, chipTarget = 44;
 /** Scroll position reported by the screen's ScrollView, so the menu can highlight the category being read. */
 export type MenuViewport = { y: number; height: number; contentHeight: number };
 type Controls = { orderingAllowed: boolean; demo: boolean; locked: boolean; quantity: (item: MenuItem) => number; onAdd: (item: MenuItem) => void; onRemove: (item: MenuItem) => void; onOpen: (item: MenuItem) => void; viewportRevision: number };
@@ -107,9 +107,11 @@ const reducedMotion = () => Platform.OS === 'web' && typeof window !== 'undefine
  * Ammu Sammu menu (design p. 3): search, Today's special (dishes the owner marked featured and available),
  * sticky category chips that jump to and follow the sections, and a photo grid with + Add / stepper.
  */
-export function PhotoMenu({ businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, onAdd, onRemove, onOpen }: {
+export function PhotoMenu({ businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, onAdd, onRemove, onOpen }: {
   businessId: BusinessSlug; items: readonly MenuItem[]; cart: readonly CartLine[]; contentWidth: number; bleed: number; orderingAllowed: boolean; demo: boolean; locked: boolean; viewportRevision: number;
   scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>; viewportListener: MutableRefObject<((viewport: MenuViewport) => void) | null>;
+  /** Cart error from the last add/remove (e.g. the 20-dish limit), shown with the sticky chips so it is seen wherever the customer is in the grid. */
+  message: string; onDismissMessage: () => void;
   onAdd: (item: MenuItem) => void; onRemove: (item: MenuItem) => void; onOpen: (item: MenuItem) => void;
 }) {
   const { colors } = useMarketTheme();
@@ -179,6 +181,10 @@ export function PhotoMenu({ businessId, items, cart, contentWidth, bleed, orderi
         <ScrollView ref={chipScroll} horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 8, paddingRight: pad }}>
           {chip(null, 'All', 'All dishes')}{sections.map(section => chip(section.id, section.name, section.name))}
         </ScrollView>
+        {message ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingLeft: 12, borderRadius: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.danger }}>
+          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ flex: 1, paddingVertical: 8, color: colors.danger, ...f.semi(14, 20) }}>{message}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={onDismissMessage} style={{ width: chipTarget, minHeight: chipTarget, alignItems: 'center', justifyContent: 'center' }}><MarketIcon name="close" color={colors.ink} size={18} /></Pressable>
+        </View> : null}
       </View>
       <View nativeID="regular-menu" onLayout={event => { layout.current.wrap = layoutY(event); }} style={{ gap: 26 }}>
         {sections.map(section => <View key={section.id} onLayout={event => { layout.current.sections[section.id] = layoutY(event); }} style={{ gap: 12 }}>

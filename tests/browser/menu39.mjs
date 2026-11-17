@@ -17,6 +17,7 @@ const menu = [
   dish(4, 1, 'Misal pav', 9000), dish(5, 1, 'Kanda poha', 5000, { diet: 'veg' }), dish(6, 1, 'Kothimbir vadi', 7000, { available: false }),
   dish(7, 2, 'Ukadiche modak', 12000, { diet: 'veg' }), dish(8, 2, 'Sol kadhi', 4000),
 ];
+let fixtureMenu = menu, fixtureCategories = categories;
 const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#E9C9B8"/><circle cx="160" cy="120" r="80" fill="#F6EEE8"/><circle cx="160" cy="120" r="46" fill="#C65A3A"/></svg>';
 
 for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
@@ -39,8 +40,8 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
       if (url.pathname.startsWith('/storage/v1/object/public/menu-images/')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: photo });
       if (url.pathname === '/rest/v1/businesses') return json(business);
-      if (url.pathname === '/rest/v1/menu_items') return json(menu);
-      if (url.pathname === '/rest/v1/menu_categories') return json(categories);
+      if (url.pathname === '/rest/v1/menu_items') return json(fixtureMenu);
+      if (url.pathname === '/rest/v1/menu_categories') return json(fixtureCategories);
       if (url.pathname === '/auth/v1/user' || url.pathname === '/rest/v1/orders') return json(url.pathname === '/rest/v1/orders' ? [] : null);
       throw new Error(`Unexpected menu fixture ${route.request().method()} ${url.pathname}`);
     });
@@ -165,6 +166,37 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       assert.deepEqual(errors, []);
       await context.close();
       console.log(`PASS: ammu-sammu ${label} special card, search, add/stepper with focus, chips jump and follow`);
+    }
+    // The 20-distinct-dish cart limit: the message must be seen where the customer is (far down the grid), as an alert.
+    {
+      const extras = category(4, 'Extras');
+      fixtureCategories = [...categories, extras];
+      fixtureMenu = [...menu, ...Array.from({ length: 16 }, (_, i) => dish(20 + i, 0, `Extra dish ${i + 1}`, 10000, { category_id: extras.id, menu_categories: { name: extras.name, sort_order: 4 } }))];
+      const { context, page } = await open({ width: 390, height: 844 });
+      for (let count = 1; count <= 20; count++) {
+        await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click();
+        await page.waitForFunction(expected => JSON.parse(localStorage.getItem('market:cart:ammu-sammu') || '{"lines":[]}').lines.length === expected, count);
+      }
+      const last = page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).last();
+      await last.scrollIntoViewIfNeeded();
+      await last.click();
+      const alert = page.getByRole('alert').filter({ hasText: 'at most 20 distinct items' });
+      await alert.waitFor();
+      const viewportHeight = page.viewportSize().height, spot = await alert.boundingBox();
+      assert.ok(spot && spot.y >= 0 && spot.y + spot.height <= viewportHeight, 'limit message is inside the viewport');
+      assert.ok((await (await scroller(page)).evaluate(node => node.scrollTop)) > 400, 'the customer is far down the grid');
+      assert.equal(await page.getByRole('button', { name: 'Dismiss message', exact: true }).count(), 1);
+      await shot(page, 'menu-cart-limit-mobile-390x844');
+      await page.getByRole('button', { name: 'Dismiss message', exact: true }).click();
+      assert.equal(await alert.count(), 0);
+      // A later successful action also clears it.
+      await last.click(); await alert.waitFor();
+      await page.locator('#regular-menu').getByRole('button', { name: /^Remove one / }).first().click();
+      await alert.waitFor({ state: 'hidden' });
+      assert.deepEqual(errors, []);
+      await context.close();
+      fixtureMenu = menu; fixtureCategories = categories;
+      console.log('PASS: ammu-sammu cart-limit message is an alert in view near the action, dismissible and cleared by the next successful action');
     }
   } finally { await server.close(); }
 }
