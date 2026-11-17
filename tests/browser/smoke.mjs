@@ -1059,7 +1059,7 @@ if (!categoriesOnly) await import('./account.mjs');
 if (!categoriesOnly) await import('./addresses48.mjs');
 if (!categoriesOnly) await import('./closed58.mjs');
 if (!categoriesOnly) await import('./owner-menu.mjs');
-if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); await import('./owner60.mjs'); }
+if (!categoriesOnly) { await import('./owner58.mjs'); await import('./owner48.mjs'); await import('./owner60.mjs'); await import('./owner53name.mjs'); }
 
 }
 if (!categoriesOnly) await tracking47();

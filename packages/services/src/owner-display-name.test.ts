@@ -28,6 +28,9 @@ async function fixture(run: (f: {
   if (name === heldPath) { heldPath = undefined; entered?.(); await blocked; }
   if (name === 'token') return Response.json({ access_token: jwt(state.loginUser, state.loginSession, state.nonce), refresh_token: 'synthetic-refresh', expires_in: 3600, token_type: 'bearer', user: { id: state.loginUser, aud: 'authenticated' } });
   if (name === 'logout') return new Response(null, { status: 204 });
+  if (name === 'user' && state.transport === 'user') throw new TypeError('Synthetic auth transport failure');
+  if (name === 'user' && state.transport === 'user401') return Response.json({ code: 401, msg: 'invalid JWT' }, { status: 401 });
+  if (name === 'user' && state.transport === 'user503') return Response.json({ msg: 'unavailable' }, { status: 503 });
   if (name === 'user') return Response.json(state.userResponse === undefined ? { id: user, phone: state.phone, email: 'owner@example.test', aud: 'authenticated' } : state.userResponse);
   if (name === 'businesses') {
    const slug = url.searchParams.get('slug')?.slice(3);
@@ -80,7 +83,7 @@ async function fixture(run: (f: {
 interface State {
  members: Map<string, ReturnType<typeof member>>; phone: unknown; loginUser: string; loginSession: string; nonce: string;
  userResponse?: unknown; membershipResponse?: unknown; saveResponse?: unknown; membershipError?: boolean;
- error?: { code: string; message: string; details?: string }; transport?: 'membership' | 'save';
+ error?: { code: string; message: string; details?: string }; transport?: 'membership' | 'save' | 'user' | 'user401' | 'user503';
  calls: { headers: Headers; body: Record<string, unknown> }[]; requests: { name: string; url: URL; headers: Headers }[];
 }
 
@@ -204,5 +207,16 @@ test('matching-session token refresh remains valid and pins the refreshed token 
   await login(service, owner, session, 'refresh'); release();
   assert.equal(await operation, 'Refreshed Owner');
   assert.equal(state.calls[0].headers.get('authorization'), `Bearer ${jwt(owner, session, 'refresh')}`);
+ });
+});
+
+test('an unreachable or failing Auth check is a retryable error; only a real 4xx rejection is a denial', async () => {
+ await fixture(async ({ service, state }) => {
+  for (const [mode, expected] of [['user', 'OWNER_PROFILE_REQUEST_FAILED'], ['user503', 'OWNER_PROFILE_REQUEST_FAILED'], ['user401', 'ADMIN_REQUIRED']] as const) {
+   state.transport = mode;
+   await assert.rejects(service.getOwnerProfile(), code(expected), `read ${mode}`);
+   await assert.rejects(service.setOwnerDisplayName('Name'), code(expected), `save ${mode}`);
+  }
+  assert.equal(state.calls.length, 0);
  });
 });
