@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMarketServices, ServiceError, type NotificationPageOptions } from './index.ts';
+import { withSupabaseTestEnvironment } from './test-environment.ts';
 
 const userA = '55000000-0000-4000-8000-000000000001', userB = '55000000-0000-4000-8000-000000000002';
 const businessA = '10000000-0000-4000-8000-000000000001', businessB = '10000000-0000-4000-8000-000000000002';
@@ -183,16 +184,16 @@ test('boolean/count responses are strict and RPC failures have stable service co
   });
 });
 
-test('guest/admin/demo/disposed callers fail before RPC', async () => {
-  await fixture(async ({ calls, create }) => {
+for (const environment of ['unset', 'configured'] as const) test(`guest/admin/demo/disposed callers fail before RPC (${environment} env)`, async () => {
+  await withSupabaseTestEnvironment(environment, () => fixture(async ({ calls, create }) => {
     const guest = create(), admin = create('admin');
-    const demo = createMarketServices({ businessSlug: 'ammu-sammu', audience: 'customer' });
+    const demo = createMarketServices({ businessSlug: 'ammu-sammu', audience: 'customer', config: {} });
     for (const [service, expected] of [[guest, 'SIGN_IN_REQUIRED'], [admin, 'CUSTOMER_REQUIRED'], [demo, 'DEMO_MODE']] as const) {
       for (const operation of [() => service.listNotifications(), () => service.markNotificationRead(id(1)), () => service.markAllNotificationsRead(), () => service.getUnreadNotificationCount()]) await assert.rejects(operation(), code(expected));
     }
     guest.dispose(); await assert.rejects(guest.listNotifications(), code('DISPOSED'));
     demo.dispose(); assert.equal(calls.length, 0);
-  });
+  }));
 });
 
 test('transport failures use NOTIFICATION_REQUEST_FAILED for every method', async () => {
