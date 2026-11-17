@@ -264,6 +264,21 @@ create table public.menu_photo_jobs (
   created_at timestamptz not null default now()
 );
 
+-- Customer inbox, independent of push consent, devices and delivery retries.
+-- Each status can occur at most once in the order state machine.
+create table public.customer_notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  business_id uuid not null references public.businesses(id) on delete cascade,
+  order_id uuid not null references public.orders(id) on delete cascade,
+  event_status text not null check (event_status in ('placed','accepted','preparing','out_for_delivery','delivered','cancelled')),
+  title text not null,
+  body text not null,
+  read_at timestamptz,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint customer_notification_event_unique unique (user_id, order_id, event_status)
+);
+
 -- 3. Indexes -----------------------------------------------------------------------------------
 create index memberships_user_idx on public.business_memberships(user_id, business_id);
 create index menu_items_business_idx on public.menu_items(business_id);
@@ -276,6 +291,8 @@ create index order_history_order_idx on public.order_status_history(order_id);
 create index order_status_actors_actor_idx on public.order_status_actors(actor_id) where actor_id is not null;
 create index accepting_orders_changes_business on public.accepting_orders_changes (business_id, changed_at desc);
 create index notification_outbox_ready_idx on public.notification_outbox(available_at) where completed_at is null;
+create index customer_notifications_page on public.customer_notifications(user_id, business_id, created_at desc, id desc);
+create index customer_notifications_expiry on public.customer_notifications(created_at);
 create index menu_photo_cleanup_due on public.menu_photo_jobs(business_id, due_at)
 where state in ('pending','cleanup','cleaning');
 
@@ -294,6 +311,7 @@ alter table public.checkout_pricing_rejections enable row level security;
 alter table public.accepting_orders_changes enable row level security;
 alter table public.device_tokens enable row level security;
 alter table public.notification_outbox enable row level security;
+alter table public.customer_notifications enable row level security;
 alter table public.menu_photo_jobs enable row level security;
 
 -- 5. Functions ---------------------------------------------------------------------------------
@@ -404,6 +422,119 @@ begin
     new.version := old.version + 1; new.created_at := old.created_at; new.updated_at := now();
   end if;
   return new;
+end $$;
+
+-- These templates deliberately contain no customer/owner/actor data.
+create function public.record_customer_notification() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if tg_op = 'UPDATE' and new.status is not distinct from old.status then return new; end if;
+  insert into public.customer_notifications(user_id,business_id,order_id,event_status,title,body)
+  values(new.customer_id,new.business_id,new.id,new.status,'Order update',case new.status
+    when 'placed' then 'Your order was placed.'
+    when 'accepted' then 'Your order was accepted.'
+    when 'preparing' then 'Your order is being prepared.'
+    when 'out_for_delivery' then 'Your order is out for delivery.'
+    when 'delivered' then 'Your order was delivered.'
+    when 'cancelled' then 'Your order was cancelled.' end)
+  on conflict on constraint customer_notification_event_unique do nothing;
+  return new;
+end $$;
+
+-- A client can only mark read. It cannot choose a timestamp or turn read back off.
+create function public.protect_customer_notification_read() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  new.read_at := case when old.read_at is not null then old.read_at
+    when new.read_at is not null then clock_timestamp() else null end;
+  return new;
+end $$;
+
+-- The API overfetches one row to make a deterministic next cursor without a count query.
+create function public.list_customer_notifications(p_business_slug text, p_limit integer default 20,
+  p_before_created_at timestamptz default null, p_before_id uuid default null)
+returns setof public.customer_notifications language plpgsql stable security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); business uuid;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  if p_limit is null or p_limit not between 1 and 100 or
+    (p_before_created_at is null) <> (p_before_id is null) or
+    (p_before_created_at is not null and not isfinite(p_before_created_at)) then
+    raise exception 'invalid notification page' using errcode='22023';
+  end if;
+  select id into business from public.businesses where slug=p_business_slug;
+  if business is null then raise exception 'invalid restaurant' using errcode='22023'; end if;
+  return query select n.* from public.customer_notifications n
+    where n.user_id=caller and n.business_id=business and not public.is_business_admin(business)
+      and n.created_at >= now()-interval '30 days'
+      and (p_before_created_at is null or (n.created_at,n.id) < (p_before_created_at,p_before_id))
+    order by n.created_at desc,n.id desc limit p_limit+1;
+end $$;
+
+create function public.mark_customer_notification_read(p_business_slug text, p_notification_id uuid)
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); business uuid;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  if p_notification_id is null then raise exception 'notification required' using errcode='22023'; end if;
+  select id into business from public.businesses where slug=p_business_slug;
+  if business is null then raise exception 'invalid restaurant' using errcode='22023'; end if;
+  update public.customer_notifications set read_at=coalesce(read_at,clock_timestamp())
+    where id=p_notification_id and user_id=caller and business_id=business
+      and not public.is_business_admin(business) and created_at >= now()-interval '30 days';
+  return found;
+end $$;
+
+create function public.mark_all_customer_notifications_read(p_business_slug text)
+returns integer language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); business uuid; changed integer;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  select id into business from public.businesses where slug=p_business_slug;
+  if business is null then raise exception 'invalid restaurant' using errcode='22023'; end if;
+  update public.customer_notifications set read_at=clock_timestamp()
+    where user_id=caller and business_id=business and not public.is_business_admin(business)
+      and read_at is null and created_at >= now()-interval '30 days';
+  get diagnostics changed = row_count;
+  return changed;
+end $$;
+
+create function public.customer_notification_unread_count(p_business_slug text)
+returns integer language plpgsql stable security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); business uuid; unread integer;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  select id into business from public.businesses where slug=p_business_slug;
+  if business is null then raise exception 'invalid restaurant' using errcode='22023'; end if;
+  select count(*)::integer into unread from public.customer_notifications
+    where user_id=caller and business_id=business and not public.is_business_admin(business)
+      and read_at is null and created_at >= now()-interval '30 days';
+  return unread;
+end $$;
+
+-- Trusted callers only. No scheduler/pg_cron is installed or configured by this baseline.
+create function public.purge_expired_customer_notifications()
+returns integer language plpgsql security definer set search_path = '' as $$
+declare removed integer;
+begin
+  delete from public.customer_notifications where created_at < now()-interval '30 days';
+  get diagnostics removed = row_count;
+  return removed;
+end $$;
+
+-- Future #51/#52 stages supply their durable start cutoff while holding the shared lifecycle
+-- lock. A retry cannot erase a later rejoin's rows. NULL business means account-wide cleanup.
+create function public.purge_customer_notifications(p_user_id uuid,p_business_id uuid,p_created_before timestamptz)
+returns integer language plpgsql security definer set search_path = '' as $$
+declare removed integer;
+begin
+  if p_user_id is null or p_created_before is null or not isfinite(p_created_before) or p_created_before > clock_timestamp() then
+    raise exception 'customer and cleanup cutoff required' using errcode='22023';
+  end if;
+  delete from public.customer_notifications where user_id=p_user_id
+    and (p_business_id is null or business_id=p_business_id) and created_at <= p_created_before;
+  get diagnostics removed = row_count;
+  return removed;
 end $$;
 
 create function public.queue_order_notification() returns trigger
@@ -1035,6 +1166,10 @@ create trigger restaurant_settings_version before update of contact_phone, whats
   on public.businesses for each row execute function restaurant_settings_private.bump_version();
 create trigger queue_order_notification after insert or update of status on public.orders
 for each row execute function public.queue_order_notification();
+create trigger record_customer_notification after insert or update of status on public.orders
+for each row execute function public.record_customer_notification();
+create trigger protect_customer_notification_read before update of read_at on public.customer_notifications
+for each row execute function public.protect_customer_notification_read();
 
 -- 7. Row-level security policies ---------------------------------------------------------------
 create policy businesses_public on public.businesses for select to anon, authenticated using (true);
@@ -1062,6 +1197,12 @@ create policy order_status_actors_owner on public.order_status_actors for select
 create policy accepting_orders_changes_admin on public.accepting_orders_changes for select to authenticated
   using (public.is_business_admin(business_id));
 create policy devices_self on public.device_tokens for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid() and (audience = 'customer' or public.is_business_admin(business_id)));
+-- Membership never grants inbox access, including when an owner also places a customer order.
+create policy customer_notifications_own_select on public.customer_notifications for select to authenticated
+  using (user_id=auth.uid() and not public.is_business_admin(business_id) and created_at >= now()-interval '30 days');
+create policy customer_notifications_own_read on public.customer_notifications for update to authenticated
+  using (user_id=auth.uid() and not public.is_business_admin(business_id) and created_at >= now()-interval '30 days')
+  with check (user_id=auth.uid() and not public.is_business_admin(business_id) and created_at >= now()-interval '30 days');
 -- order_number_counters, checkout_pricing_rejections, notification_outbox and menu_photo_jobs have
 -- no policy: only trusted functions and the service role touch them.
 
@@ -1072,7 +1213,9 @@ revoke all on public.businesses, public.business_memberships, public.menu_catego
   public.orders, public.order_items, public.order_status_history, public.device_tokens,
   public.accepting_orders_changes from anon, authenticated;
 revoke all on public.customer_addresses, public.order_status_actors, public.order_number_counters,
-  public.checkout_pricing_rejections, public.notification_outbox, public.menu_photo_jobs from public, anon, authenticated;
+  public.checkout_pricing_rejections, public.notification_outbox, public.menu_photo_jobs,
+  public.customer_notifications from public, anon, authenticated;
+grant select, update(read_at) on public.customer_notifications to authenticated;
 grant select on public.businesses, public.menu_categories, public.menu_items to anon, authenticated;
 grant select on public.business_memberships, public.orders, public.order_items, public.device_tokens,
   public.accepting_orders_changes to authenticated;
@@ -1094,12 +1237,22 @@ grant insert (label, custom_label, house, street_area, landmark, latitude, longi
 grant all on public.businesses, public.business_memberships, public.menu_categories, public.menu_items,
   public.customer_addresses, public.orders, public.order_items, public.order_status_history,
   public.order_status_actors, public.accepting_orders_changes, public.device_tokens,
-  public.notification_outbox, public.menu_photo_jobs to service_role;
+  public.notification_outbox, public.menu_photo_jobs, public.customer_notifications to service_role;
 -- The counters only need what the SECURITY INVOKER numbering trigger does for trusted maintenance inserts.
 grant select, insert, update on public.order_number_counters to service_role;
 grant usage, select on sequence public.order_status_history_id_seq to service_role;
 
 -- Functions. Default privileges grant EXECUTE broadly, so revoke everything, then grant explicitly.
+revoke all on function public.record_customer_notification(), public.protect_customer_notification_read(),
+  public.list_customer_notifications(text,integer,timestamptz,uuid), public.mark_customer_notification_read(text,uuid),
+  public.mark_all_customer_notifications_read(text), public.customer_notification_unread_count(text),
+  public.purge_expired_customer_notifications(), public.purge_customer_notifications(uuid,uuid,timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.list_customer_notifications(text,integer,timestamptz,uuid),
+  public.mark_customer_notification_read(text,uuid), public.mark_all_customer_notifications_read(text),
+  public.customer_notification_unread_count(text) to authenticated;
+grant execute on function public.purge_expired_customer_notifications(),
+  public.purge_customer_notifications(uuid,uuid,timestamptz) to service_role;
 revoke all on function
   public.is_business_admin(uuid), public.can_view_order(uuid),
   public.register_device_token(text,text,text), public.unregister_device_token(text,text,text),
@@ -1143,6 +1296,7 @@ grant execute on function
 -- guests, follow open/closed changes and menu/category changes live; orders and history reach their
 -- owners and customers through RLS. customer_addresses is deliberately NOT published: Supabase does not
 -- apply RLS to DELETE events, which would tell every subscriber other customers' address ids.
+-- customer_notifications is also deliberately excluded: feed IDs and events stay private.
 do $$
 declare table_name text;
 begin

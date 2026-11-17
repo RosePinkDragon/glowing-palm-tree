@@ -79,6 +79,32 @@ Release-readiness gate before switching to forward-only:
 2. Verify seed and reference data, security (RLS, tenant isolation, grants, Supabase advisers), roles and memberships, the `menu-images` storage bucket, Realtime publications, and the critical flows (checkout, order transitions, notifications).
 3. Record the baseline version and commit, set `mode` to `frozen`.
 
+## Customer notification feed (#55 backend)
+
+The baseline writes one private customer feed entry per order status event in the same
+transaction as the order. It is independent of push consent, device count and push retries.
+The feed is deliberately excluded from Realtime, including DELETE events. Restaurant
+owners cannot read the feed for their restaurant, even if they also placed an order.
+The customer screen remains separate work.
+
+Customer reads hide rows older than 30 days. A trusted server caller can execute
+`public.purge_expired_customer_notifications()` to delete expired rows; it returns the
+number removed and retries safely. EXECUTE is granted only to `service_role`, never
+anon or authenticated clients. **There is no pg_cron installation, automatic cleanup,
+remote schedule, or live retention job in this change.** The owner explicitly limited
+this backend delivery to a trusted-callable cleanup function. A future separately
+authorized operator must arrange and verify regular invocation before claiming that
+scheduled retention is live. Never put a service-role key in an app.
+
+For the later #51/#52 lifecycle stages, the trusted-only
+`public.purge_customer_notifications(user_id, business_id, created_before)` removes
+one customer's entries through a durable cutoff; NULL business means both restaurants.
+Call it under the shared lifecycle lock using the original request's persisted start
+cutoff, so a retried leave cannot erase a later rejoin's entries. Account deletion also
+has an `auth.users` delete cascade. These hooks do not implement account deletion or
+restaurant leave: those issues must integrate and test their own staged cleanup.
+No remote Supabase project is linked or changed by these repository changes.
+
 ## Firebase, analytics, and notifications
 
 1. Create one Firebase project for the environment and register four web apps, one per target. In Firebase Console → Project settings → General → Your apps, select each web app and copy its public config into the matching Vercel project's `EXPO_PUBLIC_FIREBASE_API_KEY`, `PROJECT_ID`, `MESSAGING_SENDER_ID`, and `APP_ID` variables. The prefix for each is `EXPO_PUBLIC_FIREBASE_`. Firebase client config is public; control access through provider settings and security rules. Supabase provides authentication for these apps.
