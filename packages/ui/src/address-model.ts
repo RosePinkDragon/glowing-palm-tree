@@ -69,3 +69,11 @@ export function locationErrorMessage(error: unknown): string {
 export function bothAppsNote(names: readonly [string, string]): string {
   return `Changes apply in both the ${names[0]} and ${names[1]} apps. Past orders keep the address they were delivered to.`;
 }
+
+export const addDeliveryAddressPrompt = 'Add delivery address';
+/** The customer top bar's address line: "Home · 12, Station Road" for the selected saved address, else a neutral prompt. */
+export function deliveryAddressLine(address: Pick<SavedAddress, 'label' | 'customLabel' | 'house' | 'streetArea'> | null | undefined): string {
+  if (!address) return addDeliveryAddressPrompt;
+  const label = address.label === 'other' ? address.customLabel?.trim() || 'Other' : address.label === 'work' ? 'Work' : 'Home';
+  return `${label} · ${address.house.trim()}, ${address.streetArea.trim()}`;
+}
