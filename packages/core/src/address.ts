@@ -84,6 +84,14 @@ export function validateAddressDraft(input: AddressDraft): AddressDraft {
   };
 }
 
+/** "850 m" under 1 km, one decimal under 10 km, whole km above; empty when the distance is unknown. */
+export function formatDistance(metres: number | null | undefined): string {
+  if (metres === null || metres === undefined || !Number.isFinite(metres) || metres < 0) return '';
+  if (metres < 1000) return `${Math.max(10, Math.round(metres / 10) * 10)} m`;
+  const km = metres / 1000;
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}
+
 /** Phone-to-pin distance above which an owner is told the customer ordered from elsewhere. */
 export const remoteOrderThresholdM = 150;
 

@@ -201,7 +201,7 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
 // Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
 type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
 const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
@@ -209,12 +209,14 @@ export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): Men
   return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
 }
 // Only a complete snapshot becomes a structured address; older typed-address orders keep addressLine alone.
-function orderAddress(row: OrderRow): { address?: OrderAddress; placedFromDistanceM?: number | null } {
+function orderAddress(row: OrderRow): { address?: OrderAddress; placedFromDistanceM?: number | null; kitchenDistanceM?: number | null } {
   if (!row.saved_address_id || !isAddressLabel(row.address_label) || !isAddressLocationSource(row.address_location_source) || !row.address_house || !row.address_street_area) return {};
   const address: OrderAddress = { label: row.address_label, house: row.address_house, streetArea: row.address_street_area, locationSource: row.address_location_source,
     ...(typeof row.address_custom_label === 'string' && row.address_custom_label ? { customLabel: row.address_custom_label } : {}), ...(typeof row.address_landmark === 'string' && row.address_landmark ? { landmark: row.address_landmark } : {}) };
   const distance = row.placed_from_distance_m;
-  return { address, placedFromDistanceM: Number.isSafeInteger(distance) && (distance as number) >= 0 ? distance as number : null };
+  const kitchen = row.kitchen_distance_m;
+  return { address, placedFromDistanceM: Number.isSafeInteger(distance) && (distance as number) >= 0 ? distance as number : null,
+    kitchenDistanceM: Number.isSafeInteger(kitchen) && (kitchen as number) >= 0 ? kitchen as number : null };
 }
 type AddressRow = { id: string; label: string; custom_label: string | null; house: string; street_area: string; landmark: string | null; latitude: number; longitude: number; location_source: string; version: number; updated_at: string; in_area: boolean; distance_m: number | null };
 export function mapSavedAddress(row: AddressRow): SavedAddress {

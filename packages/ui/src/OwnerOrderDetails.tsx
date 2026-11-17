@@ -6,7 +6,7 @@ import { DietMark } from './DietMark';
 import { MarketLine, MarketSection } from './MarketList';
 import { MarketPill } from './MarketChips';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
-import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, placedLabel, statusLabel } from './admin-model';
+import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, pinCheckLine, placedLabel, statusLabel } from './admin-model';
 import { ownerReference, RemoteOrderFlag, type OwnerOrdersState } from './OwnerOrders';
 import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
@@ -49,6 +49,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
   const next = nextAction(order.status);
   const call = callLink(order.delivery.phone);
   const maps = mapsUrl(order.location);
+  const pinDistance = pinCheckLine(order);
   const terminal = !next && !canCancel(order.status);
   const run = (status: Order['status']) => void queue.transition(order, status).then(updated => { if (updated) queue.setFilter(filterForStatus(updated.status)); });
   const footer = terminal ? undefined : <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -81,6 +82,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
             <MarketText>{order.address.streetArea}</MarketText>
             {order.address.landmark ? <MarketText variant="muted">{`Landmark: ${order.address.landmark}`}</MarketText> : null}
           </> : <MarketText>{order.delivery.addressLine}</MarketText>}
+          {pinDistance ? <MarketText variant="muted">{pinDistance}</MarketText> : null}
         </View></View>
         <RemoteOrderFlag order={order} hint />
         {maps ? <MarketLinkButton external icon="map" label="Open in Maps" href={maps} /> : null}

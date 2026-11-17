@@ -98,6 +98,8 @@ export interface Order {
   address?: OrderAddress;
   /** How far the customer's phone was from the delivery pin when ordering, in metres; null when unknown (#48). */
   placedFromDistanceM?: number | null;
+  /** Straight-line metres from the restaurant's kitchen to the delivery pin, stored at order time (#100); null when unknown or on legacy orders. */
+  kitchenDistanceM?: number | null;
   /** actorName is the owner's display name snapshot; present only on owner reads (#98). */
   history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }

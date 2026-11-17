@@ -1,4 +1,4 @@
-import { orderStatusTransitions, type Order, type OrderStatus } from '@market/core';
+import { formatDistance, orderStatusTransitions, type Order, type OrderStatus } from '@market/core';
 import { indianPhone } from './support-model.ts';
 
 export type QueueFilter = 'placed' | 'accepted' | 'preparing' | 'out_for_delivery' | 'complete';
@@ -55,7 +55,20 @@ export function elapsedLabel(createdAtISO: string, now: number): string {
   if (minutes < 1440) return `${Math.floor(minutes / 60)} h ago`;
   return `${Math.floor(minutes / 1440)} d ago`;
 }
-/** One-line address summary for cards (#48 will supply the area). */
+/** Queue-card location line (#100): "Station Road · 2.4 km" for saved-address orders (distance omitted when unknown), the shortened typed line for legacy orders. */
+export function cardArea(order: Pick<Order, 'address' | 'delivery' | 'kitchenDistanceM'>): string {
+  if (!order.address) return shortAddress(order.delivery.addressLine);
+  const distance = formatDistance(order.kitchenDistanceM);
+  return distance ? `${order.address.streetArea} · ${distance}` : order.address.streetArea;
+}
+
+/** Order-details line (#100): the kitchen distance plus the guarantee that the server only accepts in-area pins; empty for legacy orders or an unknown distance. */
+export function pinCheckLine(order: Pick<Order, 'address' | 'kitchenDistanceM'>): string {
+  const distance = order.address ? formatDistance(order.kitchenDistanceM) : '';
+  return distance ? `${distance} · pin checked inside delivery area` : '';
+}
+
+/** One-line address summary for cards. */
 export function shortAddress(line: string, max = 40): string {
   const text = line.replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;

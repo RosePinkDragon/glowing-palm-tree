@@ -5,7 +5,7 @@ import type { MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ActionButton, OwnerOrderDetails } from './OwnerOrderDetails';
-import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, orderReference, ordersForFilter, queueFilters, shortAddress, statusLabel, type QueueFilter } from './admin-model';
+import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, cardArea, orderReference, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketChip, MarketPill } from './MarketChips';
 import { MarketIcon } from './MarketIcons';
@@ -147,7 +147,7 @@ function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Ord
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text accessibilityRole="header" aria-level={3} style={{ color: colors.ink, fontSize: 19, lineHeight: 26, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{order.delivery.name}</Text>
-          <MarketText variant="muted">{shortAddress(order.delivery.addressLine)}</MarketText>
+          <MarketText variant="muted">{cardArea(order)}</MarketText>
         </View>
         <View style={{ alignItems: 'flex-end' }}><Strong size={20} align="right">{formatINRFromPaise(order.totalPaise)}</Strong><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>Cash</Text></View>
       </View>
