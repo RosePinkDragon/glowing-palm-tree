@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { BusinessSlug, CartLine, DeliveryDetails, LocationFix, MenuItem, Order } from '@market/core';
+import type { BusinessSlug, CartLine, MenuItem, Order } from '@market/core';
 import { cartKey, CartReviewRequiredError, CustomerCartStore, importCart, reconcileCart, type CartLock } from './cart-state';
 
-const emptyDetails = { name: '', phone: '', addressLine: '' };
+const emptyDetails = { name: '', phone: '' };
 
 /** The draft has its own key and lifecycle; submitted checkout snapshots are separate. */
 export function useCustomerCart(businessId: BusinessSlug, userId: string | null, authReady: boolean, identityVersion: number, menu: MenuItem[], catalogReady: boolean) {
@@ -22,16 +22,14 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
   const activeMenu = freshCatalog?.base === menu && freshCatalog.identityVersion === identityVersion && freshCatalog.userId === userId ? freshCatalog.menu : menu;
   const previousIdentity = useRef({ userId, identityVersion });
   const leavingIdentity = previousIdentity.current.userId !== null && (previousIdentity.current.userId !== userId || previousIdentity.current.identityVersion !== identityVersion);
-  const [details, setDetails] = useState<DeliveryDetails>(emptyDetails);
-  const [location, setLocation] = useState<LocationFix | null>(null);
-  const [eligible, setEligible] = useState(false);
+  const [details, setDetails] = useState<{ name: string; phone: string }>(emptyDetails);
   const [receiptState, setReceiptState] = useState<{ userId: string | null; order: Order | null }>({ userId, order: null });
   const setReceipt = (order: Order | null) => setReceiptState({ userId, order });
 
   useEffect(() => { if (authReady) void store.setIdentity(userId, identityVersion).catch(() => {}); }, [store, userId, authReady, identityVersion]);
   useEffect(() => {
     if (previousIdentity.current.userId !== null && (previousIdentity.current.userId !== userId || previousIdentity.current.identityVersion !== identityVersion)) {
-      setReceiptState({ userId, order: null }); setDetails(emptyDetails); setLocation(null); setEligible(false);
+      setReceiptState({ userId, order: null }); setDetails(emptyDetails);
     }
     previousIdentity.current = { userId, identityVersion };
   }, [userId, identityVersion]);
@@ -78,7 +76,7 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     setFreshCatalog({ base: menu, menu: options.menu, identityVersion: started.identityVersion, userId: started.userId });
   }, [store, menu, businessId]);
   const clearForSignOut = () => {
-    setReceiptState({ userId: null, order: null }); setDetails(emptyDetails); setLocation(null); setEligible(false);
+    setReceiptState({ userId: null, order: null }); setDetails(emptyDetails);
     // Do not hold signing out hostage to storage or a lock in another window.
     void store.reset().catch(() => {});
   };
@@ -86,7 +84,6 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     cart, menu: activeMenu, setCart, changeCart, importLines, ready, saving: snapshot.saving, cartError: snapshot.error,
     retryCart: store.refresh, resetCart: store.reset, clearForSignOut,
     details: leavingIdentity ? emptyDetails : details, setDetails,
-    location: leavingIdentity ? null : location, setLocation, eligible: !leavingIdentity && eligible, setEligible,
     receipt: userId && receiptState.userId === userId ? receiptState.order : null, setReceipt,
   };
 }

@@ -124,7 +124,7 @@ test('failed saves retain the last persisted cart and permit retry without accep
 });
 
 test('reconciliation refreshes all catalog metadata, marks missing dishes and leaves uncertain snapshots immutable', () => {
-  const attempt = freezeAttempt({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, businessId: business, userId: 'a', idempotencyKey: 'uncertain', lines: [line], delivery: { name: 'Private', phone: '1', addressLine: 'Private address' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-11-14T00:00:00Z' } });
+  const attempt = freezeAttempt({ pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, businessId: business, userId: 'a', idempotencyKey: 'uncertain', lines: [line], delivery: { name: 'Private', phone: '1' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-11-14T00:00:00Z' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 } });
   const before = JSON.stringify(attempt);
   const updated = { ...item, name: 'New dish name', description: 'New description', diet: 'egg' as const, pricePaise: 15000, isAvailable: false, imageUrl: 'https://image.test/dish.jpg' };
   const cart = reconcileCart(attempt.lines, [updated], business);

@@ -151,6 +151,20 @@ try {
       assert.equal(orders.length, 1); assert.equal(orders[0].p_delivery.address_id, addressId(1));
       assert.ok(Math.abs(orders[0].p_location.latitude - north(3200).latitude) < 1e-9, 'the phone fix is sent so the server can measure the distance');
 
+      // The total a sheet quotes can't go stale: a cart change closes it, and one made while the phone was still being awaited is caught on confirm.
+      const bumpCart = (by = 1) => page.evaluate(([key, by]) => { const record = JSON.parse(localStorage.getItem(key)); record.revision += 1; record.lines[0].quantity = Math.max(1, record.lines[0].quantity + by); localStorage.setItem(key, JSON.stringify(record)); window.dispatchEvent(new StorageEvent('storage', { key })); }, [`market:cart:${slug}`, by]);
+      await reset(); await context.setGeolocation({ ...north(3200), accuracy: 12 }); await toCart(); await text('Deliver to Home').waitFor();
+      await button('Place order').click(); await text('You\'re 3.2 km from this address').waitFor();
+      await bumpCart(); await text('You\'re 3.2 km from this address').waitFor({ state: 'hidden' });
+      assert.equal(orders.length, 0, 'a cart change closes the sheet without sending');
+      await reset(); await toCart(); await text('Deliver to Home').waitFor();
+      await page.evaluate(() => { navigator.geolocation.getCurrentPosition = () => {}; navigator.geolocation.watchPosition = () => 0; });
+      await button('Place order').click(); await button('Please wait…').waitFor(); await bumpCart();
+      await text('We couldn\'t confirm where you are').waitFor({ timeout: 20000 });
+      await button('Yes, place order').click(); await text('Your total changed. Please check your order and try again.').waitFor();
+      assert.equal(orders.length, 0, 'a stale total is never sent'); assert.equal(await attempt(), null);
+      await bumpCart(-9); await context.grantPermissions(['geolocation']);
+
       // Far away: "not in Khed".
       await reset(); await context.setGeolocation({ latitude: 18.52, longitude: 73.85, accuracy: 12 }); await toCart(); await text('Deliver to Home').waitFor();
       await button('Place order').click(); await text('You\'re not in Khed right now').waitFor();
@@ -214,12 +228,16 @@ try {
       await button('Retry order recovery').click(); await page.waitForURL(/\/orders\//);
       assert.equal(orders.length, 2); assert.deepEqual(orders[1], orders[0], 'the retry resends the same payload and idempotency key');
 
-      // An attempt saved before this slice (typed address, required fix) is recovered, not crashed on.
+      // An attempt saved by the old typed-address checkout (version 1) is discarded safely: not replayed, no crash.
       await reset(); await toCart(); await text('Deliver to Home').waitFor();
+      const sentBefore = orders.length;
       await page.evaluate(([key, userId]) => localStorage.setItem(key, JSON.stringify({ version: 1, businessId: key.split(':')[2], userId, idempotencyKey: 'legacy-fixture', lines: [], pricing: { lines: [], delivery_fee_paise: 0, min_order_paise: 0, subtotal_paise: 0, total_paise: 0 }, delivery: { name: 'Legacy', phone: '+919876543210', addressLine: 'Typed address line' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' } })), [`market:checkout:${slug}`, userId]);
-      await page.reload({ waitUntil: 'networkidle' }); await button('Retry order recovery').waitFor();
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.getByText(/could not be read/).first().waitFor({ state: 'attached' });
+      assert.equal(await button('Retry order recovery').count(), 0, 'the legacy attempt is not offered for replay');
+      assert.equal(orders.length, sentBefore, 'the legacy attempt is never sent');
       assert.deepEqual(errors, []);
-      console.log(`PASS: ${slug} checkout picker (in/out of area, add, select), direct, remote, not-in-Khed, no-location, ADDRESS_CHANGED, DELIVERY_UNAVAILABLE, idempotent retry`);
+      console.log(`PASS: ${slug} checkout picker (in/out of area, add, select), direct, remote, not-in-Khed, no-location, ADDRESS_CHANGED, DELIVERY_UNAVAILABLE, idempotent retry, legacy v1 attempt discarded`);
     } catch (error) { await shot('failure').catch(() => {}); throw error; }
     finally { await context.close(); await server.close(); }
   }

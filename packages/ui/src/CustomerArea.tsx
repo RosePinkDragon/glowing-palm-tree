@@ -50,6 +50,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const [busy, setBusy] = useState(false); const [localError, setLocalError] = useState('');
   const sending = useRef(false), placeTrigger = useRef<HTMLElement | null>(null);
   const [confirming, setConfirming] = useState<{ address: SavedAddress; fix: LocationFix | null; confirmation: Exclude<OrderConfirmation, { kind: 'direct' }>; totalPaise: number } | null>(null);
+  // A sheet quotes the total it was opened with: if the cart changes while it is open, close it so a stale total is never confirmed.
+  const cartSignature = JSON.stringify([market.business?.deliveryFeePaise, market.business?.minOrderPaise, cart.map(line => [line.item.id, line.quantity, line.item.pricePaise])]);
+  useEffect(() => { setConfirming(null); }, [cartSignature]);
   const [revision, setRevision] = useState<RevisedQuote | null>(null);
   const [closedRefusal, setClosedRefusal] = useState<{ business: typeof market.business; identity: typeof market.identity.current } | null>(null);
   const quote = visibleQuote(revision, market.identity.current, market.authReady);
@@ -109,7 +112,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
         if (closed) setClosedRefusal({ business: ordering.current.business, identity: started });
-        try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; setDetails({ name: saved.delivery.name, phone: saved.delivery.phone, addressLine: '' });
+        try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; setDetails({ name: saved.delivery.name, phone: saved.delivery.phone });
           if (changed) addrs.refresh();
           if (outside) { addrs.select(null); addrs.refresh(); }
           setLocalError(closed ? '' : changed ? addressChangedMessage : outside ? outsideAreaMessage : `${messageOf(e)} Please check your details and try again.`); if (closed) market.load(); } }
@@ -181,7 +184,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!current) return;
     await setCart(revisedLines(current));
     if (!sameIdentity(current.identity, market.identity.current)) return;
-    setRevision(null); setDetails({ name: current.original.delivery.name, phone: current.original.delivery.phone, addressLine: '' });
+    setRevision(null); setDetails({ name: current.original.delivery.name, phone: current.original.delivery.phone });
     if (current.original.savedAddress) addrs.select(current.original.savedAddress.id);
   }); };
   const retry = () => { void guarded(async () => {
@@ -246,5 +249,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Profile' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Profile' ? 'Edit profile' : 'Notifications'}</MarketText><MarketText>{page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
-  return <><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null); void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
+  return <><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
+    // The sheet quoted a total before the phone's location was awaited; never send a different one than was shown.
+    try { if (validateOrder().pricing.total_paise !== chosen.totalPaise) { setLocalError('Your total changed. Please check your order and try again.'); return; } } catch (e) { setLocalError(messageOf(e)); return; }
+    void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
 }

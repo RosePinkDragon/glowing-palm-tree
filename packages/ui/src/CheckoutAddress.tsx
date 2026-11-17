@@ -147,7 +147,7 @@ export function OrderConfirmationSheet({ copy, busy, confirm, change, dismiss }:
     <Text style={{ color: colors.ink, fontSize: 16, lineHeight: 24 }}>{copy.lead}</Text>
     <View style={{ flexDirection: 'row', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>
       <MarketIcon name="pin" color={colors.primary} size={18} nudge={2} />
-      <Text style={{ flex: 1, color: colors.ink, fontSize: 15, lineHeight: 22, ...bold }}>{copy.cash}</Text>
+      <Text style={{ flex: 1, color: colors.ink, fontSize: 15, lineHeight: 22 }}>{copy.cash.split(copy.amount).flatMap((part, i) => i ? [<Text key={i} style={bold}>{copy.amount}</Text>, part] : [part])}</Text>
     </View>
     <MarketButton label={busy ? 'Placing order…' : 'Yes, place order'} disabled={busy} onPress={confirm} />
     <MarketButton label="Change address" variant="secondary" disabled={busy} onPress={change} />
