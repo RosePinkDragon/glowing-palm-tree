@@ -36,3 +36,31 @@ linked or deployed. At #131's baseline cutover, fold the settings migration into
 the unapplied baseline and retain `tests/database/restaurant-settings.sql` plus
 the sourced race suite for **both** PostGIS layouts. The tests use disposable
 local databases and never contact a hosted project.
+
+# Customer notification feed (#55 backend)
+
+Customer services expose `listNotifications({ limit?, cursor? })`,
+`markNotificationRead(id)`, `markAllNotificationsRead()` and
+`getUnreadNotificationCount()`. Every call uses the configured restaurant and a
+verified signed-in customer, and fences results on sign-out, identity change and
+disposal. Admin-audience calls fail with `CUSTOMER_REQUIRED`; the database also
+denies owners of the target restaurant, including dual-role identities.
+
+Pages contain `notifications` and `nextCursor`, ordered newest first by timestamp
+and UUID. The server reads one lookahead row; the service returns at most `limit`
+(default 20, maximum 100). Pass the raw `createdAtISO`/`id` cursor back unchanged:
+JavaScript Date conversion discards microseconds. Each notification exposes only
+`id`, restaurant slug `businessId`, `orderId`, `eventStatus`, `title`, `body`,
+`readAtISO` and `createdAtISO`; it contains no actor or owner data. All six order
+statuses are supported. Reads/counts cover the last 30 days; listing does not
+change read state. Mark-one returns false for missing/inaccessible/expired rows;
+otherwise it returns true, including retries. Mark-all returns the number newly
+read. Only `read_at` is client-writable; its timestamp is assigned by the server
+and cannot be cleared or changed after it is set.
+
+Malformed input uses `INVALID_NOTIFICATION_QUERY`; malformed server data uses
+`INVALID_RESPONSE`. RPC denial uses `NOTIFICATION_ACCESS_DENIED`, and other RPC
+or transport failures use `NOTIFICATION_REQUEST_FAILED`. Existing
+`SIGN_IN_REQUIRED`, `SESSION_CHANGED`, `DISPOSED` and `DEMO_MODE` codes also apply.
+There are no feed Realtime subscriptions. The trusted cleanup functions and later
+lifecycle callers are described in `docs/RELEASE.md`; no scheduling is configured.

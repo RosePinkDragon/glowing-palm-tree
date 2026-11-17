@@ -3,3 +3,13 @@ Run `tests/database/run.sh` with Docker available. It creates a disposable Postg
 The seed is demonstration data (it uses the order prefixes `AMS` and `KDI`; real launch rows are created as described in `docs/RELEASE.md` step 5). Both businesses have ordering disabled and no service area. A trusted operator must supply and verify a real boundary, source and version before enabling orders. Location coordinates do not establish physical presence. The eventual checkout and status transition RPCs must enforce server pricing, idempotency, location and transition rules; this migration deliberately grants no direct client order writes.
 
 The run applies every file in `supabase/migrations` (the single pre-release baseline, #131) once per PostGIS layout: `all_fresh` (a fresh install) and `all_existing` (PostGIS already in `public`). It then applies `seed.sql` and `helpers.sql` and runs every suite and the concurrent races against that schema. Suites that share `final-fixture.sql` (isolation, checkout, notifications, notification-routing, accepting-orders, pricing) run in that order. Orders are always placed through a saved address (`customer_addresses` row plus `address_id`/`address_version`) with the exact accepted-pricing quote from `test_quote`. There is no upgrade path to test before the first persistent deployment; after it, add upgrade checks for each forward-only migration.
+
+`customer-notifications.sql` checks every event, placement and source-event replay,
+push retries/device independence, transaction rollback, RLS/column permissions,
+all four RPCs, owner/dual-role denial, restaurant isolation, keyset ties and
+microseconds, monotonic read markers, and trusted expiry/lifecycle cleanup.
+`customer-notifications-races.sh` is sourced in both final-schema layouts. It
+observes real lock waits for concurrent placement replay and stale-version
+transitions, then checks persisted order/event counts and the losing result.
+The feed stays outside Realtime. Cleanup is callable only by trusted code; these
+tests install no pg_cron and configure no scheduler or remote Supabase project.
