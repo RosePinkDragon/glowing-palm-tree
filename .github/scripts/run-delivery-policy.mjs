@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { evaluate, linkedIssue } from './delivery-policy.mjs';
+import { evaluateTrustedMigrations } from './trusted-migration-policy.mjs';
 
 export function createRunner({ repository, event, token, api = 'https://api.github.com', fetchImpl = fetch, evaluator = evaluate }) {
   const apiBase = api.replace(/\/$/, '');
@@ -32,8 +33,9 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
   }
   const getPr = async number => (await request(`/repos/${repository}/pulls/${number}`)).data;
   const startCheck = async pr => (await request(`/repos/${repository}/check-runs`, { name: 'Delivery policy', head_sha: pr.head.sha, status: 'in_progress' })).data.id;
-  async function finishCheck(id, errors, count = 0) {
-    const summary = errors.length ? errors.map(e => '- ' + e).join('\n') : `All policy checks passed. Reviewable files: ${count}/15.`;
+  async function finishCheck(id, errors, count = 0, warnings = []) {
+    const verdict = errors.length ? errors.map(e => '- ' + e).join('\n') : `All policy checks passed. Reviewable files: ${count}/15.`;
+    const summary = [verdict, ...warnings.map(w => 'Warning: ' + w)].join('\n');
     await request(`/repos/${repository}/check-runs/${id}`, { status: 'completed', conclusion: errors.length ? 'failure' : 'success', output: { title: errors.length ? 'Delivery policy failed' : 'Delivery policy passed', summary: summary.slice(0, 65000) } }, 'PATCH');
   }
   function stable(pr) {
@@ -41,7 +43,7 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
     return JSON.stringify([pr.state, ref('head'), ref('base'), pr.body ?? null, pr.draft ?? null]);
   }
   async function process(snapshot, checkId, shared) {
-    let errors = [], count = 0, technicalFailure = false;
+    let errors = [], warnings = [], count = 0, technicalFailure = false;
     try {
       const pr = await getPr(snapshot.number);
       if (pr.state !== 'open' || pr.head.sha !== snapshot.head.sha) {
@@ -51,9 +53,9 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
       if (shared) throw new Error('Multiple open PRs share this head commit; each open PR needs a distinct head commit.');
       // GitHub retains a PR's base snapshot when unrelated commits land on main.
       // Workflow checkout supplies trusted policy code; target ref supplies scope.
-      if (pr.base.ref !== event.repository.default_branch) {
+      if (pr.base.ref !== 'main') {
         // An expected policy denial is not an API/evaluation outage for the batch.
-        await finishCheck(checkId, ['PR must target the repository default branch. Merge its predecessor and retarget this PR before merging.']);
+        await finishCheck(checkId, ['PR must target main. Merge its predecessor and retarget this PR before merging.']);
         return true;
       }
       const files = await pages(`/repos/${repository}/pulls/${pr.number}/files`);
@@ -65,6 +67,9 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
         catch (err) { if (err.status !== 404) throw err; }
       }
       ({ errors, count } = evaluator(pr, issue, files, repository));
+      const migrations = await evaluateTrustedMigrations({ repository, request, files, body: pr.body });
+      errors.push(...migrations.errors);
+      warnings = migrations.warnings;
       if (issue) {
         const fresh = (await request(`/repos/${repository}/issues/${issue.number}`)).data;
         const fields = item => JSON.stringify([item.state, item.body, item.labels]);
@@ -76,7 +81,7 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
       errors = ['Policy could not verify this PR: ' + err.message];
       technicalFailure = true;
     }
-    await finishCheck(checkId, errors, count);
+    await finishCheck(checkId, errors, count, warnings);
     return !technicalFailure;
   }
   async function runBatch() {
