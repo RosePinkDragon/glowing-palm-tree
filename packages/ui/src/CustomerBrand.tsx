@@ -15,6 +15,7 @@ const welcomeCopy: Record<BusinessSlug, { eyebrow: string; line: string }> = {
   'ammu-sammu': { eyebrow: 'Khed, Ratnagiri', line: 'Home-style food delivered around Khed. Pay cash when it arrives.' },
   'kokani-dine-inn': { eyebrow: 'Taste of Kokan', line: 'Seafood and Malvani classics, delivered across Khed.' },
 };
+const welcomeTimeoutMs = 1500;
 export const welcomeKey = (businessId: BusinessSlug) => `market:welcome:${businessId}`;
 
 /** First launch only: `checking` until storage answers; a storage failure never blocks the app. */
@@ -23,8 +24,10 @@ export function useWelcome(businessId: BusinessSlug) {
   useEffect(() => {
     let active = true;
     setState('checking');
-    AsyncStorage.getItem(welcomeKey(businessId)).then(value => { if (active) setState(value ? 'done' : 'show'); }).catch(() => { if (active) setState('done'); });
-    return () => { active = false; };
+    // If storage hangs, stop waiting and show the menu (never a blank screen, and no welcome that could reappear every launch).
+    const timer = setTimeout(() => { if (active) setState(current => current === 'checking' ? 'done' : current); }, welcomeTimeoutMs);
+    AsyncStorage.getItem(welcomeKey(businessId)).then(value => { if (active) setState(current => current === 'checking' ? (value ? 'done' : 'show') : current); }).catch(() => { if (active) setState('done'); });
+    return () => { active = false; clearTimeout(timer); };
   }, [businessId]);
   const dismiss = () => { setState('done'); void AsyncStorage.setItem(welcomeKey(businessId), '1').catch(() => {}); };
   return { state, dismiss };

@@ -23,7 +23,7 @@ try {
     const item = { id: '39200000-0000-4000-8000-000000000001', name: 'Brand fixture meal', description: 'Synthetic fixture', category_id: '39300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const address = { id: '39400000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 0.5, longitude: 0.5, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 };
     const errors = [];
-    const open = async (signedIn, viewport) => {
+    const open = async (signedIn, viewport, path = '') => {
       const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
       if (signedIn) await context.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: `market:${encodeURIComponent(api)}:${slug}:customer`, value: session });
       await context.routeWebSocket(/.*/, socket => socket.onMessage(message => {
@@ -46,10 +46,17 @@ try {
         throw new Error(`Unexpected brand fixture ${route.request().method()} ${url.pathname}`);
       });
       const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
-      await page.goto(server.url, { waitUntil: 'networkidle' });
+      await page.goto(server.url + path, { waitUntil: 'networkidle' });
       return { context, page };
     };
     try {
+      // Other routes are never gated by the welcome on first launch.
+      for (const [path, heading] of [['/privacy', 'Privacy policy'], ['/login', 'Sign in']]) {
+        const fresh = await open(false, { width: 390, height: 844 }, path);
+        await fresh.page.getByText(heading, { exact: true }).first().waitFor();
+        assert.equal(await fresh.page.getByRole('button', { name: 'Browse the menu' }).count(), 0, `${path} skips the welcome`);
+        await fresh.context.close();
+      }
       // Guest on first launch: welcome, then a neutral address prompt in the top bar.
       let { context, page } = await open(false, { width: 390, height: 844 });
       await page.getByRole('heading', { name }).waitFor();

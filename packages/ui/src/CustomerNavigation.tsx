@@ -17,7 +17,7 @@ type Routes = { Menu: undefined; Cart: undefined; Orders: undefined; Order: { id
 type Market = ReturnType<typeof useMarket>;
 type Controls = { go: (path: string) => void; login: (next: string) => void };
 const Stack = createNativeStackNavigator<Routes>();
-const Content = createContext<{ market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; deliveryLine: string; account: ReactNode; address: () => void } | null>(null);
+const Content = createContext<{ market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; deliveryLine: string; welcome: ReactNode; account: ReactNode; address: () => void } | null>(null);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 function destination(path: string) {
   if (path === '/cart') return { name: 'Cart', params: undefined };
@@ -36,7 +36,7 @@ function destination(path: string) {
   return { name: 'Menu', params: undefined };
 }
 function CustomerRoute({ route, navigation }: { route: RouteProp<Routes>; navigation: NativeStackNavigationProp<Routes> }) {
-  const { market, render, deliveryLine, account, address } = useContext(Content)!;
+  const { market, render, deliveryLine, welcome, account, address } = useContext(Content)!;
   const focused = useIsFocused();
   const params = route.params as { id?: string; next?: string } | undefined;
   const protectedScreen = route.name === 'Orders' || route.name === 'Order' || route.name === 'Account' || route.name === 'Profile' || route.name === 'Addresses' || route.name === 'Notifications';
@@ -48,6 +48,7 @@ function CustomerRoute({ route, navigation }: { route: RouteProp<Routes>; naviga
   }, [focused, market.authReady, market.session?.user.id, market.recovery, protectedScreen, route.name, target, params?.next, navigation]);
   if ((protectedScreen && (!market.authReady || !market.session)) || (route.name === 'Login' && !market.authReady)) return <MarketStatus kind="loading" title="Checking your account" />;
   if (route.name === 'NotFound') return <MarketStatus kind="empty" title="Page not found" action={<MarketButton label="Browse menu" onPress={() => navigation.navigate('Menu')} />} />;
+  if (route.name === 'Menu' && welcome) return <>{welcome}</>;
   const page = render(route.name as CustomerScreen, params?.id);
   return route.name === 'Menu' ? <View style={{ flex: 1 }}><CustomerTopBar line={deliveryLine} onAddress={address} account={account} />{page}</View> : page;
 }
@@ -59,7 +60,7 @@ function AccountControl({ onPress, onDark = false }: { onPress: (node: Component
   return <Pressable ref={button} accessibilityRole="button" accessibilityLabel="Account" onPress={() => onPress(button.current)} style={{ minHeight: 48, paddingHorizontal: 18, justifyContent: 'center' }}><Text style={{ color: onDark ? '#FFFFFF' : colors.primary, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>Account</Text></Pressable>;
 }
 
-export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen, orderingAllowed, deliveryLine }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean; orderingAllowed: boolean; deliveryLine: string }) {
+export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen, orderingAllowed, deliveryLine, welcome }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean; orderingAllowed: boolean; deliveryLine: string; welcome: ReactNode }) {
   const navigation = useNavigationContainerRef<Routes>();
   const { colors, name, statusHeader } = useMarketTheme();
   const nativeOpener = useRef<ComponentRef<typeof Pressable> | null>(null);
@@ -96,7 +97,7 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
     prefixes: [Linking.createURL('/')],
     config: { initialRouteName: 'Menu' as const, screens: { Menu: '', Cart: 'cart', Orders: 'orders', Order: 'orders/:id', Account: 'account', Help: 'help', Privacy: 'privacy', Terms: 'terms', Profile: 'profile', Addresses: 'addresses', Notifications: 'notifications', Login: 'login', NotFound: '*' } }
   };
-  return <SafeAreaProvider><Content.Provider value={{ market, render, deliveryLine, address: openAddress, account: <AccountControl onDark={statusHeader === 'band'} onPress={openAccount} /> }}>
+  return <SafeAreaProvider><Content.Provider value={{ market, render, deliveryLine, welcome, address: openAddress, account: <AccountControl onDark={statusHeader === 'band'} onPress={openAccount} /> }}>
     <View style={{ flex: 1 }} accessibilityElementsHidden={drawer} importantForAccessibility={drawer ? 'no-hide-descendants' : 'auto'}><NavigationContainer onStateChange={() => setDrawer(false)} ref={navigation} linking={linking} fallback={<MarketStatus kind="loading" title="Opening the app" />} theme={{ dark: false, colors: { primary: colors.primary, background: colors.background, card: colors.surface, text: colors.ink, border: colors.border, notification: colors.primary }, fonts: { regular: { fontFamily: 'System', fontWeight: '400' }, medium: { fontFamily: 'System', fontWeight: '500' }, bold: { fontFamily: 'System', fontWeight: '700' }, heavy: { fontFamily: 'System', fontWeight: '800' } } }}>
       <Stack.Navigator screenOptions={({ route }) => ({ title: route.name === 'Menu' ? name : route.name === 'Order' ? 'Order status' : route.name === 'Login' ? 'Sign in' : route.name === 'NotFound' ? 'Page not found' : route.name === 'Cart' ? 'Your cart' : route.name === 'Orders' ? 'Your orders' : route.name === 'Help' ? 'Help & support' : route.name === 'Privacy' ? 'Privacy policy' : route.name === 'Terms' ? 'Terms' : route.name === 'Profile' ? 'Edit profile' : route.name === 'Addresses' ? 'Saved addresses' : route.name === 'Notifications' ? 'Notifications' : 'Your account', headerBackTitle: 'Back', contentStyle: { backgroundColor: colors.background }, headerShown: route.name !== 'Menu', headerRight: () => <AccountControl onPress={openAccount} /> })}>
         {(['Menu', 'Cart', 'Orders', 'Order', 'Account', 'Login', 'Help', 'Privacy', 'Terms', 'Profile', 'Addresses', 'Notifications', 'NotFound'] as const).map(screen => <Stack.Screen key={screen} name={screen} component={CustomerRoute} />)}
