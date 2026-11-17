@@ -199,7 +199,7 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
     {active ? <MarketSection title="Order details">
       <DetailRow first label={voice === 'we' ? 'Dishes' : 'Items'}>
         <View style={{ gap: 12, alignItems: 'flex-end' }}>
-          {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} role="group" accessibilityLabel={`${line.quantity} × ${line.name}`} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} role="group" accessibilityLabel={`${line.quantity} × ${line.name}`} style={{ gap: 2, alignItems: 'flex-end' }}>
             <Text style={{ flexShrink: 1, color: colors.ink, fontSize: 15, lineHeight: 22, textAlign: 'right' }}>{`${line.quantity} × ${line.name}`}</Text>
             <DietMark diet={line.diet} compact />
           </View>)}

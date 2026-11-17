@@ -206,7 +206,7 @@ const prepareCart = async (page, add = true) => {
   await second.goBack();
   assert.equal(new URL(second.url()).pathname, '/cart');
   assert.equal(await second.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Draft stays');
-  assert.equal(await second.getByRole('button', { name: /^Cart \(/ }).count(), 1);
+  assert.equal(await second.getByRole('button', { name: /^Cart \(/ }).count(), 0, 'the cart page has no separate View cart bar');
   const asset = await context.request.get(customerServer.url + '/orders/missing.js'); assert.equal(asset.status(), 404);
   const worker = await context.request.get(customerServer.url + '/firebase-messaging-worker.js'); assert.match(worker.headers()['content-type'], /javascript/);
   // A signed-out deep link returns to its exact order after authenticating.

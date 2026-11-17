@@ -4,10 +4,14 @@ import type { BusinessSlug } from '@market/core';
 import type { Business } from '@market/services';
 import { MarketButton } from './components';
 import { MarketIcon } from './MarketIcons';
-import { closedMessage, closedParts } from './closed-notice-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
-export { closedMessage };
+/** The closed notice copy (#58, customer p. 28): a bold lead and a plain follow-up, per brand voice. */
+export const closedParts = (slug: BusinessSlug): { lead: string; rest: string } => slug === 'ammu-sammu'
+  ? { lead: 'Not taking orders right now.', rest: 'You can still look at the menu. Check back a little later.' }
+  : { lead: "The kitchen isn't taking orders right now.", rest: 'Browse the menu and check back a little later.' };
+/** The full sentence, used wherever the notice is read as one line (ordering errors, dish details). */
+export const closedMessage = (slug: BusinessSlug) => { const { lead, rest } = closedParts(slug); return `${lead} ${rest}`; };
 
 /** Notice frame (customer p. 28): Ammu Sammu a dark rounded card with a clock, Kokani Dine Inn a gold band. Neutral states reuse the brand tint. */
 function NoticeFrame({ closed, children }: { closed: boolean; children: ReactNode }) {

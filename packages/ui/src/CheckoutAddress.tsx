@@ -67,7 +67,7 @@ export function CheckoutAddressSummary({ ctrl }: { ctrl: CheckoutAddresses }) {
   const band = statusHeader === 'band';
   const icon: MarketIconName = selected ? rowIcon(selected) : 'pin';
   return <View style={card}>
-    <Text accessibilityRole="header" style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Delivery address</Text>
+    <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Delivery address</Text>
     {error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 22 }}>{error}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={ctrl.refresh} /></> : null}
     {addresses === null && !error ? <Text accessibilityRole="progressbar" style={muted}>Loading your saved addresses…</Text> : null}
     {addresses && !addresses.length && !error ? <>

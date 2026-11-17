@@ -100,6 +100,15 @@ try {
       await page.setViewportSize({ width: 1280, height: 800 }); await shot('cart-desktop');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'desktop checkout has no horizontal overflow');
       await page.setViewportSize({ width: 390, height: 844 });
+      // Tabbing never leaves a focused control under the pinned bar, and the navigation's separate cart bar is not shown on the cart page.
+      assert.equal(await page.getByRole('button', { name: /^Cart \(/ }).count(), 0, 'no second cart bar on the cart page');
+      await visible(page.getByLabel('Name', { exact: true })).focus();
+      for (let step = 0; step < 14; step++) {
+        await page.keyboard.press('Tab'); await page.waitForTimeout(80);
+        const hidden = await page.evaluate(() => { const bar = [...document.querySelectorAll('[role=button]')].find(node => node.textContent === 'Place order')?.parentElement; const focus = document.activeElement; if (focus === document.body) return 'end'; if (!bar || !focus || bar.contains(focus) || !focus.getBoundingClientRect().height) return false; return focus.getBoundingClientRect().bottom > bar.getBoundingClientRect().top + 1 && focus.getBoundingClientRect().top < bar.getBoundingClientRect().bottom; });
+        if (hidden === 'end') break;
+        assert.equal(hidden, false, (await page.evaluate(() => document.activeElement.outerHTML.slice(0, 160))) + ` focused control ${step + 1} is not covered by the pinned bar`);
+      }
 
       // Picker: in-area rows are radios, the outside one is visible but disabled with its reason.
       await button('Change delivery address').click();

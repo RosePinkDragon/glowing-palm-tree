@@ -1,3 +1,4 @@
+import { useRef, type ComponentRef } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, removeCartItem, setCartItemQuantity, MAX_QUANTITY, type CartLine } from '@market/core';
 import { MarketButton, MarketField, MarketStatus } from './components';
@@ -88,8 +89,20 @@ export function CartPage(p: CartPageProps) {
   const total = p.subtotalPaise + p.deliveryFeePaise;
   const band = statusHeader === 'band';
   const empty = p.cart.length === 0;
+  const bar = useRef<ComponentRef<typeof View>>(null);
+  // The pinned bar can cover a control that takes focus (tabbing); scroll the nearest scrolling ancestor so it stays above the bar.
+  const keepAboveBar = (event: { target: unknown }) => {
+    if (Platform.OS !== 'web') return;
+    const target = event.target as HTMLElement | null, pinned = bar.current as unknown as HTMLElement | null;
+    if (!target?.getBoundingClientRect || !pinned?.getBoundingClientRect || pinned.contains(target)) return;
+    const gap = target.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top + 16;
+    if (gap <= 0) return;
+    let parent = target.parentElement;
+    while (parent && !(parent.scrollHeight > parent.clientHeight && /(auto|scroll)/.test(getComputedStyle(parent).overflowY))) parent = parent.parentElement;
+    (parent ?? document.scrollingElement)?.scrollBy({ top: gap });
+  };
   const stick = Platform.OS === 'web' ? ({ position: 'sticky', bottom: 12, zIndex: 2 } as object) : {};
-  return <View style={{ gap: 16, width: '100%', maxWidth: 640, alignSelf: 'center' }}>
+  return <View onFocus={keepAboveBar} style={{ gap: 16, width: '100%', maxWidth: 640, alignSelf: 'center' }}>
     <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{p.demo ? 'Sample cart' : empty ? name : `${name} · ${count} ${noun}`}</Text>
     {p.cartMessage ? <ReorderNotice message={p.cartMessage} /> : null}
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}
@@ -132,7 +145,7 @@ export function CartPage(p: CartPageProps) {
         </View>
       </Card>
       {p.localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{p.localError}</Text> : null}
-      {p.orderingAllowed ? <View style={{ ...stick, flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
+      {p.orderingAllowed ? <View ref={bar} style={{ ...stick, flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
         <View style={{ paddingLeft: 4 }}>
           <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 16 }}>To pay</Text>
           <Text style={{ color: colors.ink, fontSize: 18, lineHeight: 24, ...bold }}>{money(total)}</Text>
