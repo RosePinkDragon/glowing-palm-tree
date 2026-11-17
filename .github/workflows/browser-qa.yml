@@ -31,6 +31,7 @@ jobs:
       - run: npm run test:browser
       - run: node tests/browser/cart.mjs
       - run: node tests/browser/photos.mjs
+      - run: node tests/browser/brand39.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

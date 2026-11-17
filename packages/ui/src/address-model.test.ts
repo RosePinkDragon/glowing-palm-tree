@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SavedAddress } from '@market/core';
-import { addressErrorMessage, bothAppsNote, checkAddressForm, emptyAddressForm, formatDistance, formFromAddress, locationErrorMessage, locationRequiredMessage } from './address-model.ts';
+import { addDeliveryAddressPrompt, addressErrorMessage, deliveryAddressLine, bothAppsNote, checkAddressForm, emptyAddressForm, formatDistance, formFromAddress, locationErrorMessage, locationRequiredMessage } from './address-model.ts';
 
 const gps = { latitude: 17.72, longitude: 73.39, source: 'gps' as const };
 
@@ -49,4 +49,13 @@ test('service errors become friendly copy', () => {
   assert.match(locationErrorMessage(new Error('Location permission is needed to check delivery.')), /permission is off/);
   assert.match(locationErrorMessage(null), /couldn't read your location/);
   assert.equal(bothAppsNote(['A', 'B']), 'Changes apply in both the A and B apps. Past orders keep the address they were delivered to.');
+});
+
+test('the top bar line names the selected address, or neutrally asks for one', () => {
+  assert.equal(deliveryAddressLine(null), addDeliveryAddressPrompt);
+  assert.equal(deliveryAddressLine(undefined), 'Add delivery address');
+  assert.equal(deliveryAddressLine({ label: 'home', house: ' Flat 3 ', streetArea: 'Sai Krupa', customLabel: undefined }), 'Home · Flat 3, Sai Krupa');
+  assert.equal(deliveryAddressLine({ label: 'work', house: '9', streetArea: 'MIDC', customLabel: 'ignored' }), 'Work · 9, MIDC');
+  assert.equal(deliveryAddressLine({ label: 'other', house: '1', streetArea: 'Road', customLabel: 'Aai' }), 'Aai · 1, Road');
+  assert.equal(deliveryAddressLine({ label: 'other', house: '1', streetArea: 'Road', customLabel: ' ' }), 'Other · 1, Road');
 });

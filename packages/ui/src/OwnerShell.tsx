@@ -1,46 +1,20 @@
-import { useMemo, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, SvgXml } from 'react-native-svg';
-import { useFonts } from 'expo-font';
 import type { BusinessSlug } from '@market/core';
-import { Eczar_600SemiBold } from '@expo-google-fonts/eczar/600SemiBold';
-import { Mukta_400Regular } from '@expo-google-fonts/mukta/400Regular';
-import { Mukta_600SemiBold } from '@expo-google-fonts/mukta/600SemiBold';
-import { Mukta_700Bold } from '@expo-google-fonts/mukta/700Bold';
-import { TiroDevanagariMarathi_400Regular } from '@expo-google-fonts/tiro-devanagari-marathi/400Regular';
-import { MartelSans_400Regular } from '@expo-google-fonts/martel-sans/400Regular';
-import { MartelSans_600SemiBold } from '@expo-google-fonts/martel-sans/600SemiBold';
-import { MartelSans_700Bold } from '@expo-google-fonts/martel-sans/700Bold';
+import { useBrandFonts } from './brand-fonts';
 import { brandLogos } from './brand-logos';
 import { formatBadgeCount, ownerTabAccessibilityLabel, ownerTabs, type OwnerTabId } from './owner-navigation';
-import { MarketFontsProvider, useMarketFonts, useMarketTheme, type MarketFonts } from './theme';
+import { MarketFontsProvider, useMarketFonts, useMarketTheme } from './theme';
 
-// Each owners' app loads only its own restaurant's typefaces (from the final design PDFs).
-const ownerFonts: Record<BusinessSlug, { files: Record<string, number>; families: Required<MarketFonts> }> = {
-  'ammu-sammu': {
-    files: { Eczar_600SemiBold, Mukta_400Regular, Mukta_600SemiBold, Mukta_700Bold },
-    families: { heading: 'Eczar_600SemiBold', body: 'Mukta_400Regular', bodySemiBold: 'Mukta_600SemiBold', bodyBold: 'Mukta_700Bold' },
-  },
-  'kokani-dine-inn': {
-    files: { TiroDevanagariMarathi_400Regular, MartelSans_400Regular, MartelSans_600SemiBold, MartelSans_700Bold },
-    families: { heading: 'TiroDevanagariMarathi_400Regular', body: 'MartelSans_400Regular', bodySemiBold: 'MartelSans_600SemiBold', bodyBold: 'MartelSans_700Bold' },
-  },
-};
 const contentWidth = 960;
 const hidden = { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
-
-/** Families are exposed only once loaded; until then, or if loading fails, system fonts are used. */
-function useOwnerFonts(businessId: BusinessSlug): MarketFonts {
-  const brand = ownerFonts[businessId];
-  const [loaded, error] = useFonts(brand.files);
-  return useMemo(() => loaded && !error ? brand.families : {}, [loaded, error, brand]);
-}
 
 /** Root of an owners' app: active brand fonts, safe areas and the brand background. */
 export function OwnerFrame({ children }: { children: ReactNode }) {
   const { businessId, colors } = useMarketTheme();
-  const fonts = useOwnerFonts(businessId);
+  const fonts = useBrandFonts(businessId);
   return <SafeAreaProvider><MarketFontsProvider value={fonts}><View style={{ flex: 1, backgroundColor: colors.background }}>{children}</View></MarketFontsProvider></SafeAreaProvider>;
 }
 
