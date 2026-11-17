@@ -16,75 +16,9 @@ if [[ "$ready" != true ]]; then echo 'PostGIS did not become ready' >&2; exit 1;
 sql_file() { docker exec -i "$container" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$db" < "$1"; }
 sql_in() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 "$@" -U postgres -d "$db" >/dev/null; }
 sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "$1"; }
-mig() { sql_file "supabase/migrations/$1.sql"; }
 
 # ---------------------------------------------------------------------------
-# Staged upgrade runs (UPGRADE-ONLY; retired in #131 slice S4 together with this loop).
-# Applies the historical chain in its staged order to databases holding old data and checks only
-# what an upgrade can break: backfills and data migrations. Behaviour, security and race suites
-# run against the final schema in the second loop, not against these intermediate stages.
-# ---------------------------------------------------------------------------
-for db in fresh existing; do
-  docker exec "$container" createdb -U postgres "$db"
-  sql_file tests/database/fixture.sql
-  if [[ "$db" == existing ]]; then
-    sql_cmd 'create extension if not exists postgis with schema public'
-  fi
-  mig 20261112000000_database_isolation
-  # Legacy rows written while menu_items.category and typed-address orders were the contract.
-  sql_in <<'SQL'
-insert into auth.users(id) values ('30000000-0000-4000-8000-000000000001'),('30000000-0000-4000-8000-000000000003');
-insert into public.businesses(id,slug,name,is_demo) values
-('10000000-0000-4000-8000-000000000001','ammu-sammu','Ammu Sammu',true),
-('10000000-0000-4000-8000-000000000002','kokani-dine-inn','Kokani Dine Inn',true);
-insert into public.menu_items(id,business_id,name,category,price_paise,is_demo) values
-('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Demo meal','Demo',15000,true),
-('20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','Demo meal','Demo',18000,true);
-SQL
-  mig 20261112000001_checkout
-  mig 20261112000002_notifications
-  mig 20261113194819_customer_order_notification_route
-  mig 20261114000000_accepting_orders
-  mig 20261114082153_menu_diet_snapshots
-  mig 20261114133057_accepted_checkout_pricing
-  mig 20261114140135_menu_featured_item_order
-  # Backfill trims and merges only names within the same business.
-  sql_cmd "insert into public.menu_items(id,business_id,name,category,price_paise,diet) values ('24300000-0000-4000-8000-000000000099','10000000-0000-4000-8000-000000000001','Backfill',' Demo ',100,'egg')"
-  mig 20261114142756_menu_categories
-  sql_cmd "select public.test_assert((select a.category_id=b.category_id and a.diet='egg' from public.menu_items a cross join public.menu_items b where a.id='24300000-0000-4000-8000-000000000099' and b.id='20000000-0000-4000-8000-000000000001'),'trimmed category backfill preserves diet and assignment')"
-  sql_in -v before_migration=1 < tests/database/order-numbers.sql
-  mig 20261116103753_order_tracking_numbers
-  sql_file supabase/seed.sql
-  sql_in -v backfill_only=1 < tests/database/order-numbers.sql
-  # Earlier owner transitions (one by a current owner) plus one by an owner who has since been
-  # removed, on legacy orders, exercise the snapshot backfill.
-  sql_cmd "insert into public.business_memberships(business_id,user_id,role) values ('10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000003','admin'); insert into auth.users(id) values ('49800000-0000-4000-8000-0000000000ff'); insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','49800000-0000-4000-8000-0000000000ff' from public.orders where business_id='10000000-0000-4000-8000-000000000001' order by created_at, id limit 1; insert into public.order_status_history(order_id,status,changed_by) select id,'accepted','30000000-0000-4000-8000-000000000003' from public.orders where business_id='10000000-0000-4000-8000-000000000001' order by created_at, id offset 1 limit 1"
-  mig 20261116000000_owner_history_names
-  sql_cmd "select public.test_assert((select count(*) = 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.changed_by = '49800000-0000-4000-8000-0000000000ff' and a.actor_name = 'Former owner' and a.actor_id is null), 'removed owner backfills as Former owner') ; select public.test_assert(exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id join public.business_memberships m on m.business_id = o.business_id and m.user_id = h.changed_by where a.actor_name = m.display_name and a.actor_id = h.changed_by), 'current owners backfill with their membership name')"
-  sql_file tests/database/owner-history.sql
-  # #48 upgrade path: existing businesses and legacy GPS orders, then the saved-address
-  # and kitchen-point migrations. Legacy orders must satisfy the new evidence check,
-  # and the kitchen points must land on the existing rows (as in production).
-  mig 20261116160000_saved_addresses
-  mig 20261116180000_kitchen_locations
-  mig 20261116190000_delivery_radius
-  docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ declare ns text; n integer; begin
-    if not exists (select 1 from public.orders where saved_address_id is null and location_accuracy is not null) then raise exception 'upgrade test has no legacy orders'; end if;
-    if exists (select 1 from pg_constraint where conname='order_address_evidence' and not convalidated) then raise exception 'evidence check not validated'; end if;
-    select n2.nspname into strict ns from pg_extension e join pg_namespace n2 on n2.oid=e.extnamespace where e.extname='postgis';
-    execute format('select count(*) filter (where kitchen_location is not null and %1\$I.st_distance(kitchen_location::%1\$I.geography, %1\$I.st_setsrid(%1\$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1\$I.geography) < 1) from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into n;
-    if n <> 2 then raise exception 'kitchen points not set on existing restaurants: %', n; end if;
-    -- Owner decision: 12 km from each kitchen. 11.9 km out is inside in every direction, 12.1 km is outside.
-    execute format('select count(*) filter (where service_area_verified_at is not null and service_area_version=''radius-12000m'' and service_area_source like ''Owner decision 16 Nov 2026%%''
-        and (select bool_and(%1\$I.st_covers(service_area::%1\$I.geography, %1\$I.st_project(kitchen_location::%1\$I.geography, 11900, a)) and not %1\$I.st_covers(service_area::%1\$I.geography, %1\$I.st_project(kitchen_location::%1\$I.geography, 12100, a)))
-          from unnest(array[0, pi()/4, pi()/2, 3*pi()/4, pi(), 5*pi()/4, 3*pi()/2, 7*pi()/4]) a))
-      from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into n;
-    if n <> 2 then raise exception '12 km delivery areas not set on existing restaurants: %', n; end if;
-  end \$\$"
-done
-
-# ---------------------------------------------------------------------------
-# Final-schema pass: every migration once per PostGIS layout (a fresh install, and one where
+# Final-schema pass: the baseline migration (every file in supabase/migrations) once per PostGIS layout (a fresh install, and one where
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
@@ -98,8 +32,7 @@ for db in all_fresh all_existing; do
   if [[ "$db" == all_existing ]]; then
     sql_cmd 'create extension if not exists postgis with schema public'
   fi
-  # Installation order differs from the staged runs: apply every migration before seed,
-  # proving unknown sample data can be bootstrapped safely.
+  # Apply the baseline before seed, proving sample data can be bootstrapped safely.
   for migration in supabase/migrations/*.sql; do
     sql_file "$migration"
   done
@@ -239,4 +172,4 @@ SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
   source tests/database/restaurant-settings-races.sh
 done
-echo 'Final-schema suites and races, including restaurant settings, passed on every migration in both PostGIS layouts; staged upgrade checks passed.'
+echo 'Baseline, final-schema suites and races (including restaurant settings) passed in both PostGIS layouts.'
