@@ -41,6 +41,11 @@ create schema owner_settings_private;
 revoke all on schema owner_settings_private from public, anon, authenticated;
 grant usage on schema owner_settings_private to authenticated;
 
+-- Customer lifecycle internals are outside the Data API. The wrapper needs only join EXECUTE.
+create schema customer_lifecycle_private;
+revoke all on schema customer_lifecycle_private from public, anon, authenticated, service_role;
+grant usage on schema customer_lifecycle_private to authenticated;
+
 create type public.diet_classification as enum ('veg', 'non_veg', 'egg');
 
 -- 2. Tables and constraints --------------------------------------------------------------------
@@ -85,6 +90,29 @@ alter table public.businesses add constraint ordering_requires_verified_area che
     length(trim(service_area_source)) > 0 and service_area_version is not null and
     length(trim(service_area_version)) > 0 and service_area_verified_at is not null)
 );
+
+-- Stable per-account serialization point, never removed by leave/rejoin (#52; reused by #51).
+create table customer_lifecycle_private.accounts (
+  customer_id uuid primary key references auth.users(id) on delete cascade,
+  state text not null default 'active' check (state in ('active','deletion_pending'))
+);
+alter table customer_lifecycle_private.accounts enable row level security;
+revoke all on customer_lifecycle_private.accounts from public, anon, authenticated, service_role;
+
+create table public.customer_businesses (
+  customer_id uuid not null references auth.users(id) on delete cascade,
+  business_id uuid not null references public.businesses(id),
+  joined_at timestamptz not null default clock_timestamp(),
+  generation uuid not null default gen_random_uuid(),
+  state text not null default 'active' check (state in ('active','leave_pending','left')),
+  primary key (customer_id,business_id)
+);
+alter table public.customer_businesses enable row level security;
+revoke all on public.customer_businesses from public, anon, authenticated, service_role;
+grant select on public.customer_businesses to authenticated;
+create policy customer_businesses_own_read on public.customer_businesses for select to authenticated
+  using (customer_id = (select auth.uid()));
+-- No publication membership: deleted relationship IDs must not leak through realtime.
 
 create table public.business_memberships (
   business_id uuid not null references public.businesses(id) on delete cascade,
@@ -628,6 +656,63 @@ end $$;
 -- Checkout. Orders are placed only for a saved address (customer_addresses row plus
 -- address_id/address_version); the phone fix in p_location is optional and only measures
 -- the distance the order was placed from. The exact accepted-pricing quote is required.
+-- Internal only: callers derive identity themselves; clients cannot choose a lock target.
+-- Lock order: users KEY SHARE, sessions SHARE (join), accounts UPDATE, business SHARE,
+-- checkout advisory key, address/menu/order rows. Users first also serializes Auth cascades.
+-- Future leave/status paths must take account before order rows; never reverse this order.
+create function customer_lifecycle_private.lock_account(p_customer uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare account_state text;
+begin
+  perform 1 from auth.users where id=p_customer for key share;
+  if not found then
+    raise exception 'authentication required' using errcode='42501';
+  end if;
+  insert into customer_lifecycle_private.accounts(customer_id) values(p_customer) on conflict do nothing;
+  select state into account_state from customer_lifecycle_private.accounts where customer_id=p_customer for update;
+  if account_state <> 'active' then
+    raise exception 'account lifecycle pending' using errcode='PT409', detail='ACCOUNT_LIFECYCLE_PENDING';
+  end if;
+end $$;
+
+create function customer_lifecycle_private.join_business(p_business_slug text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare caller uuid := auth.uid(); session uuid; business uuid; relationship public.customer_businesses%rowtype;
+begin
+  if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
+  begin session := (auth.jwt()->>'session_id')::uuid;
+  exception when invalid_text_representation then raise exception 'invalid session' using errcode='42501'; end;
+  if session is null then raise exception 'invalid session' using errcode='42501'; end if;
+  perform 1 from auth.sessions where id=session and user_id=caller
+    and (not_after is null or not_after > clock_timestamp()) for share;
+  if not found then raise exception 'invalid session' using errcode='42501'; end if;
+  perform customer_lifecycle_private.lock_account(caller);
+  select id into business from public.businesses where slug=p_business_slug;
+  if not found then raise exception 'business unavailable' using errcode='22023', detail='INVALID_BUSINESS'; end if;
+  select * into relationship from public.customer_businesses where customer_id=caller and business_id=business;
+  if found and relationship.state = 'leave_pending' then
+    raise exception 'business lifecycle pending' using errcode='PT409', detail='BUSINESS_LIFECYCLE_PENDING';
+  end if;
+  if not found then
+    insert into public.customer_businesses(customer_id,business_id) values(caller,business) returning * into relationship;
+  elsif relationship.state = 'left' then
+    update public.customer_businesses set state='active',generation=gen_random_uuid(),joined_at=clock_timestamp()
+      where customer_id=caller and business_id=business returning * into relationship;
+  end if;
+  return jsonb_build_object('customer_id',caller,'business_id',business,'generation',relationship.generation,
+    'joined_at',relationship.joined_at,'state',relationship.state);
+end $$;
+
+create function public.join_business(p_business_slug text)
+returns jsonb language sql security invoker set search_path = '' as $$
+  select customer_lifecycle_private.join_business(p_business_slug)
+$$;
+revoke all on function customer_lifecycle_private.lock_account(uuid),
+  customer_lifecycle_private.join_business(text), public.join_business(text) from public, anon, authenticated, service_role;
+grant execute on function customer_lifecycle_private.join_business(text), public.join_business(text) to authenticated;
+
 create function public.place_order(p_business_slug text, p_items jsonb, p_delivery jsonb, p_location jsonb, p_idempotency_key uuid, p_accepted_pricing jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -639,8 +724,17 @@ declare
   phone_lat double precision; phone_lon double precision; phone_at timestamptz; phone_distance double precision; kitchen_distance double precision;
 begin
   if caller is null or p_idempotency_key is null then raise exception 'authentication and idempotency key required' using errcode='22023'; end if;
+  perform customer_lifecycle_private.lock_account(caller);
   select * into b from public.businesses where slug=p_business_slug for share;
   if not found then raise exception 'business unavailable' using errcode='22023'; end if;
+  -- Read-only gate: left/pending relationships refuse checkout. A completed leave must
+  -- retain its left marker; replays and pricing rejections must never enroll a customer.
+  if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state='left') then
+    raise exception 'join this business before checkout' using errcode='PT403', detail='BUSINESS_JOIN_REQUIRED';
+  end if;
+  if exists(select 1 from public.customer_businesses where customer_id=caller and business_id=b.id and state='leave_pending') then
+    raise exception 'business lifecycle pending' using errcode='PT409', detail='BUSINESS_LIFECYCLE_PENDING';
+  end if;
   select n.nspname into strict crypto_schema from pg_catalog.pg_extension e
     join pg_catalog.pg_namespace n on n.oid=e.extnamespace where e.extname='pgcrypto';
   -- The digest covers address_id/address_version inside p_delivery.
@@ -735,6 +829,9 @@ begin
     return jsonb_build_object('outcome','pricing_changed','pricing',quote);
   end if;
   if subtotal < b.min_order_paise or total > 2147483647 then raise exception 'invalid order total' using errcode='22023'; end if;
+  -- Enroll only when creating a new order, after all normal-return replay/rejection paths.
+  -- Still under the account lock; failure of the order transaction rolls this back too.
+  insert into public.customer_businesses(customer_id,business_id) values(caller,b.id) on conflict do nothing;
   insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,
     address_label,address_custom_label,address_house,address_street_area,address_landmark,address_location_source,
     saved_address_id,saved_address_version,placed_from_distance_m,kitchen_distance_m,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
@@ -1362,3 +1459,13 @@ values ('menu-images', 'menu-images', true, 1048576, array['image/webp']);
 -- No INSERT/UPDATE/DELETE policy: clients (including owners) cannot bypass decoding.
 create policy menu_images_public_read on storage.objects for select to anon, authenticated
 using (bucket_id = 'menu-images');
+
+-- BEGIN CUSTOMER RELATIONSHIP BACKFILL
+-- Baseline-only bootstrap from historical orders. Preserve earliest evidence and existing generations.
+-- This is migration SQL, not an exposed/retryable endpoint; never run again after customers can leave.
+insert into customer_lifecycle_private.accounts(customer_id)
+  select distinct customer_id from public.orders on conflict do nothing;
+insert into public.customer_businesses(customer_id,business_id,joined_at)
+  select customer_id,business_id,min(created_at) from public.orders group by customer_id,business_id
+  on conflict do nothing;
+-- END CUSTOMER RELATIONSHIP BACKFILL
