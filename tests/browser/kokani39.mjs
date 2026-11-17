@@ -113,12 +113,13 @@ const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
       await carousel.getByRole('button', { name: 'Add one Kolambi koliwada', exact: true }).click();
       await page.getByRole('button', { name: /^Cart \(2\)/ }).waitFor();
       const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('market:cart:kokani-dine-inn')));
+      await page.waitForFunction(() => JSON.parse(localStorage.getItem('market:cart:kokani-dine-inn') || '{"lines":[]}').lines.map(line => line.quantity).join() === '2');
       assert.deepEqual((await saved()).lines.map(line => [line.item.name, line.quantity]), [['Kolambi koliwada', 2]]);
       await shot(page, `menu-stepper-${label}`);
       await page.locator('#regular-menu').getByRole('button', { name: 'Remove one Kolambi koliwada', exact: true }).click();
       await carousel.getByRole('button', { name: 'Remove one Kolambi koliwada', exact: true }).click();
       await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().waitFor();
-      assert.deepEqual((await saved()).lines, []);
+      await page.waitForFunction(() => JSON.parse(localStorage.getItem('market:cart:kokani-dine-inn') || '{"lines":[]}').lines.length === 0);
       await carousel.getByRole('button', { name: 'Add to cart', exact: true }).last().click();
       await page.getByRole('group', { name: 'Surmai rava fry quantity' }).first().waitFor();
       assert.equal(await page.getByRole('group', { name: 'Surmai rava fry quantity' }).count(), 2);
