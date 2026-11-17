@@ -4,6 +4,8 @@ import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
+// Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3).
+const dishHeadingsFor = slug => slug === 'ammu-sammu' ? { level: 3 } : {};
 const trackingOnly = process.argv.includes('--tracking');
 const selectedBrand = process.argv.find(arg => arg.startsWith('--brand='))?.slice(8);
 if (!trackingOnly) {
@@ -86,7 +88,7 @@ await context.route(origin + '/**', async route => {
   throw new Error('Unhandled fixture request: ' + req.method() + ' ' + url.pathname);
 });
 const errors = [];
-const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'Add to cart', exact: true }).waitFor(); return page; };
+const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: /^(?:Add to cart|Add one )/ }).first().waitFor(); return page; };
 const focused = (page, text) => page.waitForFunction(expected => [document.activeElement?.textContent, document.activeElement?.getAttribute('aria-label')].includes(expected), text);
 const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
 const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
@@ -462,11 +464,13 @@ const prepareCart = async (page, add = true) => {
       for (const shape of shapes) { assert.equal(shape.squareWidth, shape.squareHeight); assert.equal(shape.border, 'solid'); }
       assert.equal(shapes[0].width, shapes[0].height, 'veg is a circle');
       assert.notEqual(shapes[1].width, shapes[1].height, 'egg is an oval');
-      assert.equal(shapes[2].width, '12px', 'triangle width is the two transparent 6px borders'); assert.equal(shapes[2].triangle, '11px'); assert.equal(shapes[2].left, 'rgba(0, 0, 0, 0)', 'non-veg is a triangle');
+      const compact = slug === 'ammu-sammu'; // the photo-grid cards (#39) use the shape-only mark
+      assert.equal(shapes[2].width, compact ? '8px' : '12px', 'triangle width is the two transparent side borders'); assert.equal(shapes[2].triangle, compact ? '8px' : '11px'); assert.equal(shapes[2].left, 'rgba(0, 0, 0, 0)', 'non-veg is a triangle');
       await page.setViewportSize({ width: 390, height: 2400 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-menu-mobile.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
-      for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(index).click();
+      // Photo-grid cards swap their Add button for a stepper once added, so the next Add is always the first.
+      for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(slug === 'ammu-sammu' ? 0 : index).click();
       await page.getByRole('button', { name: /^Cart \(/ }).click();
       await page.getByRole('heading', { name: 'Your cart', exact: true }).waitFor(); await assertMarks(page);
       await page.reload({ waitUntil: 'networkidle' }); await assertMarks(page);
@@ -596,7 +600,7 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await featured.getByRole('heading', { name: 'Diet fixture 4', exact: true }).count(), 1);
       assert.equal(await featured.getByRole('heading', { name: 'Diet fixture 1', exact: true }).count(), 0);
       const grid = page.locator('#regular-menu');
-      assert.deepEqual(await grid.getByRole('heading').allTextContents(), ['Diet fixture 1', 'Diet fixture 4', 'Diet fixture 2', 'Diet fixture 3']);
+      assert.deepEqual(await grid.getByRole('heading', dishHeadingsFor(slug)).allTextContents(), ['Diet fixture 1', 'Diet fixture 4', 'Diet fixture 2', 'Diet fixture 3']);
       const cartButton = page.getByRole('button', { name: /^Cart \(/ });
       const beforeCount = await cartButton.count() ? Number((await cartButton.textContent()).match(/\d+/)[0]) : 0;
       await featured.getByRole('button', { name: 'Add to cart', exact: true }).click();
@@ -609,7 +613,9 @@ const prepareCart = async (page, add = true) => {
       dishes[2] = { ...dishes[2], name: 'Same name', description: 'Tie second' };
       dishes.reverse();
       await page.reload({ waitUntil: 'networkidle' });
-      assert.deepEqual(await page.locator('#regular-menu').getByText(/^Tie /).allTextContents(), ['Tie first', 'Tie second']);
+      // Photo-grid cards (Ammu Sammu, #39) omit the description; the tie order itself is covered by the sortMenuItems unit test.
+      if (slug !== 'ammu-sammu') assert.deepEqual(await page.locator('#regular-menu').getByText(/^Tie /).allTextContents(), ['Tie first', 'Tie second']);
+      else assert.equal(await page.locator('#regular-menu').getByRole('heading', { name: 'Same name', level: 3, exact: true }).count(), 2);
       // No available featured item means there is no heading or empty section.
       dishes = dishes.map(dish => ({ ...dish, is_featured: !dish.available }));
       await page.reload({ waitUntil: 'networkidle' });
@@ -661,13 +667,15 @@ const prepareCart = async (page, add = true) => {
       const allDishes = page.getByRole('button', { name: 'All dishes', exact: true });
       const realAll = page.getByRole('button', { name: 'All', exact: true });
       await realAll.waitFor();
-      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), categoriesOnly ? ['Diet fixture 4','Diet fixture 1','Diet fixture 2','Diet fixture 3'] : ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
+      const listed = await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).allTextContents();
+      assert.deepEqual(listed, categoriesOnly ? ['Diet fixture 4','Diet fixture 1','Diet fixture 2','Diet fixture 3'] : ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
       await realAll.click();
       assert.equal(await realAll.getAttribute('aria-pressed'), 'true');
-      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading').allTextContents(), ['Diet fixture 4']);
+      // Kokani's chips filter the list; Ammu Sammu's photo grid (#39) keeps every dish and jumps to the section instead.
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).allTextContents(), slug === 'ammu-sammu' ? listed : ['Diet fixture 4']);
       await page.screenshot({ path: `dist/browser/${slug}-category-all-mobile.png`, fullPage: true });
-      await allDishes.click();
-      assert.equal(await page.locator('#regular-menu').getByRole('heading').count(), 4);
+      await allDishes.click(); 
+      assert.equal(await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).count(), 4);
       await adminPage.getByRole('button', { name: 'Add category', exact: true }).click();
       await dialog.getByLabel('Category name', { exact: true }).fill('Temporary');
       await dialog.getByRole('button', { name: 'Save category', exact: true }).click();

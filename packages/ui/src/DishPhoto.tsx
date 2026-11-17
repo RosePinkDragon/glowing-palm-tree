@@ -4,7 +4,7 @@ import type { MenuItem } from '@market/core';
 import { useMarketTheme } from './theme';
 
 /** Only the two pre-sized, immutable assets from the upload pipeline are served. */
-export function DishPhoto({ item, detail = false, viewportRevision = 0 }: { item: MenuItem; detail?: boolean; viewportRevision?: number }) {
+export function DishPhoto({ item, detail = false, viewportRevision = 0, height }: { item: MenuItem; detail?: boolean; viewportRevision?: number; height?: number }) {
   const { colors } = useMarketTheme();
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const container = useRef<ComponentRef<typeof View>>(null);
@@ -21,7 +21,7 @@ export function DishPhoto({ item, detail = false, viewportRevision = 0 }: { item
   // layout/scroll/rotation, and only mount it once it enters the viewport.
   useEffect(measure, [viewportRevision, windowHeight, windowWidth, visible]);
   const unavailable = !uri || failed === uri;
-  return <View ref={container} onLayout={measure} style={{ height: detail ? 240 : 170, width: '100%', borderRadius: 14, overflow: 'hidden', backgroundColor: colors.tint }}>
+  return <View ref={container} onLayout={measure} style={{ height: height ?? (detail ? 240 : 170), width: '100%', borderRadius: detail || !height ? 14 : 0, overflow: 'hidden', backgroundColor: colors.tint }}>
     {unavailable ? <View accessible accessibilityRole="image" accessibilityLabel={`${item.name}: no photo available`} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Text accessible={false} aria-hidden style={{ color: colors.muted, fontSize: 15 }}>No photo available</Text></View>
       : Platform.OS === 'web' ? <img src={uri} alt={item.name} loading={detail ? 'eager' : 'lazy'} decoding="async" width={detail ? 960 : 320} height={detail ? 720 : 240} onError={() => setFailed(uri)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         : visible ? <Image accessibilityLabel={item.name} source={{ uri }} resizeMode="cover" onError={() => setFailed(uri)} style={{ width: '100%', height: '100%' }} /> : null}
