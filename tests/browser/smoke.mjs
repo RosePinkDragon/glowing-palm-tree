@@ -4,8 +4,8 @@ import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
-// Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3).
-const dishHeadingsFor = slug => slug === 'ammu-sammu' ? { level: 3 } : {};
+// Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3); Kokani's a la carte list has category headings at level 3 and dishes at level 4.
+const dishHeadingsFor = slug => ({ level: slug === 'ammu-sammu' ? 3 : 4 });
 const trackingOnly = process.argv.includes('--tracking');
 const selectedBrand = process.argv.find(arg => arg.startsWith('--brand='))?.slice(8);
 if (!trackingOnly) {
@@ -464,13 +464,13 @@ const prepareCart = async (page, add = true) => {
       for (const shape of shapes) { assert.equal(shape.squareWidth, shape.squareHeight); assert.equal(shape.border, 'solid'); }
       assert.equal(shapes[0].width, shapes[0].height, 'veg is a circle');
       assert.notEqual(shapes[1].width, shapes[1].height, 'egg is an oval');
-      const compact = slug === 'ammu-sammu'; // the photo-grid cards (#39) use the shape-only mark
+      const compact = true; // the photo-grid cards and a la carte rows (#39) use the shape-only mark
       assert.equal(shapes[2].width, compact ? '8px' : '12px', 'triangle width is the two transparent side borders'); assert.equal(shapes[2].triangle, compact ? '8px' : '11px'); assert.equal(shapes[2].left, 'rgba(0, 0, 0, 0)', 'non-veg is a triangle');
       await page.setViewportSize({ width: 390, height: 2400 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-menu-mobile.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
-      // Photo-grid cards swap their Add button for a stepper once added, so the next Add is always the first.
-      for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(slug === 'ammu-sammu' ? 0 : index).click();
+      // Cards and rows (#39) swap their Add button for a stepper once added, so the next Add is always the first.
+      for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(0).click();
       await page.getByRole('button', { name: /^Cart \(/ }).click();
       await page.getByRole('heading', { name: 'Your cart', exact: true }).waitFor(); await assertMarks(page);
       await page.reload({ waitUntil: 'networkidle' }); await assertMarks(page);
@@ -615,7 +615,7 @@ const prepareCart = async (page, add = true) => {
       await page.reload({ waitUntil: 'networkidle' });
       // Photo-grid cards (Ammu Sammu, #39) omit the description; the tie order itself is covered by the sortMenuItems unit test.
       if (slug !== 'ammu-sammu') assert.deepEqual(await page.locator('#regular-menu').getByText(/^Tie /).allTextContents(), ['Tie first', 'Tie second']);
-      else assert.equal(await page.locator('#regular-menu').getByRole('heading', { name: 'Same name', level: 3, exact: true }).count(), 2);
+      assert.equal(await page.locator('#regular-menu').getByRole('heading', { name: 'Same name', level: slug === 'ammu-sammu' ? 3 : 4, exact: true }).count(), 2);
       // No available featured item means there is no heading or empty section.
       dishes = dishes.map(dish => ({ ...dish, is_featured: !dish.available }));
       await page.reload({ waitUntil: 'networkidle' });
@@ -671,8 +671,8 @@ const prepareCart = async (page, add = true) => {
       assert.deepEqual(listed, categoriesOnly ? ['Diet fixture 4','Diet fixture 1','Diet fixture 2','Diet fixture 3'] : ['Diet fixture 4','Diet fixture 1','Same name','Same name']);
       await realAll.click();
       assert.equal(await realAll.getAttribute('aria-pressed'), 'true');
-      // Kokani's chips filter the list; Ammu Sammu's photo grid (#39) keeps every dish and jumps to the section instead.
-      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).allTextContents(), slug === 'ammu-sammu' ? listed : ['Diet fixture 4']);
+      // Since #39 the chips jump to the section and keep every dish listed.
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).allTextContents(), listed);
       await page.screenshot({ path: `dist/browser/${slug}-category-all-mobile.png`, fullPage: true });
       await allDishes.click(); 
       assert.equal(await page.locator('#regular-menu').getByRole('heading', dishHeadingsFor(slug)).count(), 4);
