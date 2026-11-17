@@ -1,25 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { RestaurantSettingsValidationError, ServiceError, type MarketServices, type RestaurantSettings } from '@market/services';
+import { RestaurantSettingsValidationError, ServiceError, type MarketServices, type RestaurantSettings, type RestaurantSettingsView } from '@market/services';
 import { MarketButton, MarketStatus } from './components';
 import { MarketIcon } from './MarketIcons';
 import { MarketSection } from './MarketList';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMarketFonts, useMarketTheme } from './theme';
-import { firstErrorField, formFromSettings, serverFieldErrors, validateDetailsForm, type DetailsErrors, type DetailsField, type DetailsForm } from './restaurant-details-model';
+import { deliveryAreaText, orderNumberFormat, firstErrorField, formFromSettings, serverFieldErrors, validateDetailsForm, type DetailsErrors, type DetailsField, type DetailsForm } from './restaurant-details-model';
 
 // Owners' Restaurant details (owners' screen p. 13, opened from Settings p. 10). Saves all four fields
 // together with the version that was loaded; the server stays the authority (#135).
-const orderPrefix = { 'ammu-sammu': 'AMS', 'kokani-dine-inn': 'KDI' } as const;
 const conflictMessage = 'Another owner saved changes. Reload to see the latest.';
 const noAccessMessage = 'You no longer have access to change restaurant details.';
-type Load = { kind: 'loading' } | { kind: 'ready'; settings: RestaurantSettings } | { kind: 'error'; message: string } | { kind: 'denied' };
+type Load = { kind: 'loading' } | { kind: 'ready'; settings: RestaurantSettings; view: RestaurantSettingsView } | { kind: 'error'; message: string } | { kind: 'denied' };
 type Problem = { kind: 'conflict' | 'denied' | 'unconfirmed' | 'error'; message: string };
 
 const labels: Record<DetailsField, string> = { contactPhone: 'Phone number for customers', whatsappPhone: 'WhatsApp number', deliveryFee: 'Delivery fee', minOrder: 'Minimum order' };
 
 export function OwnerRestaurantDetails({ services, onBack }: { services: MarketServices; onBack: () => void }) {
-  const { colors, businessId } = useMarketTheme();
+  const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const insets = useSafeAreaInsets();
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
@@ -37,7 +36,7 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
     setLoad({ kind: 'loading' }); setErrors({}); setProblem(null); setNotice('');
     services.getRestaurantSettings().then(settings => {
       if (id !== requestId.current) return;
-      setForm(formFromSettings(settings)); setLoad({ kind: 'ready', settings });
+      setForm(formFromSettings(settings)); setLoad({ kind: 'ready', settings, view: settings });
     }, error => {
       if (id !== requestId.current) return;
       setLoad(error instanceof ServiceError && error.code === 'ADMIN_REQUIRED' ? { kind: 'denied' } : { kind: 'error', message: error instanceof Error ? error.message : 'Please try again.' });
@@ -69,7 +68,7 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
     try {
       const saved = await services.saveRestaurantSettings(result.input);
       if (id !== requestId.current) return;
-      setForm(formFromSettings(saved)); setLoad({ kind: 'ready', settings: saved }); setNotice('Restaurant details saved.');
+      setForm(formFromSettings(saved)); setLoad(current => current.kind === 'ready' ? { kind: 'ready', settings: saved, view: current.view } : current); setNotice('Restaurant details saved.');
     } catch (error) {
       if (id !== requestId.current) return;
       if (error instanceof RestaurantSettingsValidationError) { const next = serverFieldErrors(error.fields); setErrors(next); focusField(next); if (!Object.keys(next).length) setProblem({ kind: 'error', message: error.message }); }
@@ -99,7 +98,6 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
   };
 
   const disabled = load.kind !== 'ready' || saving || problem?.kind === 'conflict' || problem?.kind === 'denied';
-  const prefix = orderPrefix[businessId];
   const readOnlyRow = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}><Text style={muted}>{label}</Text><Text style={{ ...body(14), ...bold, flexShrink: 1, textAlign: 'right' }}>{value}</Text></View>;
 
   return <View style={{ flex: 1 }}>
@@ -121,8 +119,8 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
         <View style={{ flexDirection: 'row', gap: 12 }}>{field('deliveryFee', { money: true })}{field('minOrder', { money: true })}</View>
         <Text style={muted}>Changes apply to new orders. Orders already placed keep the fee they were placed with.</Text>
         <MarketSection>
-          {readOnlyRow('Delivery area', 'Khed and nearby villages')}
-          {readOnlyRow('Order numbers', `${prefix}-YYYYMM0001`)}
+          {readOnlyRow('Delivery area', deliveryAreaText(load.view.deliveryArea))}
+          {readOnlyRow('Order numbers', orderNumberFormat(load.view.orderPrefix))}
           <Text style={muted}>Ask your developer to change these.</Text>
         </MarketSection>
       </> : null}

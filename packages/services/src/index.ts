@@ -6,6 +6,10 @@ export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
 export interface Business { contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
 export interface RestaurantSettings { contactPhone: string | null; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; version: number }
+/** Delivery-area status from the business row (the polygon is never fetched): a verified radius, another verified source, or not verified. */
+export type DeliveryAreaStatus = { kind: 'radius'; radiusM: number } | { kind: 'verified' } | { kind: 'unverified' };
+/** What the owner's Restaurant details screen reads: the editable settings plus developer-controlled facts shown read-only. */
+export interface RestaurantSettingsView extends RestaurantSettings { orderPrefix: string; deliveryArea: DeliveryAreaStatus }
 export interface SaveRestaurantSettingsInput { contactPhone: string; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; expectedVersion: number }
 type SettingsField = keyof SaveRestaurantSettingsInput;
 /** National, trunk-prefixed, or +91 Indian numbers become canonical E.164. */
@@ -76,6 +80,21 @@ function mapRestaurantSettings(value: unknown): RestaurantSettings {
       !Number.isInteger(row.delivery_fee_paise) || (row.delivery_fee_paise as number) < 0 || (row.delivery_fee_paise as number) > 100000 ||
       !Number.isInteger(row.min_order_paise) || (row.min_order_paise as number) < 0 || (row.min_order_paise as number) > 1000000) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant details.');
   return { contactPhone: row.contact_phone as string | null, whatsappPhone: row.whatsapp_phone as string | null, deliveryFeePaise: row.delivery_fee_paise as number, minOrderPaise: row.min_order_paise as number, version: row.settings_version as number };
+}
+/** Strict mapping of the read: the four settings plus order prefix and delivery-area status columns. */
+export function mapRestaurantSettingsView(value: unknown): RestaurantSettingsView {
+  const settings = mapRestaurantSettings(value);
+  const row = value as Record<string, unknown>;
+  const text = (field: unknown) => field === null || field === undefined || typeof field === 'string';
+  if (typeof row.order_prefix !== 'string' || !/^[A-Z][A-Z0-9]{1,9}$/.test(row.order_prefix) || !text(row.service_area_source) || !text(row.service_area_version) || !text(row.service_area_verified_at)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant details.');
+  const source = (row.service_area_source as string | null | undefined)?.trim(), version = (row.service_area_version as string | null | undefined)?.trim();
+  let deliveryArea: DeliveryAreaStatus = { kind: 'unverified' };
+  if (source && version && row.service_area_verified_at) {
+    const radius = version.match(/^radius-([0-9]{3,5})m$/);
+    const metres = radius ? Number(radius[1]) : 0;
+    deliveryArea = metres >= 500 && metres <= 50000 ? { kind: 'radius', radiusM: metres } : { kind: 'verified' };
+  }
+  return { ...settings, orderPrefix: row.order_prefix, deliveryArea };
 }
 
 /** Only constructed after validating an explicit transactional no-order response. */
@@ -372,13 +391,13 @@ export function createMarketServices(options: ServiceOptions) {
     if (!await isAdmin()) throw new ServiceError('ADMIN_REQUIRED', 'Admin membership is required to manage the menu.');
     return business;
   };
-  const getRestaurantSettings = async (): Promise<RestaurantSettings> => {
+  const getRestaurantSettings = async (): Promise<RestaurantSettingsView> => {
     const db = requireClient(), started = generation;
     const business = await requireAdminBusiness();
-    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version').eq('id', business.id).single();
+    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version, order_prefix, service_area_source, service_area_version, service_area_verified_at').eq('id', business.id).single();
     if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details.');
     fail(error, 'Could not load restaurant details');
-    return mapRestaurantSettings(data);
+    return mapRestaurantSettingsView(data);
   };
   const saveRestaurantSettings = async (input: SaveRestaurantSettingsInput): Promise<RestaurantSettings> => {
     const valid = validateRestaurantSettings(input);

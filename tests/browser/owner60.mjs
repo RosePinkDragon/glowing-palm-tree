@@ -20,7 +20,7 @@ try {
   for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
     const admin = await serveWeb(`apps/${slug}-admin/dist/web`), customer = await serveWeb(`apps/${slug}-customer/dist/web`);
     const name = brand ? 'Kokani Dine Inn' : 'Ammu Sammu', prefix = brand ? 'KDI' : 'AMS', businessId = `60600000-0000-4000-8000-00000000000${brand + 1}`, orderId = '60700000-0000-4000-8000-000000000001';
-    const business = { id: businessId, slug, name, delivery_fee_paise: 3000, min_order_paise: 15000, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: '+919820044556', whatsapp_phone: '+919820044556', settings_version: 3 };
+    const business = { id: businessId, slug, name, delivery_fee_paise: 3000, min_order_paise: 15000, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: '+919820044556', whatsapp_phone: '+919820044556', settings_version: 3, order_prefix: prefix, service_area_source: 'owner survey', service_area_version: brand ? 'radius-2500m' : 'radius-12000m', service_area_verified_at: '2026-11-10T00:00:00Z' };
     const order = { id: orderId, order_number: `${prefix}-202611000001`, business_id: businessId, customer_id: users[1].id, status: 'placed', version: 1, created_at: '2026-11-16T06:30:00Z', subtotal_paise: 10000, delivery_fee_paise: 3000, total_paise: 13000, customer_name: 'Synthetic customer', customer_phone: '9876543210', delivery_address_line: 'Synthetic address', order_items: [], order_status_history: [{ status: 'placed', created_at: '2026-11-16T06:30:00Z' }] };
     const saves = [];
     let nextSave = 'ok', gate = null, memberships = 0;
@@ -77,7 +77,7 @@ try {
       assert.equal(await input('Phone number for customers').inputValue(), '+91 98200 44556');
       assert.equal(await input('WhatsApp number (optional)').inputValue(), '+91 98200 44556');
       assert.equal(await input('Delivery fee').inputValue(), '30'); assert.equal(await input('Minimum order').inputValue(), '150');
-      await text('Khed and nearby villages').waitFor(); await text(`${prefix}-YYYYMM0001`).waitFor(); await text('Ask your developer to change these.').waitFor();
+      await text(brand ? '2.5 km around the kitchen' : '12 km around the kitchen').waitFor(); await text(`${prefix}-YYYYMM0001`).waitFor(); await text('Ask your developer to change these.').waitFor();
       assert.equal(await visible(page.getByRole('textbox')).count(), 4, 'delivery area and prefix are not editable');
       assert.equal(await input('Phone number for customers').getAttribute('aria-required'), 'true');
       await shot('normal');
@@ -117,7 +117,7 @@ try {
       const call = visible(guest.page.getByRole('link', { name: new RegExp(`^Call (us, )?${name}$`) }));
       await call.first().waitFor(); assert.equal(await call.first().getAttribute('href'), 'tel:+912223456789');
       // Another owner saved first: refused, the form is kept, Reload shows the latest, nothing is overwritten.
-      Object.assign(business, { delivery_fee_paise: 5500, settings_version: 9 });
+      Object.assign(business, { delivery_fee_paise: 5500, settings_version: 9, service_area_verified_at: null });
       await input('Delivery fee').fill('41'); nextSave = 'conflict';
       await button('Save changes').click();
       await text('Another owner saved changes. Reload to see the latest.').waitFor();
@@ -127,6 +127,7 @@ try {
       await button('Reload').scrollIntoViewIfNeeded(); await shot('conflict');
       await button('Reload').click(); await eventually(async () => await input('Delivery fee').inputValue() === '55');
       assert.equal(await text('Another owner saved changes. Reload to see the latest.').count(), 0);
+      await text('Not set yet — ask your developer').waitFor(); // unverified area from the row
       assert.equal(await button('Save changes').isEnabled(), true); assert.equal(saves.length, 2, 'reload never writes');
       await input('Minimum order').fill('250'); await button('Save changes').click(); await text('Restaurant details saved.').waitFor();
       assert.equal(saves[2].body.p_expected_version, 9); assert.equal(saves[2].body.p_delivery_fee_paise, 5500); assert.equal(business.settings_version, 10);
@@ -134,6 +135,9 @@ try {
       nextSave = 'forbidden'; await input('Minimum order').fill('300'); await button('Save changes').click();
       await text('You no longer have access to change restaurant details.').waitFor(); assert.equal(await button('Save changes').isDisabled(), true);
       // Back returns to Settings.
+      await button('Back to Settings').click(); await button('Log out').waitFor();
+      Object.assign(business, { service_area_version: 'hand-drawn-v2', service_area_verified_at: '2026-11-10T00:00:00Z' });
+      await button('Restaurant details').click(); await text('Set by your developer').waitFor(); await text(`${prefix}-YYYYMM0001`).waitFor();
       await button('Back to Settings').click(); await button('Log out').waitFor();
       // A customer account in the owners' app and the customer app never reach the screen.
       const before = saves.length;

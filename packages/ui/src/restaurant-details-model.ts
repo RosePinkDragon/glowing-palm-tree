@@ -1,4 +1,4 @@
-import { restaurantAmountPaise, RestaurantSettingsValidationError, validateRestaurantSettings, type RestaurantSettings, type SaveRestaurantSettingsInput } from '@market/services';
+import { restaurantAmountPaise, RestaurantSettingsValidationError, validateRestaurantSettings, type DeliveryAreaStatus, type RestaurantSettings, type SaveRestaurantSettingsInput } from '@market/services';
 
 // Pure form model for the owners' Restaurant details screen (#60). Rules come from the services
 // validator, so the screen and the server-side write path can never disagree.
@@ -23,6 +23,13 @@ export function displayPhone(phone: string | null): string {
 export function formFromSettings(settings: RestaurantSettings): DetailsForm {
   return { contactPhone: displayPhone(settings.contactPhone), whatsappPhone: displayPhone(settings.whatsappPhone), deliveryFee: paiseToRupees(settings.deliveryFeePaise), minOrder: paiseToRupees(settings.minOrderPaise) };
 }
+
+/** "12 km around the kitchen" for a radius, otherwise a generic line; never claims an area that is not verified. */
+export function deliveryAreaText(area: DeliveryAreaStatus): string {
+  if (area.kind === 'radius') { const km = area.radiusM / 1000; return `${Number.isInteger(km) ? km : km.toFixed(1).replace(/\.0$/, '')} km around the kitchen`; }
+  return area.kind === 'verified' ? 'Set by your developer' : 'Not set yet — ask your developer';
+}
+export const orderNumberFormat = (prefix: string) => `${prefix}-YYYYMM0001`;
 
 export function firstErrorField(errors: DetailsErrors): DetailsField | null {
   return detailsFieldOrder.find(field => errors[field]) ?? null;

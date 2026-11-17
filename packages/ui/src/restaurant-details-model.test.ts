@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RestaurantSettingsValidationError } from '@market/services';
-import { displayPhone, firstErrorField, formFromSettings, paiseToRupees, serverFieldErrors, validateDetailsForm, type DetailsForm } from './restaurant-details-model.ts';
+import { deliveryAreaText, orderNumberFormat, displayPhone, firstErrorField, formFromSettings, paiseToRupees, serverFieldErrors, validateDetailsForm, type DetailsForm } from './restaurant-details-model.ts';
 
 const form: DetailsForm = { contactPhone: '98200 44556', whatsappPhone: '+91 98200 44556', deliveryFee: '30', minOrder: '150' };
 
@@ -61,4 +61,11 @@ test('loaded settings fill the form, and server field errors map back to form fi
   assert.equal(formFromSettings({ contactPhone: null, whatsappPhone: null, deliveryFeePaise: 0, minOrderPaise: 0, version: 1 }).contactPhone, '');
   assert.equal(displayPhone('+912223456789'), '+91 22234 56789'); assert.equal(displayPhone('garbage'), 'garbage'); assert.equal(displayPhone(null), '');
   assert.deepEqual(serverFieldErrors(new RestaurantSettingsValidationError({ deliveryFeePaise: 'a', minOrderPaise: 'b', contactPhone: 'c', whatsappPhone: 'd' }).fields), { deliveryFee: 'a', minOrder: 'b', contactPhone: 'c', whatsappPhone: 'd' });
+});
+
+test('read-only delivery area and order number text come from the row', () => {
+  for (const [metres, text] of [[12000, '12 km around the kitchen'], [2500, '2.5 km around the kitchen'], [500, '0.5 km around the kitchen'], [50000, '50 km around the kitchen'], [1250, '1.3 km around the kitchen']] as const) assert.equal(deliveryAreaText({ kind: 'radius', radiusM: metres }), text);
+  assert.equal(deliveryAreaText({ kind: 'verified' }), 'Set by your developer');
+  assert.equal(deliveryAreaText({ kind: 'unverified' }), 'Not set yet — ask your developer');
+  assert.equal(orderNumberFormat('KDI'), 'KDI-YYYYMM0001');
 });
