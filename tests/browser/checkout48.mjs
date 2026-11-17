@@ -151,6 +151,20 @@ try {
       assert.equal(orders.length, 1); assert.equal(orders[0].p_delivery.address_id, addressId(1));
       assert.ok(Math.abs(orders[0].p_location.latitude - north(3200).latitude) < 1e-9, 'the phone fix is sent so the server can measure the distance');
 
+      // The total a sheet quotes can't go stale: a cart change closes it, and one made while the phone was still being awaited is caught on confirm.
+      const bumpCart = (by = 1) => page.evaluate(([key, by]) => { const record = JSON.parse(localStorage.getItem(key)); record.revision += 1; record.lines[0].quantity = Math.max(1, record.lines[0].quantity + by); localStorage.setItem(key, JSON.stringify(record)); window.dispatchEvent(new StorageEvent('storage', { key })); }, [`market:cart:${slug}`, by]);
+      await reset(); await context.setGeolocation({ ...north(3200), accuracy: 12 }); await toCart(); await text('Deliver to Home').waitFor();
+      await button('Place order').click(); await text('You\'re 3.2 km from this address').waitFor();
+      await bumpCart(); await text('You\'re 3.2 km from this address').waitFor({ state: 'hidden' });
+      assert.equal(orders.length, 0, 'a cart change closes the sheet without sending');
+      await reset(); await toCart(); await text('Deliver to Home').waitFor();
+      await page.evaluate(() => { navigator.geolocation.getCurrentPosition = () => {}; navigator.geolocation.watchPosition = () => 0; });
+      await button('Place order').click(); await button('Please wait…').waitFor(); await bumpCart();
+      await text('We couldn\'t confirm where you are').waitFor({ timeout: 20000 });
+      await button('Yes, place order').click(); await text('Your total changed. Please check your order and try again.').waitFor();
+      assert.equal(orders.length, 0, 'a stale total is never sent'); assert.equal(await attempt(), null);
+      await bumpCart(-9); await context.grantPermissions(['geolocation']);
+
       // Far away: "not in Khed".
       await reset(); await context.setGeolocation({ latitude: 18.52, longitude: 73.85, accuracy: 12 }); await toCart(); await text('Deliver to Home').waitFor();
       await button('Place order').click(); await text('You\'re not in Khed right now').waitFor();
