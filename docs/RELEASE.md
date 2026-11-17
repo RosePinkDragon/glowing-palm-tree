@@ -126,3 +126,35 @@ Native builds use a separate EAS project per target. The identifiers in `config/
 Create each EAS project and a matching GitHub environment. Add `EXPO_TOKEN` as an environment secret, that project's UUID as the `EAS_PROJECT_ID` environment variable, and `EXPO_OWNER` if needed. The manual workflow maps the ID to `EXPO_PUBLIC_EAS_PROJECT_ID`. Once provider settings and signing credentials are ready, run **Actions → Manual EAS Build**, choosing the app, platform and preview or production profile. No build or store submission starts automatically. Review signing, store metadata, and privacy separately.
 
 Register the four native identifiers with Firebase when native integration is implemented; native push currently requires additional provider integration, development builds, and APNs/FCM setup. Do not commit native provider files or private credentials. See [notification notes](../packages/notifications/README.md).
+
+### Customer relationship foundation (#52, PR A)
+
+Checkout enrolls a never-linked customer in the same transaction under the account lock;
+no client join call is required for a first order. A retained `left` marker distinguishes a
+completed leave from never linked. Checkout refuses `left` and `leave_pending`, including
+replays, without changing the generation. Explicit `services.joinBusiness()` may reactivate
+`left` with a fresh generation/timestamp; pending leave still blocks join. PR B must keep
+the `left` row and never delete it: auto-enrollment cannot distinguish a deleted relationship
+from a never-linked customer. Active replays preserve the existing order, relationship
+generation and timestamp. Enrollment is inserted only immediately before a new order,
+after all pricing checks. Pricing rejections and both replay paths never insert or change
+a relationship. Exceptions roll enrollment back with the order. Corrected pricing retries
+use a fresh idempotency key; the original rejected key remains terminal. Existing orders
+backfill the earliest customer/business timestamp at baseline bootstrap only; never rerun
+backfill after leave becomes available.
+
+`customer_lifecycle_private.accounts` is the durable per-user lock/state row, created
+lazily or by backfill and removed only with the Auth account. The full lock order is
+**users KEY SHARE → sessions SHARE (where validated) → accounts FOR UPDATE → business
+→ advisory checkout key → address/menu/order rows**. `lock_account` takes users KEY SHARE
+before touching accounts, and join takes users KEY SHARE before validating/locking the
+session. This prevents inversion against Auth deletion cascading through sessions/accounts.
+The existing checkout authentication contract is unchanged; join validates the live session.
+Account `deletion_pending` blocks both paths. History remains readable through existing RLS.
+
+PR B, only after A merges, supplies the leave request/receipt, last-business and active-order
+checks, cleanup and `purge_customer_notifications` call. Its order transitions must share
+this account lock before locking orders. It must preserve order snapshots and shared saved
+addresses, fence old retries by generation, and document the device-local cart/preferences
+cleanup and local sign-out handoff. PR A exposes no leave or pending-state mutation API;
+its pending-state tests use trusted fixtures. Admin memberships/tokens are unaffected.
