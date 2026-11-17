@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMarketServices, ServiceError, validateOwnerDisplayName } from './index.ts';
+import { withSupabaseTestEnvironment } from './test-environment.ts';
 
 const owner = '55300000-0000-4000-8000-000000000001', other = '55300000-0000-4000-8000-000000000002';
 const session = '55300000-0000-4000-9000-000000000001', replacement = '55300000-0000-4000-9000-000000000002';
@@ -121,12 +122,12 @@ test('unavailable phone remains null, never substituted; malformed phones fail',
  });
 });
 
-test('invalid names fail before network; guest/customer/demo/disposed/non-member calls fail closed', async () => {
- await fixture(async ({ service, state, create }) => {
+for (const environment of ['unset', 'configured'] as const) test(`invalid names fail before network; guest/customer/demo/disposed/non-member calls fail closed (${environment} env)`, async () => {
+ await withSupabaseTestEnvironment(environment, () => fixture(async ({ service, state, create }) => {
   const before = state.requests.length;
   for (const value of [null, {}, '', ' padded', 'a'.repeat(61)]) await assert.rejects(service.setOwnerDisplayName(value as string), code('INVALID_OWNER_NAME'));
   assert.equal(state.requests.length, before);
-  const guest = create(), customer = create('customer'), demo = createMarketServices({ businessSlug: 'ammu-sammu', audience: 'admin' });
+  const guest = create(), customer = create('customer'), demo = createMarketServices({ businessSlug: 'ammu-sammu', audience: 'admin', config: {} });
   for (const [instance, expected] of [[guest, 'SIGN_IN_REQUIRED'], [customer, 'ADMIN_REQUIRED'], [demo, 'DEMO_MODE']] as const) {
    await assert.rejects(instance.getOwnerProfile(), code(expected)); await assert.rejects(instance.setOwnerDisplayName('Name'), code(expected));
   }
@@ -134,7 +135,7 @@ test('invalid names fail before network; guest/customer/demo/disposed/non-member
   state.membershipResponse = null;
   await assert.rejects(service.getOwnerProfile(), code('ADMIN_REQUIRED')); await assert.rejects(service.setOwnerDisplayName('Name'), code('ADMIN_REQUIRED'));
   assert.equal(state.calls.length, 0);
- });
+ }));
 });
 
 test('strict membership and account mapping rejects malformed or cross-scope responses', async () => {
