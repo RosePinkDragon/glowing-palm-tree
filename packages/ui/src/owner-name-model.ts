@@ -19,13 +19,14 @@ export function ownerNameChanged(raw: string, saved: string | null): boolean {
   return raw.trim() !== (saved ?? '');
 }
 
-/** Map a service failure to what the owner sees. The server's own INVALID_OWNER_NAME message is shown as is. */
+/** Map a service failure to what the owner sees. Only the services' own INVALID_OWNER_NAME copy is shown; anything unknown gets fixed retry text, never a raw error message. */
 export function ownerNameProblem(error: unknown): SaveProblem {
   const code = error instanceof ServiceError ? error.code : '';
-  const message = error instanceof Error && error.message ? error.message : '';
-  if (code === 'INVALID_OWNER_NAME') return { kind: 'invalid', message: message || 'Enter a name of 1 to 60 characters.' };
+  if (code === 'INVALID_OWNER_NAME') return { kind: 'invalid', message: error instanceof Error && error.message ? error.message : 'Enter a name of 1 to 60 characters.' };
   if (code === 'ADMIN_REQUIRED') return { kind: 'denied', message: 'You no longer have access to change your name. Sign in again.' };
   if (code === 'SESSION_CHANGED') return { kind: 'reload', message: 'Your account changed. Reload the app, then try again.' };
-  if (code === 'OWNER_NAME_SAVE_FAILED') return { kind: 'failed', message: 'Could not save your name. Check your connection and try again.' };
-  return { kind: 'failed', message: message || 'Could not save your name. Please try again.' };
+  return { kind: 'failed', message: 'Could not save your name. Check your connection and try again.' };
 }
+
+/** Access and account-change failures lock Save until the app is reloaded; typing must not clear them. */
+export const isSaveLock = (problem: SaveProblem | null): boolean => problem?.kind === 'denied' || problem?.kind === 'reload';

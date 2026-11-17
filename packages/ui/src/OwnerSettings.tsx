@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { MarketIcon } from './MarketIcons';
 import { MarketSwitch } from './MarketSwitch';
@@ -6,7 +6,7 @@ import { MarketGroup, MarketRow } from './MarketList';
 import { messageOf, type useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { ownerInitials } from './owner-navigation';
-import { checkOwnerName, ownerNameChanged, ownerNameProblem, OWNER_NAME_MAX, type SaveProblem } from './owner-name-model';
+import { checkOwnerName, ownerNameChanged, isSaveLock, ownerNameProblem, OWNER_NAME_MAX, type SaveProblem } from './owner-name-model';
 
 type Market = ReturnType<typeof useMarket>;
 
@@ -16,6 +16,9 @@ function OwnerNameSection({ services, saved, onSaved }: { services: Market['serv
   const fonts = useMarketFonts();
   const [value, setValue] = useState(saved ?? '');
   const [problem, setProblem] = useState<SaveProblem | null>(null);
+  // Sticky: access or account changes lock Save until reload; editing the text never clears it.
+  const [lock, setLock] = useState<SaveProblem | null>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
@@ -24,22 +27,28 @@ function OwnerNameSection({ services, saved, onSaved }: { services: Market['serv
   const body = (size = 15) => ({ color: colors.ink, fontSize: size, lineHeight: Math.round(size * 1.45), ...(fonts.body ? { fontFamily: fonts.body } : {}) });
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const fieldError = problem?.kind === 'invalid' ? problem.message : undefined;
-  const banner = problem && problem.kind !== 'invalid' ? problem : null;
-  const locked = problem?.kind === 'denied' || problem?.kind === 'reload';
+  const banner = lock ?? (problem && problem.kind !== 'invalid' ? problem : null);
+  const locked = lock !== null;
   const canSave = !saving && !locked && ownerNameChanged(value, saved);
-  const edit = (text: string) => { setValue(text); setProblem(null); setNotice(''); };
+  const edit = (text: string) => { if (busy.current) return; setValue(text); setProblem(null); setNotice(''); };
   const save = async () => {
     if (busy.current || locked) return;
     setNotice(''); setProblem(null);
     const checked = checkOwnerName(value);
-    if (!checked.ok) { setProblem({ kind: 'invalid', message: checked.message }); return; }
+    if (!checked.ok) { setProblem({ kind: 'invalid', message: checked.message }); setTimeout(() => inputRef.current?.focus(), 0); return; }
     if (!ownerNameChanged(value, saved)) return;
     busy.current = true; setSaving(true);
     try {
       const name = await services.setOwnerDisplayName(checked.name);
       if (!mounted.current) return;
       setValue(name); onSaved(name); setNotice('Your name is saved.');
-    } catch (error) { if (mounted.current) setProblem(ownerNameProblem(error)); }
+    } catch (error) {
+      if (mounted.current) {
+        const next = ownerNameProblem(error);
+        if (isSaveLock(next)) setLock(next); else setProblem(next);
+        if (next.kind === 'invalid') setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    }
     finally { busy.current = false; if (mounted.current) setSaving(false); }
   };
   const errorId = 'owner-name-error', hintId = 'owner-name-hint';
@@ -47,7 +56,7 @@ function OwnerNameSection({ services, saved, onSaved }: { services: Market['serv
     <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Your name</Text>
     <View style={{ backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 12 }}>
       <Text nativeID="owner-name-label" style={{ ...body(15), ...bold }}>Name shown to your team</Text>
-      <TextInput value={value} editable={!saving} onChangeText={edit} onSubmitEditing={() => void save()} maxLength={OWNER_NAME_MAX * 2}
+      <TextInput ref={inputRef} value={value} onChangeText={edit} onSubmitEditing={() => void save()} blurOnSubmit={false} maxLength={OWNER_NAME_MAX * 2}
         accessibilityLabel="Name shown to your team" aria-labelledby="owner-name-label" aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${errorId} ${hintId}` : hintId}
         autoComplete="name" autoCorrect={false} returnKeyType="done"
         style={{ minHeight: 52, borderWidth: fieldError ? 2 : 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14, color: colors.ink, fontSize: 16, ...(fonts.body ? { fontFamily: fonts.body } : {}), ...({ outlineStyle: 'none' } as object) }} />

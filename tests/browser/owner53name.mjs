@@ -16,7 +16,7 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir(shots, { recursive: true });
 const errors = [];
-const invalidMessage = 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.';
+const invalidMessage = 'Enter an owner name of 1 to 60 characters without control or invisible characters.';
 try {
   for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
     const admin = await serveWeb(`apps/${slug}-admin/dist/web`);
@@ -24,7 +24,7 @@ try {
     const business = { id: businessId, slug, name, delivery_fee_paise: 3000, min_order_paise: 15000, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: '+919820044556', whatsapp_phone: '+919820044556', settings_version: 3, order_prefix: prefix, service_area_source: 'owner survey', service_area_version: 'radius-2500m', service_area_verified_at: '2026-11-10T00:00:00Z' };
     const membership = { business_id: businessId, user_id: users[0].id, role: 'admin', display_name: 'Suresh Pawar' };
     const saves = [];
-    let nextSave = 'ok', gate = null;
+    let nextSave = 'ok', gate = null, userDown = false;
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
     try {
       await context.addInitScript(({ slug, value }) => { localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:admin`, JSON.stringify(value)); }, { slug, value: session(users[0]) });
@@ -41,7 +41,7 @@ try {
         assert.equal(origin, api, 'no unconfigured third-party requests');
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
         if (path === '/auth/v1/token') return json(session(users[0]));
-        if (path === '/auth/v1/user') return json(users[0]);
+        if (path === '/auth/v1/user') return userDown ? route.abort('connectionrefused') : json(users[0]);
         if (path === '/rest/v1/businesses') return json(business);
         if (path === '/rest/v1/business_memberships') return json(membership);
         if (['/rest/v1/menu_items', '/rest/v1/menu_categories', '/rest/v1/orders'].includes(path)) return json([]);
@@ -61,6 +61,7 @@ try {
       const button = label => visible(page.getByRole('button', { name: label, exact: true }));
       const input = visible(page.getByLabel('Name shown to your team', { exact: true }));
       const text = label => visible(page.getByText(label, { exact: true }));
+      const focused = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName);
       const section = () => page.getByText('Your name', { exact: true }).first().scrollIntoViewIfNeeded();
       const shot = async (size, file) => { await page.setViewportSize(size); await section(); await page.screenshot({ path: `${shots}/${slug}-owner-name-${file}-${size.width}.png` }); };
       await button('Settings').click();
@@ -75,13 +76,17 @@ try {
       // Invalid (invisible character): the validation message is shown, linked to the field, input kept, nothing sent.
       await input.fill('Suresh​Pawar'); await button('Save name').click();
       await text(invalidMessage).waitFor();
-      assert.equal(await input.getAttribute('aria-invalid'), 'true');
+      assert.equal(await input.getAttribute('aria-invalid'), 'true'); await eventually(async () => await focused() === 'Name shown to your team'); // focus returns to the field
       const described = await input.getAttribute('aria-describedby');
-      assert.match(await page.evaluate(ids => ids.split(' ').map(id => document.getElementById(id)?.textContent ?? '').join(' '), described), /trimmed owner name/);
+      assert.match(await page.evaluate(ids => ids.split(' ').map(id => document.getElementById(id)?.textContent ?? '').join(' '), described), /owner name of 1 to 60/);
       assert.equal(await input.inputValue(), 'Suresh​Pawar'); assert.equal(saves.length, 0);
       await shot({ width: 390, height: 844 }, 'error'); await shot({ width: 1280, height: 800 }, 'error'); await page.setViewportSize({ width: 390, height: 844 });
       // Editing clears the error.
       await input.fill('Suresh P'); assert.equal(await text(invalidMessage).count(), 0);
+      // Account check unreachable (offline): retry copy, not a denial, nothing locked, nothing sent.
+      userDown = true; await button('Save name').click();
+      await text('Could not save your name. Check your connection and try again.').waitFor();
+      assert.equal(saves.length, 0); assert.equal(await button('Save name').isEnabled(), true); assert.equal(await input.inputValue(), 'Suresh P'); userDown = false;
       // Server failure: friendly message, input kept, can retry.
       nextSave = 'failed'; await button('Save name').click();
       await text('Could not save your name. Check your connection and try again.').waitFor();
@@ -100,12 +105,14 @@ try {
       assert.equal(await button('Save name').isDisabled(), true);
       await shot({ width: 390, height: 844 }, 'saved'); await shot({ width: 1280, height: 800 }, 'saved'); await page.setViewportSize({ width: 390, height: 844 });
       // Keyboard: Enter in the field saves a trimmed name.
-      await input.fill('  Suresh Pawar  '); await input.press('Enter'); await eventually(async () => saves.length === 3);
+      await input.focus(); await input.fill('  Suresh Pawar  '); await input.press('Enter'); await eventually(async () => saves.length === 3);
+      await text('Your name is saved.').waitFor(); assert.equal(await focused(), 'Name shown to your team', 'focus stays in the field after Enter saves');
       assert.equal(saves[2].body.p_display_name, 'Suresh Pawar'); await text('Your name is saved.').waitFor();
       // Access removed: told so, input kept, Save locked.
       nextSave = 'forbidden'; await input.fill('Someone Else'); await button('Save name').click();
       await text('You no longer have access to change your name. Sign in again.').waitFor();
       assert.equal(await input.inputValue(), 'Someone Else'); assert.equal(await button('Save name').isDisabled(), true);
+      await input.fill('Another Name'); assert.equal(await button('Save name').isDisabled(), true, 'typing does not lift the lock'); await text('You no longer have access to change your name. Sign in again.').waitFor();
       console.log(`PASS: ${slug} owners' Your name (#53): loaded, empty and invalid-name errors with no request, failure keeps input, exact save body, no double submit, header updated, Enter saves trimmed, access removed`);
     } finally { await context.close(); await admin.close(); }
   }
