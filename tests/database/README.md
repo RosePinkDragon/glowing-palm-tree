@@ -13,3 +13,11 @@ observes real lock waits for concurrent placement replay and stale-version
 transitions, then checks persisted order/event counts and the losing result.
 The feed stays outside Realtime. Cleanup is callable only by trusted code; these
 tests install no pg_cron and configure no scheduler or remote Supabase project.
+
+`owner-display-name.sql` verifies the private definer/public invoker boundary,
+minimal grants, self/restaurant scope, active sessions, the unchanged Unicode
+name constraint and immutable history snapshots. `owner-display-name-races.sh`
+observes real PostgreSQL lock waits in both rename/transition orderings, then
+checks persisted step names. It also races membership revocation and session
+expiry against a waiting rename. Both suites run in the final-schema pass for
+both PostGIS layouts; they do not contact a remote project.
