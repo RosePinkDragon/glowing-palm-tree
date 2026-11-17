@@ -9,6 +9,31 @@ do $$ declare ns text; ok boolean; begin
   execute format('select count(*) filter (where kitchen_location is not null and %1$I.st_distance(kitchen_location::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1$I.geography) < 1) = 2 from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into ok;
   perform public.test_assert(ok, 'owner-supplied kitchen points installed');
 end $$;
+-- Launch setup (docs/RELEASE.md step 5) on the seeded rows: the same kitchen-point updates (as the owning
+-- role, like the Supabase SQL editor) and set_delivery_radius calls (as service_role), then a point 11.9 km out is covered and 12.1 km is not.
+select set_config('test.pg_ns', (select n.nspname from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis'), true);
+select public.test_assert((select bool_and(service_area is null and not ordering_enabled) from public.businesses where slug in ('ammu-sammu','kokani-dine-inn')),'seeded rows start without a delivery area');
+create temp table test_radius_before as select slug, ordering_enabled, accepting_orders from public.businesses where slug in ('ammu-sammu','kokani-dine-inn');
+grant select on test_radius_before to service_role;
+do $$ begin
+  execute format('update public.businesses set kitchen_location = %1$I.st_setsrid(%1$I.st_makepoint(73.3944946, 17.7190154), 4326) where slug = ''ammu-sammu''', current_setting('test.pg_ns'));
+  execute format('update public.businesses set kitchen_location = %1$I.st_setsrid(%1$I.st_makepoint(73.3988110, 17.7197215), 4326) where slug = ''kokani-dine-inn''', current_setting('test.pg_ns'));
+end $$;
+set role service_role;
+select public.set_delivery_radius('ammu-sammu', 12000, 'Owner decision 16 Nov 2026: deliver within 12 km of the kitchen');
+select public.set_delivery_radius('kokani-dine-inn', 12000, 'Owner decision 16 Nov 2026: deliver within 12 km of the kitchen');
+reset role;
+do $$ declare ns text := current_setting('test.pg_ns'); ok boolean; s text; begin
+  foreach s in array array['ammu-sammu','kokani-dine-inn'] loop
+    execute format('select %1$I.st_covers(b.service_area::%1$I.geography, %1$I.st_project(b.kitchen_location::%1$I.geography, 11900, radians(90))) and %1$I.st_covers(b.service_area::%1$I.geography, %1$I.st_project(b.kitchen_location::%1$I.geography, 11900, radians(225)))
+        and not %1$I.st_covers(b.service_area::%1$I.geography, %1$I.st_project(b.kitchen_location::%1$I.geography, 12100, radians(90))) and not %1$I.st_covers(b.service_area::%1$I.geography, %1$I.st_project(b.kitchen_location::%1$I.geography, 12100, radians(315)))
+        from public.businesses b where b.slug = $1', ns) into ok using s;
+    perform public.test_assert(ok, 'radius area covers 11.9 km and excludes 12.1 km from the kitchen: '||s);
+  end loop;
+end $$;
+select public.test_assert((select bool_and(service_area_source='Owner decision 16 Nov 2026: deliver within 12 km of the kitchen' and service_area_version='radius-12000m' and service_area_verified_at is not null and service_area_verified_at<=now()) from public.businesses where slug in ('ammu-sammu','kokani-dine-inn')),'set_delivery_radius records source, version radius-12000m and verification time');
+select public.test_assert((select bool_and(b.ordering_enabled=t.ordering_enabled and b.accepting_orders=t.accepting_orders and not b.ordering_enabled) from public.businesses b join test_radius_before t using (slug)),'set_delivery_radius leaves ordering_enabled and accepting_orders unchanged');
+drop table test_radius_before;
 -- Fictional test geography only: a 0..1 degree square with the kitchen in the middle.
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
