@@ -6,8 +6,8 @@ export type MarketTheme = {
   name: string;
   /** Customer order status header (#47): Ammu Sammu uses a status pill on the page, Kokani Dine Inn a dark band. */
   statusHeader: 'pill' | 'band';
-  /** Customer menu layout (#39): Ammu Sammu a searchable 2-column photo grid; Kokani Dine Inn keeps the dish list until its own redesign. */
-  menuLayout: 'photo-grid' | 'list';
+  /** Customer menu layout (#39): Ammu Sammu a searchable 2-column photo grid; Kokani Dine Inn a signature carousel on a dark header and a text à la carte list with dotted price leaders. */
+  menuLayout: 'photo-grid' | 'carta';
   /** How the restaurant speaks in customer copy: by name ("Call Ammu Sammu") or as "we" ("Call us", "our kitchen"). */
   voice: 'restaurant' | 'we';
   /** Line above a receipt total: Ammu Sammu dashed, Kokani Dine Inn solid. */
@@ -36,7 +36,7 @@ export const marketThemes: Record<BusinessSlug, MarketTheme> = {
     colors: { background: '#FFF8F0', surface: '#FFFFFF', ink: '#332522', muted: '#6E5750', primary: '#A83E32', onPrimary: '#FFFFFF', accent: '#F3AA8E', border: '#E9D7CC', inputBorder: '#6E5750', tint: '#FCE5D9', danger: '#A12828', switchOn: '#2E7D32', switchOff: '#857873', positive: '#1F5B37', positiveTint: '#E3F1E7', neutralTint: '#ECE6E2', warning: '#7A4B00', warningTint: '#FFF1D6', band: '#A83E32', bandAccent: '#FCE5D9', bandMuted: '#5E4E49', bandMutedAccent: '#F1E7E3', updatesTint: '#F6E9E2', updatesIcon: '#A83E32', notice: '#2E211E', onNotice: '#FFFFFF' },
   },
   'kokani-dine-inn': {
-    businessId: 'kokani-dine-inn', name: businesses['kokani-dine-inn'].name, statusHeader: 'band', menuLayout: 'list', voice: 'we', receiptRule: 'solid',
+    businessId: 'kokani-dine-inn', name: businesses['kokani-dine-inn'].name, statusHeader: 'band', menuLayout: 'carta', voice: 'we', receiptRule: 'solid',
     colors: { background: '#F8F5EA', surface: '#FFFFFF', ink: '#1E3431', muted: '#526A64', primary: '#165C54', onPrimary: '#FFFFFF', accent: '#C8B47C', border: '#D7DFD6', inputBorder: '#526A64', tint: '#DDECE5', danger: '#A12828', switchOn: '#2E7D32', switchOff: '#857873', positive: '#1F5B37', positiveTint: '#E3F1E7', neutralTint: '#E6EAE4', warning: '#7A4B00', warningTint: '#FFF1D6', band: '#10302B', bandAccent: '#C6AC70', bandMuted: '#3B4A46', bandMutedAccent: '#DCE3E0', updatesTint: '#ECE6D6', updatesIcon: '#8A6D2F', notice: '#C8B47C', onNotice: '#10302B' },
   },
 };

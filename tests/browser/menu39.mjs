@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
-// #39 slice 2: Ammu Sammu photo-grid menu (search, Today's special, add -> stepper, category chips) plus a Kokani sanity pass.
+// #39 slice 2: Ammu Sammu photo-grid menu (search, Today's special, add -> stepper, category chips) plus a Kokani sanity pass (its menu is tested in kokani39.mjs).
 // Synthetic fixtures only. Set SHOTS_DIR to also write screenshots.
 const api = 'https://market-fixture.supabase.co';
 const shots = process.env.SHOTS_DIR;
@@ -55,19 +55,16 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
   const settle = async (page, handle) => { let last = -1; for (let i = 0; i < 40; i++) { const now = await handle.evaluate(node => node.scrollTop); if (now === last) return now; last = now; await page.waitForTimeout(150); } return last; };
   try {
     if (brand) {
-      // Kokani keeps its list until slice 3: no search, no photo grid, still orderable.
+      // Kokani's own menu (carousel, a la carte list) is covered by kokani39.mjs; here: still no search and still orderable.
       const { context, page } = await open({ width: 390, height: 844 });
-      await page.getByRole('button', { name: 'All dishes', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'À la carte', level: 2 }).waitFor();
       assert.equal(await page.getByLabel('Search dishes').count(), 0);
       assert.equal(await page.getByRole('heading', { name: 'Signature dishes', exact: true }).count(), 1);
-      await page.locator('#regular-menu').getByText('Veg thali', { exact: true }).waitFor();
       await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click();
       await page.getByRole('button', { name: /^Cart \(1\)/ }).waitFor();
-      await shot(page, 'menu-top-mobile-390x844');
-      await page.setViewportSize({ width: 1280, height: 800 }); await shot(page, 'menu-top-desktop-1280x800');
       assert.deepEqual(errors, []);
       await context.close();
-      console.log('PASS: kokani-dine-inn menu unchanged: category filter, no search, add to cart');
+      console.log('PASS: kokani-dine-inn menu has no search and can add to cart');
       continue;
     }
     for (const [label, viewport] of [['mobile-390x844', { width: 390, height: 844 }], ['desktop-1280x800', { width: 1280, height: 800 }]]) {

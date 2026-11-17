@@ -121,3 +121,5 @@ export function activeSectionId(tops: readonly { id: string; top: number }[], pr
 }
 /** Dish grid columns: two on phones (design), more as the screen widens. */
 export function gridColumns(width: number): number { return width >= 1000 ? 4 : width >= 760 ? 3 : 2; }
+/** Signature carousel card width: about two-thirds of the column so the next card peeks in (swipe cue), within 220-280. */
+export function carouselCardWidth(contentWidth: number): number { return Math.max(220, Math.min(280, Math.round(contentWidth * 0.62))); }

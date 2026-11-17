@@ -17,15 +17,14 @@ import { requestLocation } from './location';
 import { messageOf, useMarket } from './useMarket';
 import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { CustomerHistory, CustomerOrderDetail, type ReorderAction } from './CustomerOrders';
-import { featuredLabel, featuredMenuItems, sortMenuItems } from './menu-model';
-import { DietMark } from './DietMark';
 import { useCustomerCart } from './useCustomerCart';
 import { PricingChangedError, ServiceError } from '@market/services';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
 import { RevisedPricing } from './RevisedPricing';
 import { cartKey, readCart } from './cart-state';
-import { DishPhoto } from './DishPhoto';
-import { PhotoMenu, type MenuViewport } from './CustomerMenu';
+import { DietMark } from './DietMark';
+import { CartaHeader } from './CustomerCarta';
+import { MenuBody, type MenuViewport } from './CustomerMenu';
 import { DishDetails } from './DishDetails';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ReorderPanel } from './ReorderPanel';
@@ -43,7 +42,6 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const [viewportRevision, setViewportRevision] = useState(0);
   const closeDish = () => { setSelectedDish(null); restorePanelFocus(dishTrigger.current); };
   useEffect(() => { setSelectedDish(null); }, [businessId, market.identityVersion]);
-  const [category, setCategory] = useState<string | null>(null);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null); const viewportListener = useRef<((viewport: MenuViewport) => void) | null>(null);
   const navigation = useRef<{ go: (path: string) => void; login: (next: string) => void } | null>(null);
   const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading);
@@ -86,10 +84,6 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const locked = !!quote || !!market.attempt || !market.attemptReady || !!market.storageError || !draft.ready || draft.saving || !!draft.cartError;
   const unavailable = cart.some(line => !line.item.isAvailable && !line.item.isDemo);
   const subtotal = cartSubtotalPaise(cart.filter(line => line.item.isAvailable || line.item.isDemo));
-  const orderedMenu = sortMenuItems(draft.menu);
-  const featured = featuredMenuItems(draft.menu);
-  const categories = [...new Map(orderedMenu.map(item => [item.categoryId, { id: item.categoryId, name: item.category }])).values()];
-  useEffect(() => { if (category !== null && !market.loading && !draft.menu.some(item => item.categoryId === category)) setCategory(null); }, [category, market.loading, draft.menu]);
   const changeCart = (fn: (lines: CartLine[]) => CartLine[], adding = false) => { void draft.changeCart(lines => { if (adding) requireOrdering(); return fn(lines); }).then(() => setLocalError('')).catch(e => setLocalError(messageOf(e))); };
   const send = async (saved: CheckoutAttempt) => {
     if (market.identity.current.userId !== saved.userId) { navigation.current?.login('/cart'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;
@@ -215,40 +209,26 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!applied || !sameIdentity(started, market.identity.current)) throw new Error('Your cart or account changed. Review it before adding this dish.');
     setLocalError('');
   };
-  const renderMenuItem = (item: MenuItem) => <View key={item.id} style={{ width: width >= 760 ? '48%' : '100%' }}><MarketCard>
-    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => openDish(item)} style={{ gap: 12 }}>
-      <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} viewportRevision={viewportRevision} />
-    </Pressable>
-    <MarketText variant="eyebrow">{item.category}{item.isDemo ? ' · Example' : ''}</MarketText>
-    <Text accessibilityRole="header" onPress={() => openDish(item)} style={{ fontSize: 22, lineHeight: 29, color: colors.ink, fontWeight: '700' }}>{item.name}</Text>
-    <DietMark diet={item.diet} />{item.isFeatured ? <MarketText variant="eyebrow">{featuredLabel(businessId, 'customer')}</MarketText> : null}
-    <MarketText variant="muted">{item.description}</MarketText><MarketText>{item.isDemo ? 'Example price: ' : ''}{money(item.pricePaise)}</MarketText>
-    {orderingAllowed ? <MarketButton label={demo || item.isDemo ? 'Add example to cart' : item.isAvailable ? 'Add to cart' : 'Unavailable'} disabled={(!item.isAvailable && !demo && !item.isDemo) || locked} onPress={() => changeCart(lines => addCartItem(lines, item), true)} /> : null}
-  </MarketCard></View>;
-  const photoMenu = menuLayout === 'photo-grid';
   const removeOne = (item: MenuItem) => changeCart(lines => { const current = lines.find(line => line.item.id === item.id); return !current ? lines : current.quantity > 1 ? setCartItemQuantity(lines, item.id, current.quantity - 1) : removeCartItem(lines, item.id); });
-  const render = (page: CustomerScreen, orderId?: string) => <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" scrollEventThrottle={64} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Menu') viewportListener.current?.({ y: event.nativeEvent.contentOffset.y, height: event.nativeEvent.layoutMeasurement.height, contentHeight: event.nativeEvent.contentSize.height }); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: width >= 760 ? 40 : 20, paddingVertical: 28, gap: 24 }}>
+  const carta = menuLayout === 'carta', edge = width >= 760 ? 40 : 20;
+  const facts = market.business ? [market.business.minOrderPaise > 0 ? `Min. order ${money(market.business.minOrderPaise)}` : '', `Delivery ${money(market.business.deliveryFeePaise)}`, 'Cash on delivery'].filter(Boolean).join(' · ') : '';
+  const menuProps = { items: draft.menu, cart, contentWidth: Math.min(width, 1120) - 2 * edge, orderingAllowed, demo, locked, viewportRevision, onOpen: openDish, onAdd: (item: MenuItem) => changeCart(lines => addCartItem(lines, item), true), onRemove: removeOne };
+  const render = (page: CustomerScreen, orderId?: string) => <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" scrollEventThrottle={64} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Menu') viewportListener.current?.({ y: event.nativeEvent.contentOffset.y, height: event.nativeEvent.layoutMeasurement.height, contentHeight: event.nativeEvent.contentSize.height }); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: edge, paddingTop: carta && page === 'Menu' ? 0 : 28, paddingBottom: 28, gap: 24 }}>
 
-    {page === 'Menu' && photoMenu ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{market.business ? <MarketText variant="muted">{[market.business.minOrderPaise > 0 ? `Min. order ${money(market.business.minOrderPaise)}` : '', `Delivery ${money(market.business.deliveryFeePaise)}`, 'Cash on delivery'].filter(Boolean).join(' · ')}</MarketText> : null}</View> : null}
+    {page === 'Menu' && carta ? <CartaHeader name={name} {...menuProps} edge={width >= 760 ? 0 : edge} /> : null}
+    {page === 'Menu' && !carta ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{facts ? <MarketText variant="muted">{facts}</MarketText> : null}</View> : null}
 
-    {!(page === 'Menu' && photoMenu) && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
+    {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
     {!demo && (page === 'Menu' || page === 'Cart') ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
     {market.notice ? <MarketText>{market.notice}</MarketText> : null}
     {draft.cartError ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger }}>{draft.cartError}</Text><MarketButton label="Retry saved cart" variant="secondary" onPress={() => { void draft.retryCart().catch(() => {}); }} /><MarketButton label="Start new cart" variant="secondary" onPress={() => { void draft.resetCart().catch(() => {}); }} /></MarketCard> : null}
-    {(market.error && (market.error !== market.catalogError || (page !== 'Menu' && page !== 'Cart'))) || market.storageError || (localError && !(page === 'Menu' && photoMenu) && (page !== 'Cart' || !cart.length)) ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{market.storageError || localError || market.error}</Text>{market.error ? <MarketButton label="Retry loading" variant="secondary" onPress={() => void market.load()} /> : null}</MarketCard> : null}
+    {(market.error && (market.error !== market.catalogError || (page !== 'Menu' && page !== 'Cart'))) || market.storageError || (localError && !(page === 'Menu') && (page !== 'Cart' || !cart.length)) ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{market.storageError || localError || market.error}</Text>{market.error ? <MarketButton label="Retry loading" variant="secondary" onPress={() => void market.load()} /> : null}</MarketCard> : null}
     {market.storageError ? <MarketText>Saved checkout state is unavailable. Ordering is paused to avoid creating a duplicate order.</MarketText> : null}
     {market.attempt ? <MarketCard><MarketText variant="heading">Order awaiting confirmation</MarketText><MarketText>Your previous order may have been received. Retry the same request to recover its result before changing the cart or placing another order.</MarketText>{market.authReady && market.session?.user.id === market.attempt.userId ? market.attempt.lines.map(line => <View key={line.item.id} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.item.name} · {money(line.item.pricePaise * line.quantity)}</MarketText><DietMark diet={line.item.diet} /></View>) : null}<MarketButton label={busy ? 'Checking…' : 'Retry order recovery'} disabled={busy} onPress={retry} /></MarketCard> : null}
     {quote ? <RevisedPricing quote={quote} busy={busy || !!market.attempt || !draft.ready} orderingAllowed={orderingAllowed} accept={acceptRevision} edit={editRevision} /> : null}
-    {page === 'Menu' && photoMenu ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <PhotoMenu businessId={businessId} items={draft.menu} cart={cart} contentWidth={Math.min(width, 1120) - 2 * (width >= 760 ? 40 : 20)} bleed={width >= 760 ? 40 : 20} orderingAllowed={orderingAllowed} demo={demo} locked={locked} viewportRevision={viewportRevision} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} onOpen={openDish} onAdd={item => changeCart(lines => addCartItem(lines, item), true)} onRemove={removeOne} />) : null}
-    {page === 'Menu' && !photoMenu ? <View style={{ gap: 20 }}>
-      {!market.loading && featured.length ? <View nativeID="featured-menu" style={{ gap: 16 }}><Text accessibilityRole="header" style={{ fontSize: 22, lineHeight: 29, color: colors.ink, fontWeight: '700' }}>{featuredLabel(businessId, 'customer')}</Text><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>{featured.map(renderMenuItem)}</View></View> : null}
-      <MarketText variant="heading">Our menu</MarketText>
-      {market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{[{ id: null, name: 'All dishes' }, ...categories].map(item => <Pressable key={item.id ?? 'all-dishes'} accessibilityRole="button" aria-pressed={category === item.id} accessibilityState={{ selected: category === item.id }} onPress={() => setCategory(item.id)} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 14, backgroundColor: category === item.id ? colors.primary : colors.tint }}><Text style={{ color: category === item.id ? colors.onPrimary : colors.primary, fontWeight: '700' }}>{item.name}</Text></Pressable>)}</View>
-      <View nativeID="regular-menu" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>{orderedMenu.filter(item => category === null || item.categoryId === category).map(item => renderMenuItem(item))}</View>
-      {!market.menu.length ? <MarketStatus kind="empty" title="No menu items yet" message="Please check back later." /> : null}</>}
-    </View> : null}
+    {page === 'Menu' ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <MenuBody variant={menuLayout} facts={facts} businessId={businessId} {...menuProps} bleed={edge} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} />) : null}
     {page === 'Cart' ? <CartPage demo={demo} cartMessage={cartMessage} ready={draft.ready} cartError={draft.cartError} cart={cart} locked={locked} orderingAllowed={orderingAllowed} hasUnavailable={unavailable}
       subtotalPaise={subtotal} deliveryFeePaise={market.business?.deliveryFeePaise ?? 0} minOrderPaise={market.business?.minOrderPaise ?? 0} details={details} setDetails={setDetails} addrs={addrs}
       placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
