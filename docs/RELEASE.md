@@ -126,3 +126,29 @@ Native builds use a separate EAS project per target. The identifiers in `config/
 Create each EAS project and a matching GitHub environment. Add `EXPO_TOKEN` as an environment secret, that project's UUID as the `EAS_PROJECT_ID` environment variable, and `EXPO_OWNER` if needed. The manual workflow maps the ID to `EXPO_PUBLIC_EAS_PROJECT_ID`. Once provider settings and signing credentials are ready, run **Actions → Manual EAS Build**, choosing the app, platform and preview or production profile. No build or store submission starts automatically. Review signing, store metadata, and privacy separately.
 
 Register the four native identifiers with Firebase when native integration is implemented; native push currently requires additional provider integration, development builds, and APNs/FCM setup. Do not commit native provider files or private credentials. See [notification notes](../packages/notifications/README.md).
+
+### Customer relationship foundation (#52, PR A)
+
+Customer login integration must explicitly call `services.joinBusiness()` before enabling
+checkout. This backend-only slice provides the contract; screen/Auth callback wiring is a
+separate client delivery. Do not auto-join from `placeOrder` or its recovery path. Existing
+orders backfill one relationship per customer/business with the earliest order timestamp;
+no-order accounts join explicitly. The baseline backfill is bootstrap-only and must never
+be rerun after leave becomes available. Existing relationships/generations are preserved.
+
+`customer_lifecycle_private.accounts` is the durable per-user lock/state row. Its row is
+created lazily (or by backfill), survives relationship deletion and is removed only with
+the Auth account. Trusted lifecycle writers must acquire it before inspecting or mutating
+relationships. Lock order is session (where validated), account, business, checkout key,
+then address/menu/order rows. The existing checkout authentication contract is unchanged;
+join validates/locks the live Auth session. Checkout requires an active relationship even
+for an idempotency replay; retained history reads continue through existing order RLS.
+No relationship is created by checkout. Account `deletion_pending` blocks both join and
+checkout; a relationship's `leave_pending` blocks both for that business only.
+
+PR B, only after A merges, supplies the leave request/receipt, last-business and active-order
+checks, cleanup and `purge_customer_notifications` call. Its order transitions must share
+this account lock before locking orders. It must preserve order snapshots and shared saved
+addresses, fence old retries by generation, and document the device-local cart/preferences
+cleanup and local sign-out handoff. PR A exposes no leave or pending-state mutation API;
+its pending-state tests use trusted fixtures. Admin memberships/tokens are unaffected.

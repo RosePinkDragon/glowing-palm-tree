@@ -69,6 +69,14 @@ export interface NotificationPageOptions { cursor?: OrderCursor | null; limit?: 
 export interface NotificationPage { notifications: CustomerNotification[]; nextCursor: OrderCursor | null }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
+export interface CustomerBusinessRelationship {
+  customerId: string;
+  businessId: string;
+  generation: string;
+  joinedAtISO: string;
+  state: 'active';
+}
+
 export class ServiceError extends Error {
   readonly code: string;
   override readonly cause?: unknown;
@@ -204,6 +212,13 @@ const ADDRESS_CHANGED_SQLSTATE = 'PT412';
 const addressChanged = (cause?: unknown) => new ServiceError('ADDRESS_CHANGED', 'This address was changed or removed, maybe in the other app. Check it and try again.', cause);
 
 /** The storage key is isolated by backend, business and audience. */
+// Lifecycle conflicts have distinct details; unrelated PT409 errors retain their existing mapping.
+function lifecycleError(error: { code?: string; details?: string | null } | null): void {
+  if (error?.code === 'PT403' && error.details === 'BUSINESS_JOIN_REQUIRED') throw new ServiceError('BUSINESS_JOIN_REQUIRED', 'Join this restaurant before placing an order.', error);
+  if (error?.code === 'PT409' && error.details === 'BUSINESS_LIFECYCLE_PENDING') throw new ServiceError('BUSINESS_LIFECYCLE_PENDING', 'Your restaurant relationship is being updated. Retry when it finishes.', error);
+  if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'Your account is being updated. Retry when it finishes.', error);
+}
+
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
   return `market:${encodeURIComponent(url.replace(/\/+$/, ''))}:${slug}:${audience}`;
 }
@@ -457,6 +472,52 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const markAllNotificationsRead = () => notificationCount('mark_all_customer_notifications_read');
   const getUnreadNotificationCount = () => notificationCount('customer_notification_unread_count');
+  // Join is explicit: login/screen integration calls this before enabling checkout. Never
+  // auto-join from a placement retry, which could undo a completed leave in another tab.
+  const joinBusiness = async (): Promise<CustomerBusinessRelationship> => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to join a restaurant.');
+    const initial = await db.auth.getSession();
+    const token = initial.data.session?.access_token;
+    const expected = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Retry joining.');
+    if (initial.error || !token || !expected || !orderIdPattern.test(expected.userId) || !orderIdPattern.test(expected.sessionId) || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in before joining.');
+    const ensureCurrent = async () => {
+      const current = await db.auth.getSession();
+      const identity = current.data.session?.access_token ? sessionIdentity(current.data.session.access_token) : null;
+      if (disposed || generation !== started || current.error || !identity || current.data.session?.user.id !== expected.userId ||
+          identity.userId !== expected.userId || identity.sessionId !== expected.sessionId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Retry joining.');
+    };
+    try {
+      const verified = await db.auth.getUser(token);
+      await ensureCurrent();
+      if (verified.error) {
+        const status = verified.error.status;
+        if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in before joining.', verified.error);
+        throw new ServiceError('BUSINESS_JOIN_FAILED', 'Could not verify your account.', verified.error);
+      }
+      if (verified.data.user?.id !== expected.userId) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm your account.');
+      const business = await getBusiness();
+      await ensureCurrent();
+      if (!orderIdPattern.test(business.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid restaurant.');
+      const { data, error } = await db.rpc('join_business', { p_business_slug: slug }).setHeader('Authorization', `Bearer ${token}`);
+      await ensureCurrent();
+      if (error?.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in again before joining.', error);
+      if (error?.code === '22023' && error.details === 'INVALID_BUSINESS') throw new ServiceError('INVALID_BUSINESS', 'This restaurant is unavailable.', error);
+      lifecycleError(error);
+      if (error) throw new ServiceError('BUSINESS_JOIN_FAILED', 'Could not join this restaurant.', error);
+      if (!data || typeof data !== 'object' || Array.isArray(data) || data.customer_id !== expected.userId || data.business_id !== business.id ||
+          typeof data.generation !== 'string' || !orderIdPattern.test(data.generation) || data.state !== 'active' ||
+          !validOrderCursor({ id: data.generation, createdAtISO: data.joined_at })) {
+        throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid restaurant relationship.');
+      }
+      return { customerId: data.customer_id, businessId: data.business_id, generation: data.generation, joinedAtISO: data.joined_at, state: 'active' };
+    } catch (error) {
+      await ensureCurrent();
+      if (error instanceof ServiceError) throw error;
+      throw new ServiceError('BUSINESS_JOIN_FAILED', 'Could not join this restaurant.', error);
+    }
+  };
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
     async signIn(email: string, password: string) { const { data, error } = await requireClient().auth.signInWithPassword({ email, password }); fail(error, 'Could not sign in'); return data; },
@@ -721,6 +782,7 @@ export function createMarketServices(options: ServiceOptions) {
     const p_delivery = { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version };
     // Retries must send this exact payload: the server's request hash covers delivery and location.
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
+    lifecycleError(error);
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
     if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
@@ -847,7 +909,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
