@@ -1,25 +1,4 @@
 \set ON_ERROR_STOP on
-\if :{?before_migration}
--- Historical upgrade fixture: timestamp ties, India-local year/month boundary,
--- both brands, and a full month which exceeds the four-digit display minimum.
-insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,location_accuracy,location_captured_at,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash,created_at)
-select md5('number-backfill-'||n)::uuid,'10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001','Backfill','123','Test',0.5,0.5,10,now(),1,0,1,md5('number-backfill-key-'||n)::uuid,'test',
-  case when n=10003 then '2001-12-31 18:29:59+00'::timestamptz when n=10004 then '2001-12-31 18:30:00+00'::timestamptz else '2001-10-31 18:30:00+00'::timestamptz end
-from generate_series(1,10004) n;
-insert into public.orders(business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,location_accuracy,location_captured_at,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash,created_at)
-values ('10000000-0000-4000-8000-000000000002','30000000-0000-4000-8000-000000000001','Backfill','123','Test',0.5,0.5,10,now(),1,0,1,gen_random_uuid(),'test','2001-10-31 18:30:00+00');
-create table public.test_number_backfill_expected as
-with rows as (select id,business_id,created_at,to_char(created_at at time zone 'Asia/Kolkata','YYYYMM') ym,
-  row_number() over(partition by business_id,to_char(created_at at time zone 'Asia/Kolkata','YYYYMM') order by created_at,id) n from public.orders)
-select id,business_id,created_at,ym,n,(case business_id when '10000000-0000-4000-8000-000000000001'::uuid then 'AMS' else 'KDI' end)||'-'||ym||lpad(n::text,greatest(4,length(n::text)),'0') expected from rows;
-\elif :{?backfill_only}
--- Upgrade-only (retired with the staged loop in S4): the migration backfilled historical orders deterministically.
-begin;
-select public.test_assert(not exists(select 1 from public.test_number_backfill_expected e join public.orders o using(id) where o.order_number<>e.expected or o.created_at<>e.created_at), 'deterministic historical backfill preserves timestamp and id');
-select public.test_assert((select count(*)=10002 and max(length(order_number))=15 from public.orders where order_number like 'AMS-200111%'), 'backfill beyond 9999 is not truncated');
-select public.test_assert(not exists(select 1 from (select business_id,ym,max(n) n from public.test_number_backfill_expected group by business_id,ym) e left join public.order_number_counters c on c.business_id=e.business_id and c.year_month=e.ym where c.last_number is distinct from e.n),'counter seeds equal highest backfilled sequence');
-rollback;
-\else
 begin;
 create or replace function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %',message; end if; end $$;
 select public.test_assert(not has_table_privilege('authenticated','public.order_number_counters','select,insert,update,delete') and not has_table_privilege('anon','public.order_number_counters','select,insert,update,delete'),'counter table inaccessible to clients');
@@ -32,8 +11,8 @@ insert into public.customer_addresses(customer_id,label,house,street_area,latitu
 create function public.test_number_insert(slug text, placed timestamptz) returns text language plpgsql as $$
 declare result text;
 begin
-  insert into public.orders(business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,location_accuracy,location_captured_at,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash,created_at)
-  select id,'34700000-0000-4000-8000-000000000001','Number test','123','Test',0.5,0.5,10,now(),1,0,1,gen_random_uuid(),'test',placed from public.businesses where businesses.slug=test_number_insert.slug returning order_number into result;
+  insert into public.orders(business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,address_label,address_house,address_street_area,address_location_source,saved_address_id,saved_address_version,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash,created_at)
+  select id,'34700000-0000-4000-8000-000000000001','Number test','123','Test',0.5,0.5,'home','Test','Test','pin',gen_random_uuid(),1,1,0,1,gen_random_uuid(),'test',placed from public.businesses where businesses.slug=test_number_insert.slug returning order_number into result;
   return result;
 end $$;
 -- Service-role maintenance has always been allowed to insert orders. Allocation
@@ -89,4 +68,3 @@ select public.test_assert(public.test_number_place('64700000-0000-4000-8000-0000
 select public.test_assert(public.test_number_place('64700000-0000-4000-8000-000000000002',current_setting('test.number.quote')::jsonb)->>'order_number'=current_setting('test.number.placed')::jsonb->>'order_number','successful replay precedes repricing');
 reset role;
 rollback;
-\endif

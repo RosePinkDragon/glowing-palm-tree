@@ -16,7 +16,7 @@ select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001'
 select public.test_assert((select count(*) = 1 from public.orders) and (select count(*) = 1 from public.order_items) and (select count(*) = 1 from public.order_status_history), 'customer A visibility');
 select public.test_assert(not public.is_business_admin('10000000-0000-4000-8000-000000000001'), 'customer not admin');
 -- device-a is customer A's pre-session (legacy) token from final-fixture.sql. Raw device writes are revoked since
--- the notification migration, so every direct insert is refused; registration goes through register_device_token.
+-- the baseline, so every direct insert is refused; registration goes through register_device_token.
 select public.test_assert((select count(*) = 1 and min(token) = 'device-a' from public.device_tokens), 'customer A sees only own device token');
 do $$ begin
   begin insert into public.device_tokens(user_id,business_id,audience,token) values ('30000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','customer','raw-own'); raise exception 'raw own device insert accepted'; exception when insufficient_privilege then null; end;

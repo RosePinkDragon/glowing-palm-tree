@@ -3,7 +3,7 @@
 -- area/distance, and saved-pin checkout with immutable snapshots. Rolled back.
 begin;
 create or replace function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %',message; end if; end $$;
--- Owner-supplied kitchen points are installed (by migration or seed), within a metre.
+-- Owner-supplied kitchen points are installed (by seed), within a metre.
 do $$ declare ns text; ok boolean; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
   execute format('select count(*) filter (where kitchen_location is not null and %1$I.st_distance(kitchen_location::%1$I.geography, %1$I.st_setsrid(%1$I.st_makepoint(case slug when ''ammu-sammu'' then 73.3944946 else 73.3988110 end, case slug when ''ammu-sammu'' then 17.7190154 else 17.7197215 end),4326)::%1$I.geography) < 1) = 2 from public.businesses where slug in (''ammu-sammu'',''kokani-dine-inn'')', ns) into ok;
@@ -104,7 +104,7 @@ select set_config('test.placed',public.test_addr_place('64800000-0000-4000-8000-
 select public.test_assert(current_setting('test.placed')::jsonb->>'outcome'='placed','saved address order placed');
 select public.test_assert((select address_label='home' and address_house='14, Shivaji Nagar' and address_street_area='Station Road, Khed' and address_landmark is null and address_location_source='pin'
   and saved_address_id=current_setting('test.home')::uuid and saved_address_version=2 and latitude=0.4 and longitude=0.4 and placed_from_distance_m=0
-  and location_accuracy is null and location_captured_at is null and delivery_address_line='14, Shivaji Nagar, Station Road, Khed'
+  and delivery_address_line='14, Shivaji Nagar, Station Road, Khed'
   from public.orders where id=(current_setting('test.placed')::jsonb->>'id')::uuid),'order stores the reviewed snapshot and phone distance');
 -- Editing after placement changes neither the order nor a retry of the same request.
 update public.customer_addresses set house='99, Changed' where id=current_setting('test.home')::uuid;
@@ -182,6 +182,7 @@ select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000001'
 do $$ begin
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000007',public.test_addr_delivery(current_setting('test.away')::uuid,1),null); raise exception 'outside address accepted'; exception when invalid_parameter_value then null; end;
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000008',public.test_addr_delivery(current_setting('test.home')::uuid,3)||'{"address_line":"typed"}',null); raise exception 'mixed address accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.test_addr_place('64800000-0000-4000-8000-000000000011','{"name":"A","phone":"1","address_line":"typed"}'::jsonb,jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())); raise exception 'typed address accepted'; exception when invalid_parameter_value then null; end;
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000009',jsonb_build_object('name','A','phone','1','address_id',current_setting('test.home'),'address_version','x'),null); raise exception 'bad version accepted'; exception when invalid_parameter_value then null; end;
   begin perform public.test_addr_place('64800000-0000-4000-8000-000000000010',jsonb_build_object('name','A','phone','1','address_id','not-a-uuid','address_version',1),null); raise exception 'bad id accepted'; exception when invalid_parameter_value then null; end;
 end $$;
@@ -207,6 +208,8 @@ do $$ begin
   begin insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('other','One too many','Street',0.3,0.3,'pin'); raise exception '21st address accepted'; exception when check_violation then null; end;
 end $$;
 reset role;
+-- The typed-address path and its GPS evidence no longer exist in the schema.
+select public.test_assert(to_regprocedure('public.check_delivery_eligibility(text,jsonb)') is null and not exists (select 1 from information_schema.columns where table_schema='public' and table_name='orders' and column_name in ('location_accuracy','location_captured_at')),'typed-address checkout and GPS evidence columns are absent');
 -- A saved-address order without a complete snapshot cannot be written, even by trusted code.
 do $$ begin
   begin

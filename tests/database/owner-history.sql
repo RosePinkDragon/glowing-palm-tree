@@ -4,11 +4,6 @@ begin;
 create or replace function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if not coalesce(ok,false) then raise exception 'assertion failed: %', message; end if; end $$;
 grant execute on function public.test_assert(boolean,text) to anon, authenticated, service_role;
 
--- Backfill: every earlier owner transition has a snapshot, none for checkout.
-select public.test_assert(not exists (select 1 from public.order_status_history h where h.status <> 'placed' and h.changed_by is not null and not exists (select 1 from public.order_status_actors a where a.history_id = h.id)), 'earlier owner transitions are backfilled');
-select public.test_assert(not exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id where h.status = 'placed'), 'checkout steps carry no owner snapshot');
-select public.test_assert(not exists (select 1 from public.order_status_actors a join public.order_status_history h on h.id = a.history_id join public.orders o on o.id = h.order_id where a.business_id <> o.business_id), 'snapshots belong to the order business');
-
 -- Privileges: no client writes, no identifiers, server-only redaction.
 select public.test_assert((select relrowsecurity from pg_class where oid = 'public.order_status_actors'::regclass), 'actor snapshots use RLS');
 select public.test_assert(not has_table_privilege('anon','public.order_status_actors','select') and not has_column_privilege('anon','public.order_status_actors','actor_name','select'), 'anon cannot read snapshots');
@@ -38,8 +33,8 @@ end $$;
 -- Marathi names, including a zero-width joiner, are valid.
 update public.business_memberships set display_name = E'\u0938\u0941\u0930\u0947\u0936 \u0930\u094D\u200D\u092F' where user_id = '49800000-0000-4000-8000-000000000003';
 update public.business_memberships set display_name = 'Owner' where user_id = '49800000-0000-4000-8000-000000000003';
-insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,location_accuracy,location_captured_at,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
-values ('49800000-0000-4000-8000-0000000000a1','10000000-0000-4000-8000-000000000001','49800000-0000-4000-8000-000000000004','History customer','9000000000','Khed',0.5,0.5,10,now(),10000,0,10000,'49800000-0000-4000-8000-0000000000b1','history-test');
+insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,address_label,address_house,address_street_area,address_location_source,saved_address_id,saved_address_version,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash)
+values ('49800000-0000-4000-8000-0000000000a1','10000000-0000-4000-8000-000000000001','49800000-0000-4000-8000-000000000004','History customer','9000000000','Khed',0.5,0.5,'home','Test','Test','pin',gen_random_uuid(),1,10000,0,10000,'49800000-0000-4000-8000-0000000000b1','history-test');
 insert into public.order_status_history(order_id,status,changed_by) values ('49800000-0000-4000-8000-0000000000a1','placed','49800000-0000-4000-8000-000000000004');
 
 create temporary table owner_history_steps(id bigint);
