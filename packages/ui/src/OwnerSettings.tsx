@@ -1,13 +1,67 @@
-import { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { MarketIcon } from './MarketIcons';
 import { MarketSwitch } from './MarketSwitch';
 import { MarketGroup, MarketRow } from './MarketList';
 import { messageOf, type useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { ownerInitials } from './owner-navigation';
+import { checkOwnerName, ownerNameChanged, ownerNameProblem, OWNER_NAME_MAX, type SaveProblem } from './owner-name-model';
 
 type Market = ReturnType<typeof useMarket>;
+
+// "Your name" (#53): the name recorded on order history steps this owner makes. The server rule is the authority.
+function OwnerNameSection({ services, saved, onSaved }: { services: Market['services']; saved: string | null; onSaved: (name: string) => void }) {
+  const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const [value, setValue] = useState(saved ?? '');
+  const [problem, setProblem] = useState<SaveProblem | null>(null);
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const body = (size = 15) => ({ color: colors.ink, fontSize: size, lineHeight: Math.round(size * 1.45), ...(fonts.body ? { fontFamily: fonts.body } : {}) });
+  const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
+  const fieldError = problem?.kind === 'invalid' ? problem.message : undefined;
+  const banner = problem && problem.kind !== 'invalid' ? problem : null;
+  const locked = problem?.kind === 'denied' || problem?.kind === 'reload';
+  const canSave = !saving && !locked && ownerNameChanged(value, saved);
+  const edit = (text: string) => { setValue(text); setProblem(null); setNotice(''); };
+  const save = async () => {
+    if (busy.current || locked) return;
+    setNotice(''); setProblem(null);
+    const checked = checkOwnerName(value);
+    if (!checked.ok) { setProblem({ kind: 'invalid', message: checked.message }); return; }
+    if (!ownerNameChanged(value, saved)) return;
+    busy.current = true; setSaving(true);
+    try {
+      const name = await services.setOwnerDisplayName(checked.name);
+      if (!mounted.current) return;
+      setValue(name); onSaved(name); setNotice('Your name is saved.');
+    } catch (error) { if (mounted.current) setProblem(ownerNameProblem(error)); }
+    finally { busy.current = false; if (mounted.current) setSaving(false); }
+  };
+  const errorId = 'owner-name-error', hintId = 'owner-name-hint';
+  return <View style={{ gap: 8 }}>
+    <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Your name</Text>
+    <View style={{ backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 12 }}>
+      <Text nativeID="owner-name-label" style={{ ...body(15), ...bold }}>Name shown to your team</Text>
+      <TextInput value={value} editable={!saving} onChangeText={edit} onSubmitEditing={() => void save()} maxLength={OWNER_NAME_MAX * 2}
+        accessibilityLabel="Name shown to your team" aria-labelledby="owner-name-label" aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${errorId} ${hintId}` : hintId}
+        autoComplete="name" autoCorrect={false} returnKeyType="done"
+        style={{ minHeight: 52, borderWidth: fieldError ? 2 : 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14, color: colors.ink, fontSize: 16, ...(fonts.body ? { fontFamily: fonts.body } : {}), ...({ outlineStyle: 'none' } as object) }} />
+      {fieldError ? <Text nativeID={errorId} role="alert" accessibilityRole="alert" style={{ ...body(14), color: colors.danger }}>{fieldError}</Text> : null}
+      <Text nativeID={hintId} style={{ ...body(13), color: colors.muted }}>Recorded on the order history steps you make. Earlier steps keep the name used at the time.</Text>
+      {banner ? <View role="alert" accessibilityRole="alert" style={{ padding: 12, borderRadius: 12, backgroundColor: colors.warningTint }}><Text style={{ ...body(14), color: colors.warning, ...bold }}>{banner.message}</Text></View> : null}
+      {notice ? <Text role="status" accessibilityRole="text" accessibilityLiveRegion="polite" style={{ ...body(14), color: colors.positive, ...bold }}>{notice}</Text> : null}
+      <Pressable accessibilityRole="button" accessibilityLabel={saving ? 'Saving name' : 'Save name'} accessibilityState={{ disabled: !canSave, busy: saving }} aria-busy={saving} disabled={!canSave} onPress={() => void save()}
+        style={({ pressed }) => ({ minHeight: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, opacity: !canSave ? 0.5 : pressed ? 0.85 : 1 })}>
+        <Text style={{ color: colors.onPrimary, fontSize: 16, ...bold }}>{saving ? 'Saving…' : 'Save name'}</Text>
+      </Pressable>
+    </View>
+  </View>;
+}
 
 // Owners' Settings (owners' screen p. 10). Restaurant details (#60) opens its screen; Owners (#59) and the
 // ring and test-alert controls (#54) are announced as coming soon and are not interactive.
@@ -56,6 +110,7 @@ export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Ma
         <Text style={muted}>{ownerName ? `${contact} · Owner` : 'Owner'}</Text></>}
       </View>
     </View>
+    {loadingName ? null : <OwnerNameSection key={session.user.id} services={market.services} saved={ownerName ?? null} onSaved={setOwnerName} />}
     {!market.services.persistenceAvailable() ? <Text style={muted}>This session is stored only for this visit because device storage is unavailable.</Text> : null}
     <MarketGroup title="Restaurant">
       {onOpenRestaurantDetails
