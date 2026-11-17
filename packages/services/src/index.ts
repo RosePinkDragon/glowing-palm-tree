@@ -4,7 +4,42 @@ import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
-export interface Business { contactPhone?: string | null; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
+export interface Business { contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
+export interface RestaurantSettings { contactPhone: string | null; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; version: number }
+export interface SaveRestaurantSettingsInput { contactPhone: string; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; expectedVersion: number }
+type SettingsField = keyof SaveRestaurantSettingsInput;
+/** National, trunk-prefixed, or +91 Indian numbers become canonical E.164. */
+function settingsPhone(value: unknown, mobileOnly: boolean): string | null {
+  if (typeof value !== 'string' || !/^\+?[0-9 ().-]+$/.test(value.trim())) return null;
+  let digits = value.trim().replace(/[ ().-]/g, '');
+  if (digits.startsWith('+91')) digits = digits.slice(3);
+  else if (digits.startsWith('+')) return null;
+  else if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return (mobileOnly ? /^[6-9][0-9]{9}$/ : /^[1-9][0-9]{9}$/).test(digits) ? `+91${digits}` : null;
+}
+/** Parse rupee input exactly: never round a third decimal place or a floating-point amount. */
+export function restaurantAmountPaise(value: string, field: 'deliveryFeePaise' | 'minOrderPaise'): number {
+  const limit = field === 'deliveryFeePaise' ? 100000 : 1000000;
+  if (typeof value !== 'string' || !/^[0-9]{1,5}(\.[0-9]{1,2})?$/.test(value.trim())) throw new RestaurantSettingsValidationError({ [field]: 'Enter rupees with up to two decimal places.' });
+  const [whole, fraction = ''] = value.trim().split('.');
+  const paise = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  if (paise > limit) throw new RestaurantSettingsValidationError({ [field]: `Enter an amount from 0 to ${limit / 100} rupees.` });
+  return paise;
+}
+export function validateRestaurantSettings(input: SaveRestaurantSettingsInput): SaveRestaurantSettingsInput {
+  const fields: Partial<Record<SettingsField, string>> = {};
+  const contactPhone = settingsPhone(input?.contactPhone, false);
+  const whatsappEmpty = input?.whatsappPhone === null || (typeof input?.whatsappPhone === 'string' && !input.whatsappPhone.trim());
+  const whatsappPhone = whatsappEmpty ? null : settingsPhone(input?.whatsappPhone, true);
+  if (!contactPhone) fields.contactPhone = 'Enter an Indian mobile or landline number.';
+  if (!whatsappEmpty && !whatsappPhone) fields.whatsappPhone = 'Enter an Indian mobile number or leave it empty.';
+  if (!Number.isSafeInteger(input?.deliveryFeePaise) || input.deliveryFeePaise < 0 || input.deliveryFeePaise > 100000) fields.deliveryFeePaise = 'Enter a delivery fee from 0 to 1,000 rupees, in whole paise.';
+  if (!Number.isSafeInteger(input?.minOrderPaise) || input.minOrderPaise < 0 || input.minOrderPaise > 1000000) fields.minOrderPaise = 'Enter a minimum order from 0 to 10,000 rupees, in whole paise.';
+  if (!Number.isInteger(input?.expectedVersion) || input.expectedVersion < 1 || input.expectedVersion >= 2147483647) fields.expectedVersion = 'Refresh restaurant details before saving.';
+  if (Object.keys(fields).length) throw new RestaurantSettingsValidationError(fields);
+  return { contactPhone: contactPhone!, whatsappPhone, deliveryFeePaise: input.deliveryFeePaise, minOrderPaise: input.minOrderPaise, expectedVersion: input.expectedVersion };
+}
 export interface MenuCategory { id: string; businessId: BusinessSlug; name: string; sortOrder: number }
 export interface SaveCategoryInput { id?: string; name: string; sortOrder: number }
 export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
@@ -27,6 +62,20 @@ export class ServiceError extends Error {
   readonly code: string;
   override readonly cause?: unknown;
   constructor(code: string, message: string, cause?: unknown) { super(message); this.name = 'ServiceError'; this.code = code; this.cause = cause; }
+}
+export class RestaurantSettingsValidationError extends ServiceError {
+  readonly fields: Partial<Record<SettingsField, string>>;
+  constructor(fields: Partial<Record<SettingsField, string>>) { super('INVALID_SETTINGS', 'Check the restaurant details.'); this.name = 'RestaurantSettingsValidationError'; this.fields = fields; }
+}
+
+function mapRestaurantSettings(value: unknown): RestaurantSettings {
+  const row = value as Record<string, unknown> | null;
+  if (!row || (row.contact_phone !== null && (typeof row.contact_phone !== 'string' || !/^\+91[1-9][0-9]{9}$/.test(row.contact_phone))) ||
+      (row.whatsapp_phone !== null && (typeof row.whatsapp_phone !== 'string' || !/^\+91[6-9][0-9]{9}$/.test(row.whatsapp_phone))) ||
+      !Number.isInteger(row.settings_version) || (row.settings_version as number) < 1 || (row.settings_version as number) > 2147483647 ||
+      !Number.isInteger(row.delivery_fee_paise) || (row.delivery_fee_paise as number) < 0 || (row.delivery_fee_paise as number) > 100000 ||
+      !Number.isInteger(row.min_order_paise) || (row.min_order_paise as number) < 0 || (row.min_order_paise as number) > 1000000) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant details.');
+  return { contactPhone: row.contact_phone as string | null, whatsappPhone: row.whatsapp_phone as string | null, deliveryFeePaise: row.delivery_fee_paise as number, minOrderPaise: row.min_order_paise as number, version: row.settings_version as number };
 }
 
 /** Only constructed after validating an explicit transactional no-order response. */
@@ -217,10 +266,10 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const getBusiness = async (): Promise<Business> => {
     if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
-    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone').eq('slug', slug).single();
+    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone, whatsapp_phone, settings_version').eq('slug', slug).single();
     fail(error, 'Could not load business');
     if (!data) throw new ServiceError('NOT_FOUND', 'Business not found.');
-    return { contactPhone: data.contact_phone ?? null, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
+    return { contactPhone: data.contact_phone ?? null, whatsappPhone: data.whatsapp_phone ?? null, settingsVersion: data.settings_version, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
     if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', categoryId: `sample-category-${slug}`, categorySortOrder: 0, diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
@@ -320,6 +369,43 @@ export function createMarketServices(options: ServiceOptions) {
     const business = await getBusiness();
     if (!await isAdmin()) throw new ServiceError('ADMIN_REQUIRED', 'Admin membership is required to manage the menu.');
     return business;
+  };
+  const getRestaurantSettings = async (): Promise<RestaurantSettings> => {
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version').eq('id', business.id).single();
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details.');
+    fail(error, 'Could not load restaurant details');
+    return mapRestaurantSettings(data);
+  };
+  const saveRestaurantSettings = async (input: SaveRestaurantSettingsInput): Promise<RestaurantSettings> => {
+    const valid = validateRestaurantSettings(input);
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an owner account to change restaurant details.');
+    const initial = await db.auth.getSession(); fail(initial.error, 'Could not restore session');
+    const expected = initial.data.session ? sessionIdentity(initial.data.session.access_token) : null;
+    if (!expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SESSION_CHANGED', 'Sign in again before changing restaurant details.');
+    await requireAdminBusiness();
+    const current = await db.auth.getSession(); fail(current.error, 'Could not restore session');
+    const token = current.data.session?.access_token;
+    const identity = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started || !identity || identity.userId !== expected.userId || identity.sessionId !== expected.sessionId || current.data.session?.user.id !== identity.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details before saving.');
+    const { data, error } = await db.rpc('save_restaurant_settings', {
+      p_business_slug: slug, p_contact_phone: valid.contactPhone, p_whatsapp_phone: valid.whatsappPhone,
+      p_delivery_fee_paise: valid.deliveryFeePaise, p_min_order_paise: valid.minOrderPaise, p_expected_version: valid.expectedVersion,
+    }).setHeader('Authorization', `Bearer ${token}`);
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details to check the saved values.');
+    if (error?.code === '40001') throw new ServiceError('SETTINGS_CHANGED', 'Another owner changed restaurant details. Refresh and review them before saving again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before saving restaurant details.', error);
+    if (error?.code === '22023') {
+      const field = error.details as SettingsField;
+      if (['contactPhone', 'whatsappPhone', 'deliveryFeePaise', 'minOrderPaise', 'expectedVersion'].includes(field)) throw new RestaurantSettingsValidationError({ [field]: error.message });
+      throw new ServiceError('INVALID_SETTINGS', 'Check the restaurant details and try again.', error);
+    }
+    fail(error, 'Could not save restaurant details');
+    const saved = mapRestaurantSettings(data);
+    if (saved.contactPhone !== valid.contactPhone || saved.whatsappPhone !== valid.whatsappPhone || saved.deliveryFeePaise !== valid.deliveryFeePaise || saved.minOrderPaise !== valid.minOrderPaise || saved.version !== valid.expectedVersion + 1) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the saved restaurant details. Refresh before trying again.');
+    return saved;
   };
   const getCategories = async (): Promise<MenuCategory[]> => {
     if (!client) return [{ id: `sample-category-${slug}`, businessId: slug, name: 'Samples', sortOrder: 0 }];
@@ -580,7 +666,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
