@@ -31,7 +31,7 @@ try {
       return { id, business_id: businessId, category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, name: `Later dish ${index}`, description: 'Neutral synthetic test description.', diet: 'veg', price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: index,
         image_url: `${businessId}/${id}/40000000-0000-4000-8000-000000000001/card.webp`, ...values };
     };
-    const menu = [item(0, { name: 'Photo dish', diet: 'egg', is_featured: true, price_paise: 15000 }), item(1, { name: 'No photo dish', image_url: null }), item(2, { name: 'Unavailable dish', available: false, diet: 'non_veg' }), item(3, { name: 'Broken photo dish' }), ...Array.from({ length: 18 }, (_, i) => item(i + 4, {}))];
+    const menu = [item(0, { name: 'Photo dish', diet: 'egg', is_featured: true, price_paise: 15000 }), item(1, { name: 'No photo dish', image_url: null }), item(2, { name: 'Unavailable dish', available: false, diet: 'non_veg' }), item(3, { name: 'Broken photo dish' }), ...Array.from({ length: 60 }, (_, i) => item(i + 4, {}))];
     const feature = brand ? 'Signature dishes' : "Today's special";
     const requests = [], errors = [], external = [], ownerActions = [];
     let ownerFailure = true;

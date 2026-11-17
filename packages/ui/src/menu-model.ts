@@ -96,3 +96,28 @@ export function dishDraftErrors(draft: DishDraft, categoryIds: readonly string[]
   if (!draft.id && !isDiet(draft.diet)) errors.diet = 'Choose a diet classification.';
   return errors;
 }
+
+export type CustomerSection = { id: string; name: string; items: MenuItem[] };
+const fold = (text: string) => text.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
+/** Customer search: dishes whose name contains the typed text (case and repeated spaces ignored). An empty query keeps everything. */
+export function searchMenuItems(items: readonly MenuItem[], query: string): MenuItem[] {
+  const needle = fold(query);
+  return needle ? items.filter(item => fold(item.name).includes(needle)) : [...items];
+}
+/** Customer menu sections: matching dishes grouped by category, in menu order. Categories without a match are left out. */
+export function customerSections(items: readonly MenuItem[], query = ''): CustomerSection[] {
+  const sections = new Map<string, CustomerSection>();
+  for (const item of searchMenuItems(sortMenuItems(items), query)) {
+    const section = sections.get(item.categoryId) ?? { id: item.categoryId, name: item.category, items: [] };
+    section.items.push(item); sections.set(item.categoryId, section);
+  }
+  return [...sections.values()];
+}
+/** The section a scroll position is in: the last one that starts at or above `probe`; null above the first (the "All" chip). */
+export function activeSectionId(tops: readonly { id: string; top: number }[], probe: number): string | null {
+  let active: string | null = null;
+  for (const { id, top } of [...tops].sort((a, b) => a.top - b.top)) { if (top <= probe) active = id; }
+  return active;
+}
+/** Dish grid columns: two on phones (design), more as the screen widens. */
+export function gridColumns(width: number): number { return width >= 1000 ? 4 : width >= 760 ? 3 : 2; }

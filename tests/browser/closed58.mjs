@@ -153,7 +153,7 @@ try {
       await setOpen(true); assert.equal(requests.length, 1);
       console.log(`PASS: ${slug} unknown/closed/open guests, keyboard dish details, live cart/form preservation, auth-stable subscription and typed closure refusal`);
 
-      await page.goto(server.url, { waitUntil: 'networkidle' }); await add().waitFor();
+      await page.goto(server.url, { waitUntil: 'networkidle' }); await visible(page.getByRole('button', { name: /^(?:Add to cart|Add one )/ })).waitFor(); // a dish already in the cart shows its stepper
       const held = { arrived: deferred(), release: deferred(), done: deferred() }; holdOne = held;
       await live(); await held.arrived.promise;
       business.accepting_orders = false; await live(); await closed().waitFor();

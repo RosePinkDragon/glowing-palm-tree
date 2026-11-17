@@ -5,6 +5,7 @@ export {
   DomainValidationError,
   dietLabels,
   isDiet,
+  MAX_QUANTITY,
   addCartItem,
   canTransitionOrderStatus,
   cartSubtotalPaise,

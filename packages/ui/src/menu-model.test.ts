@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MenuItem } from '@market/core';
-import { applyCategoryOrder, applyItemOrder, dishDraftErrors, dishSortOrder, dragTarget, featuredLabel, featuredMenuItems, menuSections, moveId, nextCategoryOrder, parseItemOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems, type DishDraft } from './menu-model.ts';
+import { activeSectionId, customerSections, gridColumns, searchMenuItems, applyCategoryOrder, applyItemOrder, dishDraftErrors, dishSortOrder, dragTarget, featuredLabel, featuredMenuItems, menuSections, moveId, nextCategoryOrder, parseItemOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems, type DishDraft } from './menu-model.ts';
 import { parseRupees } from './admin-model.ts';
 import { readCart } from './cart-state.ts';
 
@@ -132,4 +132,37 @@ test('dish editor validation mirrors saveMenuItem limits', () => {
   for (const price of ['', '1.234', '-1', '1e3', '21474836.48']) assert.ok(check({ price }).price, price);
   for (const price of ['0.01', '21474836.47', ' 320.5 ']) assert.equal(check({ price }).price, undefined, price);
   assert.equal(check({ id: 'existing', diet: null }).diet, undefined, 'existing unclassified dishes can still be saved');
+});
+
+const named = (id: string, name: string, categoryId: string, category: string, categorySortOrder: number, extra: Partial<MenuItem> = {}): MenuItem => ({ ...dish, id, name, categoryId, category, categorySortOrder, isFeatured: false, ...extra });
+const menu = [named('1', 'Veg thali', 'thalis', 'Thalis', 0), named('2', 'Fish thali', 'thalis', 'Thalis', 0, { sortOrder: 1 }), named('3', 'Misal pav', 'snacks', 'Snacks', 1), named('4', 'Sol kadhi', 'drinks', 'Drinks', 2, { isAvailable: false })];
+
+test('customer search matches dish names only, ignoring case and extra spaces', () => {
+  assert.deepEqual(searchMenuItems(menu, '  THALI ').map(item => item.id), ['1', '2']);
+  assert.deepEqual(searchMenuItems(menu, 'misal   pav').map(item => item.id), ['3']);
+  assert.deepEqual(searchMenuItems(menu, 'snacks'), [], 'category names are not searched');
+  assert.deepEqual(searchMenuItems(menu, '   ').map(item => item.id), ['1', '2', '3', '4'], 'an empty query keeps every dish');
+  assert.deepEqual(searchMenuItems(menu, 'pizza'), []);
+});
+
+test('customer sections group by category in menu order, keep unavailable dishes and drop categories without a match', () => {
+  assert.deepEqual(customerSections(menu).map(section => [section.name, section.items.map(item => item.id)]), [['Thalis', ['1', '2']], ['Snacks', ['3']], ['Drinks', ['4']]]);
+  assert.deepEqual(customerSections([...menu].reverse()).map(section => section.id), ['thalis', 'snacks', 'drinks']);
+  assert.deepEqual(customerSections(menu, 'kadhi').map(section => section.id), ['drinks']);
+  assert.deepEqual(customerSections(menu, 'zzz'), []);
+  assert.deepEqual(customerSections([]), []);
+});
+
+test('the highlighted category is the last section that has started', () => {
+  const tops = [{ id: 'b', top: 400 }, { id: 'a', top: 100 }, { id: 'c', top: 900 }];
+  assert.equal(activeSectionId(tops, 50), null);
+  assert.equal(activeSectionId(tops, 100), 'a');
+  assert.equal(activeSectionId(tops, 399), 'a');
+  assert.equal(activeSectionId(tops, 400), 'b');
+  assert.equal(activeSectionId(tops, 5000), 'c');
+  assert.equal(activeSectionId([], 10), null);
+});
+
+test('the dish grid is two columns on phones and widens on larger screens', () => {
+  assert.deepEqual([320, 390, 759, 760, 999, 1000, 1280].map(gridColumns), [2, 2, 2, 3, 3, 4, 4]);
 });

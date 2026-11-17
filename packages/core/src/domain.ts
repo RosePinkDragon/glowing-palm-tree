@@ -118,7 +118,7 @@ export class DomainValidationError extends Error {
   }
 }
 
-const MAX_QUANTITY = 10;
+export const MAX_QUANTITY = 10;
 const MAX_CART_LINES = 20;
 
 function assertQuantity(quantity: number): void {
