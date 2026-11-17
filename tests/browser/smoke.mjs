@@ -40,6 +40,7 @@ let permissionRequests = 0;
 const requests = [];
 browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 context = await browser.newContext({ viewport: { width: 390, height: 844 }, geolocation: { latitude: 17.719, longitude: 73.397, accuracy: 10 }, permissions: ['geolocation'], serviceWorkers: 'block' });
+await context.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
 await context.routeWebSocket(/.*/, socket => {
   if (new URL(socket.url()).origin !== 'wss://market-fixture.supabase.co') { externalSockets.push(socket.url()); socket.close(); return; }
   socket.onMessage(message => {
@@ -365,6 +366,7 @@ const prepareCart = async (page, add = true) => {
     const customer = await serveWeb(`apps/${slug}-customer/dist/web`);
     const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
     const dietContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await dietContext.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
     try {
       const dietErrors = [], dietWrites = [];
       const otherUser = { ...user, id: '30000000-0000-4000-8000-000000000043', email: 'other-diet-account@example.test' };
@@ -727,6 +729,7 @@ const prepareCart = async (page, add = true) => {
     if (selectedBrand && slug !== selectedBrand) continue;
     const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await ctx.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
     const primary = { 'ammu-sammu': 'rgb(168, 62, 50)', 'kokani-dine-inn': 'rgb(22, 92, 84)' }[slug];
     const brandName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
     const errs = [], unhandled = [], rpcCalls = [], sockets = [], joined = new Map();
@@ -1065,6 +1068,7 @@ async function tracking47() {
       if (selectedBrand && slug !== selectedBrand) continue;
       const server = await serveWeb(`apps/${slug}-customer/dist/web`);
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+      await ctx.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
       await ctx.clock.install({ time: new Date('2026-11-16T06:30:30Z') }); // pin fixture clock: fixtures are dated 16 Nov 2026 (12:00 pm IST); time still flows
       const origin = 'https://market-fixture.supabase.co';
       const businessId = slug === 'ammu-sammu' ? '10000000-0000-4000-8000-000000000001' : '10000000-0000-4000-8000-000000000002';

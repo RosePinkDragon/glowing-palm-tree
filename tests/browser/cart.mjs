@@ -27,6 +27,7 @@ try {
   await mkdir('dist/browser', { recursive: true });
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+  await context.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
   await context.addInitScript(() => {
     const add = window.addEventListener.bind(window), remove = window.removeEventListener.bind(window);
     const listeners = new WeakMap();

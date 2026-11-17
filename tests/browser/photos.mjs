@@ -22,6 +22,7 @@ try {
     const customer = await serveWeb(`apps/${slug}-customer/dist/web`);
     const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await context.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
     const businessId = `10000000-0000-4000-8000-00000000000${brand + 1}`;
     const user = { id: `30000000-0000-4000-8000-00000000000${brand + 1}`, aud: 'authenticated', role: 'authenticated', email: 'owner@example.test', app_metadata: {}, user_metadata: {}, identities: [], created_at: '2026-01-01T00:00:00Z' };
     const token = `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ sub: user.id, role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now() / 1000) + 3600 })}.${part('fixture')}`;

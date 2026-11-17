@@ -6,7 +6,10 @@ import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, set
 import { MarketButton, MarketCard, MarketField, MarketStatus, MarketText } from './components';
 import { CheckoutAddressDialogs, CheckoutAddressSummary, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
 import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, phoneFixTimeoutMs, validateContact, withTimeout, type OrderConfirmation } from './checkout-model';
-import { useMarketTheme } from './theme';
+import { MarketFontsProvider, useMarketTheme } from './theme';
+import { useBrandFonts } from './brand-fonts';
+import { BrandWelcome, useWelcome } from './CustomerBrand';
+import { deliveryAddressLine } from './address-model';
 import { AuthPanel } from './AuthPanel';
 import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, readAttempt, sameIdentity, type CheckoutAttempt } from './checkout-state';
 import { prepareAttempt, withCheckoutGuard } from './checkout-guard';
@@ -32,6 +35,7 @@ import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 const money = formatINRFromPaise;
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const market = useMarket(businessId); const { colors, name } = useMarketTheme(); const { width } = useWindowDimensions();
+  const fonts = useBrandFonts(businessId); const welcome = useWelcome(businessId);
   const [selectedDish, setSelectedDish] = useState<{ id: string; identity: typeof market.identity.current } | null>(null);
   const dishTrigger = useRef<HTMLElement | null>(null);
   const [viewportRevision, setViewportRevision] = useState(0);
@@ -66,8 +70,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     return () => window.removeEventListener('storage', changed);
   }, [businessId]);
   const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
-  // Addresses are only read once there is something to order.
-  const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady && cart.length > 0);
+  // Signed-in customers' addresses are read so the top bar can show the selected one.
+  const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady);
   const refused = !!closedRefusal && closedRefusal.business === market.business && sameIdentity(closedRefusal.identity, market.identity.current);
   const orderingAllowed = demo || (market.businessReady && !!market.business?.orderingEnabled && market.business.acceptingOrders && !refused);
   const orderingMessage = refused || market.businessReady && market.business && !market.business.acceptingOrders ? closedMessage(businessId)
@@ -249,8 +253,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Profile' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Profile' ? 'Edit profile' : 'Notifications'}</MarketText><MarketText>{page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
-  return <><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
+  if (welcome.state !== 'done') return <MarketFontsProvider value={fonts}>{welcome.state === 'show' ? <BrandWelcome onContinue={welcome.dismiss} /> : <View style={{ flex: 1, backgroundColor: colors.background }} />}</MarketFontsProvider>;
+  return <MarketFontsProvider value={fonts}><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
     // The sheet quoted a total before the phone's location was awaited; never send a different one than was shown.
     try { if (validateOrder().pricing.total_paise !== chosen.totalPaise) { setLocalError('Your total changed. Please check your order and try again.'); return; } } catch (e) { setLocalError(messageOf(e)); return; }
-    void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</>;
+    void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} orderingAllowed={orderingAllowed} deliveryLine={deliveryAddressLine(demo ? null : addrs.selected)} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</MarketFontsProvider>;
 }

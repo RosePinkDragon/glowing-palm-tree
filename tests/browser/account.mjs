@@ -305,6 +305,7 @@ try {
   for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
     const server = await serveWeb(`apps/${slug}-customer/dist/web`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    await context.addInitScript(() => { for (const slug of ['ammu-sammu', 'kokani-dine-inn']) localStorage.setItem(`market:welcome:${slug}`, '1'); }); // first-launch welcome (#39) already dismissed
     const errors = [], queries = [];
     const businessId = `54000000-0000-4000-8000-00000000000${brand+1}`;
     const business = { id: businessId, slug, name: brand ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
