@@ -4,6 +4,7 @@ import { formatINRFromPaise, type Order } from '@market/core';
 import { MarketLinkButton, MarketText } from './components';
 import { MarketLine, MarketSection } from './MarketList';
 import { MarketIcon } from './MarketIcons';
+import { DietMark } from './DietMark';
 import { restorePanelFocus } from './AccessiblePanel';
 import { statusCopy, terminalTime, trackingTimeline } from './order-history';
 import { useMarketFonts, useMarketTheme } from './theme';
@@ -114,7 +115,7 @@ function Lines({ order }: { order: Order }) {
   const { colors, receiptRule } = useMarketTheme();
   const cancelled = order.status === 'cancelled';
   return <MarketSection>
-    {order.lines.map((line, i) => <MarketLine key={`${line.menuItemId}-${i}`} left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} />)}
+    {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><MarketLine left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} /></View>)}
     <MarketLine left={<Text style={{ color: colors.muted }}>Delivery</Text>} right={<Text style={{ color: colors.muted, fontSize: 15 }}>{formatINRFromPaise(order.deliveryFeePaise)}</Text>} />
     <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 10 }}>
       <MarketLine bold left={cancelled ? 'Total' : 'Paid in cash'} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
@@ -196,7 +197,10 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
       </View>
     </View>
     {active ? <MarketSection title="Order details">
-      <DetailRow label={voice === 'we' ? 'Dishes' : 'Items'}>{order.lines.map(line => `${line.quantity} × ${line.name}`).join(', ')}</DetailRow>
+      <View style={{ gap: 6 }}>
+        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{voice === 'we' ? 'Dishes' : 'Items'}</Text>
+        {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><Text style={{ color: colors.ink, fontSize: 15, lineHeight: 22 }}>{`${line.quantity} × ${line.name}`}</Text><DietMark diet={line.diet} /></View>)}
+      </View>
       <DetailRow label="Deliver to">{addressTitle ? `${addressTitle} · ${address}` : address}</DetailRow>
       <DetailRow label="Payment">{`${formatINRFromPaise(order.totalPaise)} cash on delivery`}</DetailRow>
     </MarketSection> : <Lines order={order} />}

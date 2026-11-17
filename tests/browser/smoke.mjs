@@ -1085,8 +1085,9 @@ async function tracking47() {
       const session = { access_token: token, refresh_token: 'tracking-refresh', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user };
       const placed = '2026-11-16T06:30:00Z';
       let contactPhone = '+919876543210';
-      let order = { id: orderId, order_number: reference, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Tracking customer', customer_phone: '+919000000000', delivery_address_line: 'House 5, Station Road, Khed', latitude: 17.719, longitude: 73.397, created_at: placed, order_items: [{ menu_item_id: '20000000-0000-4000-8000-000000000001', diet: 'veg', name: 'Tracking thali', quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }], order_status_history: [{ status: 'placed', created_at: placed }] };
-      const joined = new Map(), errors = [], unexpected = [];
+      let order = { id: orderId, order_number: reference, business_id: businessId, customer_id: userId, status: 'placed', version: 1, subtotal_paise: 15000, delivery_fee_paise: 2000, total_paise: 17000, customer_name: 'Tracking customer', customer_phone: '+919000000000', delivery_address_line: 'House 5, Station Road, Khed', latitude: 17.719, longitude: 73.397, created_at: placed, order_items: [{ menu_item_id: '20000000-0000-4000-8000-000000000001', diet: 'veg', name: 'Tracking thali', quantity: 1, unit_price_paise: 15000, line_total_paise: 15000 }, { menu_item_id: '20000000-0000-4000-8000-000000000002', diet: 'non_veg', name: 'Tracking curry', quantity: 1, unit_price_paise: 0, line_total_paise: 0 }, { menu_item_id: '20000000-0000-4000-8000-000000000003', diet: null, name: 'Tracking unmarked', quantity: 1, unit_price_paise: 0, line_total_paise: 0 }], order_status_history: [{ status: 'placed', created_at: placed }] };
+      const joined = new Map(), businessJoined = new Map(), errors = [], unexpected = [];
+      let menuFails = false;
       let orderReads = 0, navigations = 0;
       await ctx.addInitScript(({ slug, session }) => {
         localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:customer`, JSON.stringify(session));
@@ -1100,6 +1101,7 @@ async function tracking47() {
           const data = JSON.parse(String(message)); entry.array = Array.isArray(data);
           const [join, ref, topic, event, payload] = entry.array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
           if (event === 'phx_join' && topic.includes('orders:')) joined.set(topic, entry);
+          if (event === 'phx_join' && topic.includes('business-state:')) businessJoined.set(topic, entry);
           if (event === 'phx_leave') joined.delete(topic);
           if (['phx_join', 'phx_leave', 'heartbeat'].includes(event)) {
             const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
@@ -1122,7 +1124,10 @@ async function tracking47() {
         if (url.pathname === '/auth/v1/token') return json(session);
         if (url.pathname === '/auth/v1/user') return json(user);
         if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name: brandName, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: contactPhone });
-        if (url.pathname === '/rest/v1/menu_items' || url.pathname === '/rest/v1/menu_categories') return json([]);
+        if (url.pathname === '/rest/v1/menu_items' && menuFails) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture menu failure' }) });
+        // The live menu disagrees with the saved snapshots (#153): the thali is now non-veg, the curry is veg.
+        if (url.pathname === '/rest/v1/menu_items') return json([['20000000-0000-4000-8000-000000000001', 'non_veg'], ['20000000-0000-4000-8000-000000000002', 'veg']].map(([id, diet], sort_order) => ({ id, diet, business_id: businessId, name: 'Live menu dish', description: '', category_id: '14300000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 100, available: true, is_demo: false, is_featured: false, sort_order, image_url: null })));
+        if (url.pathname === '/rest/v1/menu_categories') return json([]);
         if (url.pathname === '/rest/v1/orders') { orderReads++; return json(url.searchParams.has('id') ? order : [order]); }
         unexpected.push(route.request().method() + ' ' + url.pathname); return json([]);
       });
@@ -1138,6 +1143,18 @@ async function tracking47() {
         await visible(`Waiting for ${brandName} to accept it. We'll tell you when they do.`).waitFor();
         assert.equal(await visible('Good food starts here.').count(), 0);
         assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
+        // #153: every line shows its saved diet snapshot (never the live menu's opposite value); an unmarked line shows none.
+        const dietMarks = () => page.getByRole('img', { name: /^(Vegetarian|Contains egg|Non-vegetarian)$/ }).filter({ visible: true });
+        const dietLabel = diet => ({ veg: 'Vegetarian', non_veg: 'Non-vegetarian', egg: 'Contains egg' })[diet];
+        const marks = async () => (await dietMarks().evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))));
+        assert.deepEqual(await marks(), [dietLabel('veg'), dietLabel('non_veg')], 'active order shows snapshot diet marks in line order');
+        // #153: a failed catalog refresh keeps the already-loaded contact number callable.
+        menuFails = true;
+        const refreshFailed = page.waitForResponse(response => response.url().includes('/rest/v1/menu_items') && response.status() === 500);
+        for (const [topic, entry] of businessJoined) if (!entry.closed) entry.socket.send(JSON.stringify(entry.array ? [null, null, topic, 'postgres_changes', { ids: [1], data: { schema: 'public', table: 'businesses', type: 'UPDATE', commit_timestamp: placed, columns: [], record: { id: businessId }, old_record: null, errors: null } }] : { topic, event: 'postgres_changes', payload: { ids: [1], data: { schema: 'public', table: 'businesses', type: 'UPDATE', commit_timestamp: placed, columns: [], record: { id: businessId }, old_record: null, errors: null } }, ref: null }));
+        await refreshFailed; await page.waitForTimeout(300);
+        assert.equal(await page.getByRole('link', { name: `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210', 'call stays available while the catalog refresh fails');
+        menuFails = false;
         assert.equal(await page.evaluate(() => window.__trackingPermissionRequests), 0, 'tracking never requests notification consent automatically');
         assert.equal(await page.getByText('Notifications are not available yet.', { exact: true }).count(), 0, 'no updates message before a tap');
         await page.getByRole('button', { name: 'Turn on order updates', exact: true }).click();
@@ -1158,6 +1175,7 @@ async function tracking47() {
         await visible('Order details').waitFor(); await visible('₹170 cash on delivery').waitFor();
         await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-mobile.png`, fullPage: true });
+        await page.setViewportSize({ width: 390, height: 1500 }); await page.screenshot({ path: `dist/browser/${slug}-tracking-diet-active.png` });
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.screenshot({ path: `dist/browser/${slug}-tracking-desktop.png`, fullPage: true });
         pushStatus('out_for_delivery', '2026-11-16T06:50:00Z');
@@ -1169,10 +1187,12 @@ async function tracking47() {
         await page.getByText(/^Arrived on .* 35 minutes after you ordered\.$/).filter({ visible: true }).waitFor();
         await visible('House 5, Station Road, Khed').waitFor();
         await visible('Order this again').waitFor();
+        assert.deepEqual(await marks(), [dietLabel('veg'), dietLabel('non_veg')], 'delivered order shows snapshot diet marks');
         assert.equal(await page.evaluate(() => document.activeElement === window.__focusBeforeDelivered), true, 'focus stays on the same element when the order is delivered after a failed Turn on');
         assert.equal(await page.getByRole('button', { name: 'Turn on order updates', exact: true }).count(), 0, 'no consent prompt on terminal order');
         assert.equal(navigations, initialNavigations, 'all transitions arrived without page navigation/reload');
         assert.ok(orderReads > initialReads); assert.equal(liveSubscriptions(), 1);
+        await page.setViewportSize({ width: 390, height: 1100 }); await page.screenshot({ path: `dist/browser/${slug}-tracking-diet-delivered.png` });
         await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-delivered.png`, fullPage: true });
         // A separate cancelled order exercises the other terminal presentation.
@@ -1182,6 +1202,7 @@ async function tracking47() {
         await visible(`${brandName} cancelled it at 12:04 pm. You don't need to pay anything.`).waitFor();
         await stage(/^Cancelled by the restaurant, cancelled, .*12:04 pm$/).waitFor();
         await visible('Want to know why? The restaurant can tell you.').waitFor();
+        assert.deepEqual(await marks(), [dietLabel('veg'), dietLabel('non_veg')], 'cancelled order shows snapshot diet marks');
         await visible('Order again').waitFor();
         assert.equal(await visible('₹170').evaluate(el => getComputedStyle(el).textDecorationLine), 'line-through', 'nothing is owed: the total is struck through');
         assert.equal(await page.getByRole('link', { name: slug === 'kokani-dine-inn' ? `Call us, ${brandName}` : `Call ${brandName}`, exact: true }).getAttribute('href'), 'tel:+919876543210');
