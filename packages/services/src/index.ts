@@ -84,7 +84,7 @@ export function validateOwnerDisplayName(value: unknown): string {
   if (typeof value !== 'string' || value.startsWith(' ') || value.endsWith(' ') || [...value].length < 1 || [...value].length > 60 ||
     /[\u0000-\u001f\u007f-\u009f\u00A0\u00AD\u2000-\u200B\u200E\u200F\u2028-\u202F\u205F\u2060\u2066-\u2069\u3000\uFEFF]/u.test(value) ||
     [...value].some(char => char.length === 1 && char.charCodeAt(0) >= 0xd800 && char.charCodeAt(0) <= 0xdfff)) {
-    throw new ServiceError('INVALID_OWNER_NAME', 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.');
+    throw new ServiceError('INVALID_OWNER_NAME', 'Enter an owner name of 1 to 60 characters without control or invisible characters.');
   }
   return value;
 }
@@ -505,7 +505,12 @@ export function createMarketServices(options: ServiceOptions) {
     };
     const verified = await db.auth.getUser(token);
     await ensureCurrent();
-    if (verified.error) throw new ServiceError('ADMIN_REQUIRED', 'Sign in again to verify your owner access.', verified.error);
+    if (verified.error) {
+      // Only a real rejection by Auth (4xx other than timeout/rate limit) means access is gone; transport and server failures are retryable.
+      const status = (verified.error as { status?: unknown }).status;
+      if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) throw new ServiceError('ADMIN_REQUIRED', 'Sign in again to verify your owner access.', verified.error);
+      throw new ServiceError('OWNER_PROFILE_REQUEST_FAILED', 'Could not verify your account. Check your connection and try again.', verified.error);
+    }
     if (!verified.data.user || verified.data.user.id !== expected.userId) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm your account.');
     const business = await getBusiness();
     const readToken = await ensureCurrent();
@@ -533,7 +538,7 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await scope.db.rpc('set_owner_display_name', { p_business_slug: slug, p_display_name: valid })
       .setHeader('Authorization', `Bearer ${token}`);
     await scope.ensureCurrent();
-    if (error?.code === '22023') throw new ServiceError('INVALID_OWNER_NAME', 'Enter a trimmed owner name of 1 to 60 characters without control or invisible characters.', error);
+    if (error?.code === '22023') throw new ServiceError('INVALID_OWNER_NAME', 'Enter an owner name of 1 to 60 characters without control or invisible characters.', error);
     if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before saving.', error);
     if (error) throw new ServiceError('OWNER_NAME_SAVE_FAILED', 'Could not save your owner name.', error);
     const saved = ownerNameResponse(data, scope.userId, scope.businessId, false);
