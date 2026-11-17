@@ -25,7 +25,7 @@ relationship_place() {
 }
 # Missing relationship refuses even a valid placement and does not auto-join.
 if relationship_place 65200000-0000-4000-8000-000000000001 | relationship_sql >"$relationship_tmp/missing" 2>&1; then echo 'Unjoined placement succeeded' >&2; exit 1; fi
-rg -q BUSINESS_JOIN_REQUIRED "$relationship_tmp/missing"
+grep -q BUSINESS_JOIN_REQUIRED "$relationship_tmp/missing"
 # Join first: checkout waits on the stable account row, then sees committed membership.
 { echo "begin; set application_name='relationship_join'; $relationship_auth"; echo "select public.join_business('ammu-sammu'); select pg_sleep(4); commit;"; } | relationship_sql >/dev/null & relationship_pid=$!
 relationship_hold relationship_join
@@ -72,11 +72,11 @@ SQL
 relationship_pid=$!
 relationship_hold relationship_pending
 if relationship_place 65200000-0000-4000-8000-000000000004 | relationship_sql >"$relationship_tmp/pending" 2>&1; then echo 'Pending placement succeeded' >&2; exit 1; fi
-rg -q BUSINESS_LIFECYCLE_PENDING "$relationship_tmp/pending"
+grep -q BUSINESS_LIFECYCLE_PENDING "$relationship_tmp/pending"
 wait "$relationship_pid"
 # Replays are gated too; they cannot rejoin or rewrite snapshots after leave starts.
 if relationship_place 65200000-0000-4000-8000-000000000003 | relationship_sql >"$relationship_tmp/replay" 2>&1; then echo 'Pending replay succeeded' >&2; exit 1; fi
-rg -q BUSINESS_LIFECYCLE_PENDING "$relationship_tmp/replay"
+grep -q BUSINESS_LIFECYCLE_PENDING "$relationship_tmp/replay"
 relationship_sql >/dev/null <<'SQL'
 select public.test_assert((select count(*)=2 from public.orders where customer_id='35200000-0000-4000-8000-000000000009'),'only two committed placements');
 select public.test_assert(not exists((select * from public.test_relationship_snapshot except all select * from public.test_relationship_before)
