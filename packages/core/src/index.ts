@@ -1,8 +1,10 @@
 export type AppAudience = 'customer' | 'admin';
-export type BusinessSlug = 'ammu-sammu' | 'konkan-fine-dine';
+export type BusinessSlug = 'ammu-sammu' | 'kokani-dine-inn';
 
 export {
   DomainValidationError,
+  dietLabels,
+  isDiet,
   addCartItem,
   canTransitionOrderStatus,
   cartSubtotalPaise,
@@ -13,12 +15,15 @@ export {
   validateDeliveryDetails,
   validateLocationFix,
 } from './domain.ts';
+export { addressLabels, addressLine, formatDistance, addressTitle, isAddressLabel, remoteOrderFlag, remoteOrderThresholdM, isAddressLocationSource, validateAddressDraft } from './address.ts';
+export type { AddressDraft, AddressLabel, AddressLocationSource, OrderAddress, SavedAddress } from './address.ts';
 export type {
   CartLine,
+  DailySummary,
   DeliveryDetails,
+  Diet,
   DomainFieldErrors,
   LocationFix,
-  LocationPermissionState,
   MenuItem,
   Order,
   OrderLine,
@@ -27,5 +32,5 @@ export type {
 
 export const businesses: Record<BusinessSlug, { name: string; locale: string; currency: string }> = {
   'ammu-sammu': { name: 'Ammu Sammu', locale: 'en-IN', currency: 'INR' },
-  'konkan-fine-dine': { name: 'Konkan Fine Dine', locale: 'en-IN', currency: 'INR' },
+  'kokani-dine-inn': { name: 'Kokani Dine Inn', locale: 'en-IN', currency: 'INR' },
 };

@@ -6,7 +6,7 @@ import { createRunner } from './run-delivery-policy.mjs';
 const repo = 'owner/repo';
 const issue = () => ({ number: 3, state: 'open', labels: [{ name: 'enhancement' }, { name: 'approved' }], body: '' });
 const pr = (number = 7, sha = 'head') => ({ number, state: 'open', head: { sha, ref: 'feature/monorepo-3-fix', repo: { id: 2 } }, base: { sha: 'base', ref: 'main', repo: { id: 1 } }, body: 'Issue: #3', draft: false, changed_files: 1 });
-const files = [{ filename: 'src/code.js' }];
+const files = [{ filename: 'src/code.js', status: 'modified' }];
 const err = (p, i, f = files) => evaluate(p, i, f, repo).errors;
 const event = { repository: { default_branch: 'main' } };
 const response = (data, status = 200, link = '') => new Response(JSON.stringify(data), { status, headers: link ? { link } : {} });
@@ -18,8 +18,17 @@ function fixture(options = {}) {
   const fetchImpl = async (url, init) => {
     const u = new URL(url), path = u.pathname;
     calls.push({ path, method: init.method, payload: init.body && JSON.parse(init.body), auth: init.headers.Authorization });
-    if (path.endsWith('/check-runs') && init.method === 'POST') { const id = nextId++; checks.push({ id, head: JSON.parse(init.body).head_sha }); return response({ id }); }
-    if (/\/check-runs\/\d+$/.test(path) && init.method === 'PATCH') return response({});
+    if (path.endsWith('/git/ref/heads/main')) return response({ object: { type: 'commit', sha: 'a'.repeat(40) } });
+    if (path.endsWith('/contents/supabase/migration-policy.json')) {
+      assert.equal(u.searchParams.get('ref'), 'a'.repeat(40));
+      if (options.policyFailure) return response({}, options.policyFailure);
+      return response({ type: 'file', path: 'supabase/migration-policy.json', encoding: 'base64', content: Buffer.from(JSON.stringify(options.policy || { mode: 'pre-release-baseline' })).toString('base64') });
+    }
+    if (path.endsWith('/check-runs') && init.method === 'POST') {
+      if (options.failStartHead === JSON.parse(init.body).head_sha) return response({}, 403);
+      const id = nextId++; checks.push({ id, head: JSON.parse(init.body).head_sha }); return response({ id });
+    }
+    if (/\/check-runs\/\d+$/.test(path) && init.method === 'PATCH') return response({}, options.failFinishId === Number(path.split('/').at(-1)) ? 503 : 200);
     if (path.endsWith('/pulls') && u.searchParams.get('state') === 'open') return options.listFailure ? response({}, 503) : response(list);
     const pm = path.match(/\/pulls\/(\d+)$/);
     if (pm) {
@@ -43,7 +52,7 @@ function fixture(options = {}) {
 }
 
 test('branch rules and feature approval independent of prefix', () => {
-  for (const value of ['feature/ammu-sammu-customer-2-add-cart', 'bug/konkan-fine-dine-admin-15-fix', 'release/monorepo-1-ship']) assert.match(value, BRANCH);
+  for (const value of ['feature/kokani-dine-inn-customer-40-new-brand', 'feature/kokani-dine-inn-admin-40-new-brand', 'feature/ammu-sammu-customer-2-add-cart', 'bug/kokani-dine-inn-admin-15-fix', 'release/monorepo-1-ship']) assert.match(value, BRANCH);
   for (const value of ['Feature/monorepo-3-x', 'feature/monorepo-03-x', 'feature/other-3-x', 'feature/monorepo-3-X', 'feature/monorepo-3-x--y', 'feature/monorepo-0-x']) assert.doesNotMatch(value, BRANCH);
   assert.deepEqual(err(pr(), issue()), []);
   for (const prefix of ['feature', 'bug', 'release']) {
@@ -94,14 +103,67 @@ test('default-branch target accepts a retained older PR base snapshot', async ()
   assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'success');
 });
 
-test('non-default target is rejected and changes to base metadata are detected', async () => {
+test('non-main target is rejected and changes to base metadata are detected', async () => {
   const p = pr(); p.base.ref = 'other';
   const wrongTarget = fixture({ prs: [p] });
-  await assert.rejects(wrongTarget.runner.runBatch());
-  assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /repository default branch/);
+  await wrongTarget.runner.runBatch();
+  assert.equal(wrongTarget.calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
+  assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /target main/);
   const changed = fixture({ changePr: value => { value.base.sha = 'new-base-during-evaluation'; } });
   await changed.runner.runBatch();
   assert.match(changed.calls.find(c => c.method === 'PATCH').payload.output.summary, /metadata changed/);
+});
+
+test('dependent PR denial does not fail a batch containing a valid main-target PR', async () => {
+  const dependent = pr(8, 'dependent-head'); dependent.base.ref = 'feature/monorepo-3-predecessor';
+  const { runner, calls } = fixture({ prs: [pr(), dependent] });
+  await runner.runBatch();
+  const results = calls.filter(c => c.method === 'PATCH');
+  assert.deepEqual(results.map(c => c.payload.conclusion), ['success', 'failure']);
+  assert.match(results[1].payload.output.summary, /Merge its predecessor and retarget/);
+});
+
+test('changing repository default branch cannot relax the main-only target rule', async () => {
+  const p = pr(); p.base.ref = 'feature/monorepo-3-first';
+  const { runner, calls } = fixture({ prs: [p], event: { repository: { default_branch: p.base.ref } } });
+  await runner.runBatch();
+  assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
+  assert.match(calls.find(c => c.method === 'PATCH').payload.output.summary, /target main/);
+});
+
+test('trusted migration rejection fails its PR check without failing the batch', async () => {
+  const { runner, calls } = fixture({ files: [{ filename: 'supabase/migrations/new.sql', status: 'added' }] });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'failure');
+  assert.match(result.output.summary, /fold the change into the baseline/);
+  assert.ok(calls.some(c => c.path.endsWith('/git/ref/heads/main')));
+});
+
+test('trusted policy API/configuration failures fail the batch and its check', async () => {
+  for (const options of [{ policyFailure: 503 }, { policy: { mode: 'invented-mode' } }]) {
+    const { runner, calls } = fixture(options);
+    await assert.rejects(runner.runBatch(), /evaluation failed/);
+    assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
+  }
+});
+
+test('migration overrides never exempt an oversized PR from the file cap', async () => {
+  const p = pr(); p.changed_files = 16; p.body += '\nMigration-Policy-Override: shared staging applied baseline';
+  const { runner, calls } = fixture({ prs: [p], files: Array.from({ length: 16 }, (_, n) => ({ filename: `supabase/migrations/${n}.sql`, status: 'added' })) });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'failure');
+  assert.match(result.output.summary, /16 reviewable files exceed the limit of 15/);
+  assert.doesNotMatch(result.output.summary, /do not add migration files/);
+});
+
+test('pre-release-open migration warnings are published in the same successful check', async () => {
+  const { runner, calls } = fixture({ policy: { mode: 'pre-release-open' }, files: [{ filename: 'supabase/migrations/new.sql', status: 'added' }] });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'success');
+  assert.match(result.output.summary, /Warning: New migration file/);
 });
 
 test('initial, evaluation and final metadata failures complete started check as failure', async () => {
@@ -117,11 +179,47 @@ test('issue and PR body changes fail, volatile repo metadata is ignored', async 
   }
 });
 
-test('shared head including fork is rejected and failures do not prevent other PRs', async () => {
+test('shared heads including forks fail their checks without failing the batch or unrelated PRs', async () => {
   const a = pr(1, 'same'), b = pr(2, 'same'), c = pr(3, 'different'); b.head.repo.id = 99;
-  const { runner, calls } = fixture({ prs: [a, b, c] }); await assert.rejects(runner.runBatch());
+  const { runner, calls } = fixture({ prs: [a, b, c] }); await runner.runBatch();
   const patched = calls.filter(c => c.method === 'PATCH'); assert.equal(patched.length, 3);
   assert.equal(patched[0].payload.conclusion, 'failure'); assert.equal(patched[1].payload.conclusion, 'failure'); assert.equal(patched[2].payload.conclusion, 'success');
+  assert.match(patched[0].payload.output.summary, /distinct head commit/);
+  assert.doesNotMatch(patched[0].payload.output.summary, /could not verify/);
+});
+
+test('dependent and ordinary evaluator denials remain per-PR verdicts in a mixed batch', async () => {
+  const dependent = pr(8, 'dependent'); dependent.base.ref = 'feature/monorepo-3-first';
+  const invalid = pr(9, 'invalid'); invalid.head.ref = 'not-a-policy-branch';
+  const { runner, calls } = fixture({ prs: [dependent, pr(), invalid, pr(10, 'last-valid')] });
+  await runner.runBatch();
+  const results = calls.filter(c => c.method === 'PATCH').map(c => c.payload);
+  assert.deepEqual(results.map(c => c.conclusion), ['failure', 'success', 'failure', 'success']);
+  assert.match(results[0].output.summary, /Merge its predecessor and retarget/);
+  assert.match(results[2].output.summary, /Branch must be/);
+});
+
+test('API, evaluator and check-publication failures still fail a mixed batch and evaluate unrelated PRs', async () => {
+  for (const failure of [
+    { failPr: 8 },
+    { evaluator: (p, ...args) => { if (p.number === 8) throw new Error('evaluator outage'); return evaluate(p, ...args); } },
+    { failStartHead: 'broken' },
+    { failFinishId: 2 },
+  ]) {
+    const { runner, calls } = fixture({ ...failure, prs: [pr(7, 'first'), pr(8, 'broken'), pr(9, 'last')] });
+    await assert.rejects(runner.runBatch(), /PR 8:/);
+    const lastCheck = calls.find(c => c.method === 'POST' && c.payload.head_sha === 'last');
+    assert.ok(lastCheck, 'unrelated last PR gets a check');
+    const writes = calls.filter(c => c.method === 'PATCH');
+    assert.equal(writes.at(-1).payload.conclusion, 'success', 'unrelated last PR remains successful');
+  }
+});
+
+test('publishing an expected dependent-PR rejection can still fail the workflow on an API error', async () => {
+  const dependent = pr(8, 'dependent'); dependent.base.ref = 'feature/monorepo-3-first';
+  const { runner, calls } = fixture({ prs: [dependent, pr()], failFinishId: 1 });
+  await assert.rejects(runner.runBatch(), /could not complete check/);
+  assert.equal(calls.filter(c => c.method === 'PATCH').at(-1).payload.conclusion, 'success');
 });
 
 test('event check starts before failing open PR scan', async () => {

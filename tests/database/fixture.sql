@@ -11,5 +11,18 @@ create function auth.jwt() returns jsonb language sql stable as $$ select coales
 create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid(), auth.jwt() to anon, authenticated, service_role;
+-- Minimal Storage metadata/RLS contract for local SQL isolation tests. The real
+-- Storage HTTP writer/decoder is verified separately by Edge Function tests.
+create schema storage;
+create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text references storage.buckets(id),name text,unique(bucket_id,name));
+alter table storage.objects enable row level security;
+grant usage on schema storage to anon,authenticated,service_role;
+grant select,insert,update,delete on storage.objects to anon,authenticated,service_role;
+grant select on storage.buckets to anon,authenticated;
+grant all on storage.buckets to service_role;
 -- Exercise the Supabase publication branch too.
 create publication supabase_realtime;
+-- Shared assertion helper for every suite (created before the baseline migration).
+create function public.test_assert(ok boolean, message text) returns void language plpgsql as $$ begin if ok is distinct from true then raise exception 'assertion failed: %', message; end if; end $$;
+grant execute on function public.test_assert(boolean,text) to anon, authenticated;

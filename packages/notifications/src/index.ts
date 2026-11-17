@@ -1,6 +1,6 @@
 /** The only permitted event names and dimensions. Never accept caller-provided text. */
 export type EventName = 'app_open' | 'menu_view' | 'ordering_started' | 'order_completed' | 'notifications_enabled';
-export type Brand = 'ammu_sammu' | 'konkan_fine_dine';
+export type Brand = 'ammu_sammu' | 'kokani_dine_inn';
 export type Audience = 'customer' | 'admin';
 export type AnalyticsContext = { brand: Brand; audience: Audience };
 export interface AnalyticsPort {
@@ -9,7 +9,7 @@ export interface AnalyticsPort {
   send(name: EventName, context: AnalyticsContext): void;
 }
 const events = new Set<string>(['app_open', 'menu_view', 'ordering_started', 'order_completed', 'notifications_enabled']);
-const brands = new Set<string>(['ammu_sammu', 'konkan_fine_dine']);
+const brands = new Set<string>(['ammu_sammu', 'kokani_dine_inn']);
 const audiences = new Set<string>(['customer', 'admin']);
 
 /** No SDK is initialized until setConsent(true). Calls are serialized across withdrawal. */

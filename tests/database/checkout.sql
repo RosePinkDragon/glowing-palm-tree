@@ -1,62 +1,38 @@
 \set ON_ERROR_STOP on
--- Existing isolation fixture leaves a deliberately fictional test polygon at 0..1.
-update public.businesses set delivery_fee_paise=500,min_order_paise=10000 where slug='ammu-sammu';
-select public.test_assert(not has_function_privilege('anon','public.place_order(text,jsonb,jsonb,jsonb,uuid)','execute') and not has_function_privilege('anon','public.check_delivery_eligibility(text,jsonb)','execute') and not has_function_privilege('anon','public.transition_order(uuid,text,integer)','execute'), 'RPCs unavailable to anon despite default grants');
+-- Checkout through the saved-address path (customer_addresses row + address_id/address_version),
+-- with the accepted-pricing quote place_order requires. isolation.sql leaves the fictional 0..1 square
+-- verified for Ammu Sammu; customer A's saved pin (final-fixture.sql) lies inside it.
+update public.businesses set delivery_fee_paise=500,min_order_paise=10000,accepting_orders=true where slug='ammu-sammu';
+select public.test_assert(not has_function_privilege('anon','public.place_order(text,jsonb,jsonb,jsonb,uuid,jsonb)','execute') and not has_function_privilege('anon','public.transition_order(uuid,text,integer)','execute'), 'RPCs unavailable to anon despite default grants');
+-- Generate a full-size catalog to exercise line-count and quantity boundaries.
+insert into public.menu_items (id,business_id,name,category_id,price_paise)
+select md5('boundary-item-' || n)::uuid,'10000000-0000-4000-8000-000000000001','Boundary ' || n,public.test_category('10000000-0000-4000-8000-000000000001','Boundary'),1000 from generate_series(1,21) n;
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000001',false);
 select set_config('test.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,false);
 select set_config('test.items','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":2}]',false);
-select set_config('test.delivery','{"name":"Test Customer","phone":"123","address_line":"Test address"}',false);
-select public.test_assert((public.check_delivery_eligibility('ammu-sammu',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'inside confidence circle');
-select public.test_assert(not (public.check_delivery_eligibility('konkan-fine-dine',current_setting('test.fix')::jsonb)->>'eligible')::boolean,'unconfigured zone denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',2,'longitude',2,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'outside zone denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()))->>'eligible')::boolean,'uncertainty overlaps boundary denied');
-select public.test_assert((public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',1,'captured_at',clock_timestamp()))->>'eligible')::boolean,'one metre accuracy accepted');
-select public.test_assert((public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',100,'captured_at',clock_timestamp()))->>'eligible')::boolean,'100 metre accuracy accepted');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',0.99,'captured_at',clock_timestamp()))->>'eligible')::boolean,'sub-metre accuracy denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',101,'captured_at',clock_timestamp()))->>'eligible')::boolean,'inaccurate fix denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()-interval '6 minutes'))->>'eligible')::boolean,'stale fix denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp()+interval '1 minute'))->>'eligible')::boolean,'future fix denied');
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu','{"latitude":"bad"}')->>'eligible')::boolean,'malformed fix denied');
--- A 100 m buffered polygon is inscribed: its straight edges do not cover
--- the entire 100 m circle despite matching the usual buffer approximation.
-reset role;
-do $$ declare ns text; begin
-  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%1$I.st_multi(%1$I.st_buffer(%1$I.st_setsrid(%1$I.st_makepoint(0.5,0.5),4326)::%1$I.geography,100)::%1$I.geometry) where slug=''ammu-sammu''',ns);
-end $$;
-set role authenticated;
-select public.test_assert(not (public.check_delivery_eligibility('ammu-sammu',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',100,'captured_at',clock_timestamp()))->>'eligible')::boolean,'inscribed buffer does not cover full confidence circle');
-reset role;
-do $$ declare ns text; begin
-  select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%1$I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326) where slug=''ammu-sammu''',ns);
-end $$;
-set role authenticated;
--- Generate a full-size catalog to exercise line-count and quantity boundaries.
-reset role;
-insert into public.menu_items (id,business_id,name,category,price_paise)
-select md5('boundary-item-' || n)::uuid,'10000000-0000-4000-8000-000000000001','Boundary ' || n,'Boundary',1000 from generate_series(1,21) n;
-set role authenticated;
-select set_config('test.twenty',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select id from public.menu_items where category='Boundary' order by id limit 20) x),false);
-select set_config('test.twenty_one',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select id from public.menu_items where category='Boundary' order by id limit 21) x),false);
-select public.test_assert((public.place_order('ammu-sammu',current_setting('test.twenty')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000010')->>'subtotal_paise')::integer=20000,'20 lines accepted');
-select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":10}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000011')->>'subtotal_paise')::integer=150000,'quantity 10 accepted');
+select set_config('test.delivery',public.test_delivery()::text,false);
+select public.test_assert(current_setting('test.delivery')::jsonb ?& array['address_id','address_version'] and not current_setting('test.delivery')::jsonb ? 'address_line', 'checkout uses the saved-address contract');
+select set_config('test.twenty',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select i.id from public.menu_items i join public.menu_categories c on c.id=i.category_id where c.name='Boundary' and c.business_id='10000000-0000-4000-8000-000000000001' order by i.id limit 20) x),false);
+select set_config('test.twenty_one',(select jsonb_agg(jsonb_build_object('menu_item_id',id,'quantity',1))::text from (select i.id from public.menu_items i join public.menu_categories c on c.id=i.category_id where c.name='Boundary' and c.business_id='10000000-0000-4000-8000-000000000001' order by i.id limit 21) x),false);
+select public.test_assert((public.place_order('ammu-sammu',current_setting('test.twenty')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000010',public.test_quote('ammu-sammu',current_setting('test.twenty')::jsonb))->>'subtotal_paise')::integer=20000,'20 lines accepted');
+select public.test_assert((public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":10}]',current_setting('test.delivery')::jsonb,null,'60000000-0000-4000-8000-000000000011',public.test_quote('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":10}]'))->>'subtotal_paise')::integer=150000,'quantity 10 accepted without a phone fix');
 do $$ begin
-  begin perform public.place_order('ammu-sammu',current_setting('test.twenty_one')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000012'); raise exception '21 lines accepted'; exception when invalid_parameter_value then null; end;
-  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":11}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000013'); raise exception 'quantity 11 accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.twenty_one')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000012','{}'); raise exception '21 lines accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":11}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000013','{}'); raise exception 'quantity 11 accepted'; exception when invalid_parameter_value then null; end;
 end $$;
-select set_config('test.result',public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001')::text,false);
+select set_config('test.result',public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001',public.test_quote('ammu-sammu',current_setting('test.items')::jsonb))::text,false);
 select set_config('test.order_id',current_setting('test.result')::jsonb->>'id',false);
-select public.test_assert((current_setting('test.result')::jsonb->>'total_paise')::integer=30500 and (current_setting('test.result')::jsonb->>'version')::integer=1,'server price and fee');
+select public.test_assert((current_setting('test.result')::jsonb->>'outcome')='placed' and (current_setting('test.result')::jsonb->>'total_paise')::integer=30500 and (current_setting('test.result')::jsonb->>'version')::integer=1,'server price and fee');
 select public.test_assert((select count(*)=1 and min(unit_price_paise)=15000 and min(quantity)=2 from public.order_items where order_id=current_setting('test.order_id')::uuid),'item snapshot');
 select public.test_assert((select count(*)=1 from public.order_status_history where order_id=current_setting('test.order_id')::uuid and status='placed'),'initial history');
-select public.test_assert(public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001')->>'id'=current_setting('test.order_id'),'retry returns same order');
+select public.test_assert((select saved_address_id='74000000-0000-4000-8000-000000000001' and saved_address_version=1 and address_house='Fixture house A' and address_street_area='Fixture Road' and placed_from_distance_m=0 from public.orders where id=current_setting('test.order_id')::uuid),'order keeps the saved-address snapshot and phone distance');
+select public.test_assert(public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001',public.test_quote('ammu-sammu',current_setting('test.items')::jsonb))->>'id'=current_setting('test.order_id'),'retry returns same order');
 do $$ begin
-  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,'{"name":"Changed","phone":"123","address_line":"Test address"}',current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001'); raise exception 'idempotency mismatch accepted'; exception when invalid_parameter_value then null; end;
-  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000002","quantity":1}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000002'); raise exception 'cross tenant item accepted'; exception when invalid_parameter_value then null; end;
-  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":0}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000003'); raise exception 'zero quantity accepted'; exception when invalid_parameter_value then null; end;
-  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1},{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000004'); raise exception 'duplicate item accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,public.test_delivery('Changed'),current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001',public.test_quote('ammu-sammu',current_setting('test.items')::jsonb)); raise exception 'idempotency mismatch accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000002","quantity":1}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000002','{}'); raise exception 'cross tenant item accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":0}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000003','{}'); raise exception 'zero quantity accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1},{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000004','{}'); raise exception 'duplicate item accepted'; exception when invalid_parameter_value then null; end;
   begin perform public.transition_order(current_setting('test.order_id')::uuid,'accepted',1); raise exception 'customer transition accepted'; exception when insufficient_privilege then null; end;
 end $$;
 reset role;
@@ -64,7 +40,7 @@ update public.menu_items set available=false, price_paise=20000 where id='200000
 set role authenticated;
 select public.test_assert((select unit_price_paise=15000 from public.order_items where order_id=current_setting('test.order_id')::uuid), 'snapshot survives menu changes');
 do $$ begin
-  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000005'); raise exception 'unavailable item accepted'; exception when invalid_parameter_value then null; end;
+  begin perform public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000005','{}'); raise exception 'unavailable item accepted'; exception when invalid_parameter_value then null; end;
 end $$;
 reset role;
 update public.menu_items set available=true, price_paise=15000 where id='20000000-0000-4000-8000-000000000001';
@@ -88,3 +64,5 @@ end $$;
 select public.test_assert((select count(*)=5 from public.order_status_history where order_id=current_setting('test.order_id')::uuid),'history tracks all states exactly once');
 reset role;
 select public.test_assert((select count(*)=1 from public.orders where customer_id='30000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000001'),'one order per idempotency key');
+-- Leave the restaurant closed again, as accepting-orders.sql expects to start.
+update public.businesses set accepting_orders=false where slug='ammu-sammu';

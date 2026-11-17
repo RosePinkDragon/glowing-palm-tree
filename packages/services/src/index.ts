@@ -1,12 +1,65 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, type AppAudience, type BusinessSlug, type CartLine, type DeliveryDetails, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
-export interface Business { id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean }
-export interface SaveMenuItemInput { id?: string; name: string; description: string; category: string; pricePaise: number; isAvailable: boolean; isDemo: boolean }
-export interface PlaceOrderInput { lines: readonly CartLine[]; delivery: DeliveryDetails; location: LocationFix; idempotencyKey: string }
+export interface Business { contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
+export interface RestaurantSettings { contactPhone: string | null; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; version: number }
+/** Delivery-area status from the business row (the polygon is never fetched): a verified radius, another verified source, or not verified. */
+export type DeliveryAreaStatus = { kind: 'radius'; radiusM: number } | { kind: 'verified' } | { kind: 'unverified' };
+/** What the owner's Restaurant details screen reads: the editable settings plus developer-controlled facts shown read-only. */
+export interface RestaurantSettingsView extends RestaurantSettings { orderPrefix: string; deliveryArea: DeliveryAreaStatus }
+export interface SaveRestaurantSettingsInput { contactPhone: string; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; expectedVersion: number }
+type SettingsField = keyof SaveRestaurantSettingsInput;
+/** National, trunk-prefixed, or +91 Indian numbers become canonical E.164. */
+function settingsPhone(value: unknown, mobileOnly: boolean): string | null {
+  if (typeof value !== 'string' || !/^\+?[0-9 ().-]+$/.test(value.trim())) return null;
+  let digits = value.trim().replace(/[ ().-]/g, '');
+  if (digits.startsWith('+91')) digits = digits.slice(3);
+  else if (digits.startsWith('+')) return null;
+  else if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return (mobileOnly ? /^[6-9][0-9]{9}$/ : /^[1-9][0-9]{9}$/).test(digits) ? `+91${digits}` : null;
+}
+/** Parse rupee input exactly: never round a third decimal place or a floating-point amount. */
+export function restaurantAmountPaise(value: string, field: 'deliveryFeePaise' | 'minOrderPaise'): number {
+  const limit = field === 'deliveryFeePaise' ? 100000 : 1000000;
+  if (typeof value !== 'string' || !/^[0-9]{1,5}(\.[0-9]{1,2})?$/.test(value.trim())) throw new RestaurantSettingsValidationError({ [field]: 'Enter rupees with up to two decimal places.' });
+  const [whole, fraction = ''] = value.trim().split('.');
+  const paise = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  if (paise > limit) throw new RestaurantSettingsValidationError({ [field]: `Enter an amount from 0 to ${limit / 100} rupees.` });
+  return paise;
+}
+export function validateRestaurantSettings(input: SaveRestaurantSettingsInput): SaveRestaurantSettingsInput {
+  const fields: Partial<Record<SettingsField, string>> = {};
+  const contactPhone = settingsPhone(input?.contactPhone, false);
+  const whatsappEmpty = input?.whatsappPhone === null || (typeof input?.whatsappPhone === 'string' && !input.whatsappPhone.trim());
+  const whatsappPhone = whatsappEmpty ? null : settingsPhone(input?.whatsappPhone, true);
+  if (!contactPhone) fields.contactPhone = 'Enter an Indian mobile or landline number.';
+  if (!whatsappEmpty && !whatsappPhone) fields.whatsappPhone = 'Enter an Indian mobile number or leave it empty.';
+  if (!Number.isSafeInteger(input?.deliveryFeePaise) || input.deliveryFeePaise < 0 || input.deliveryFeePaise > 100000) fields.deliveryFeePaise = 'Enter a delivery fee from 0 to 1,000 rupees, in whole paise.';
+  if (!Number.isSafeInteger(input?.minOrderPaise) || input.minOrderPaise < 0 || input.minOrderPaise > 1000000) fields.minOrderPaise = 'Enter a minimum order from 0 to 10,000 rupees, in whole paise.';
+  if (!Number.isInteger(input?.expectedVersion) || input.expectedVersion < 1 || input.expectedVersion >= 2147483647) fields.expectedVersion = 'Refresh restaurant details before saving.';
+  if (Object.keys(fields).length) throw new RestaurantSettingsValidationError(fields);
+  return { contactPhone: contactPhone!, whatsappPhone, deliveryFeePaise: input.deliveryFeePaise, minOrderPaise: input.minOrderPaise, expectedVersion: input.expectedVersion };
+}
+export interface MenuCategory { id: string; businessId: BusinessSlug; name: string; sortOrder: number }
+export interface SaveCategoryInput { id?: string; name: string; sortOrder: number }
+export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
+export interface PricingTerms {
+  lines: { menu_item_id: string; quantity: number; unit_price_paise: number; line_total_paise: number }[];
+  delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
+}
+/**
+ * An order goes to a saved address (#48): the server checks that address's pin and snapshots the
+ * reviewed version. location (the phone, optional) only measures how far away the customer is.
+ */
+export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: { name: string; phone: string }; location: LocationFix | null; idempotencyKey: string; savedAddress: { id: string; version: number } }
+/** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
+export interface OrderCursor { createdAtISO: string; id: string }
+export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
+export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
 export class ServiceError extends Error {
@@ -14,10 +67,86 @@ export class ServiceError extends Error {
   override readonly cause?: unknown;
   constructor(code: string, message: string, cause?: unknown) { super(message); this.name = 'ServiceError'; this.code = code; this.cause = cause; }
 }
+export class RestaurantSettingsValidationError extends ServiceError {
+  readonly fields: Partial<Record<SettingsField, string>>;
+  constructor(fields: Partial<Record<SettingsField, string>>) { super('INVALID_SETTINGS', 'Check the restaurant details.'); this.name = 'RestaurantSettingsValidationError'; this.fields = fields; }
+}
+
+function mapRestaurantSettings(value: unknown): RestaurantSettings {
+  const row = value as Record<string, unknown> | null;
+  if (!row || (row.contact_phone !== null && (typeof row.contact_phone !== 'string' || !/^\+91[1-9][0-9]{9}$/.test(row.contact_phone))) ||
+      (row.whatsapp_phone !== null && (typeof row.whatsapp_phone !== 'string' || !/^\+91[6-9][0-9]{9}$/.test(row.whatsapp_phone))) ||
+      !Number.isInteger(row.settings_version) || (row.settings_version as number) < 1 || (row.settings_version as number) > 2147483647 ||
+      !Number.isInteger(row.delivery_fee_paise) || (row.delivery_fee_paise as number) < 0 || (row.delivery_fee_paise as number) > 100000 ||
+      !Number.isInteger(row.min_order_paise) || (row.min_order_paise as number) < 0 || (row.min_order_paise as number) > 1000000) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant details.');
+  return { contactPhone: row.contact_phone as string | null, whatsappPhone: row.whatsapp_phone as string | null, deliveryFeePaise: row.delivery_fee_paise as number, minOrderPaise: row.min_order_paise as number, version: row.settings_version as number };
+}
+/** Strict mapping of the read: the four settings plus order prefix and delivery-area status columns. */
+export function mapRestaurantSettingsView(value: unknown): RestaurantSettingsView {
+  const settings = mapRestaurantSettings(value);
+  const row = value as Record<string, unknown>;
+  const text = (field: unknown) => field === null || field === undefined || typeof field === 'string';
+  if (typeof row.order_prefix !== 'string' || !/^[A-Z][A-Z0-9]{1,9}$/.test(row.order_prefix) || !text(row.service_area_source) || !text(row.service_area_version) || !text(row.service_area_verified_at)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant details.');
+  const source = (row.service_area_source as string | null | undefined)?.trim(), version = (row.service_area_version as string | null | undefined)?.trim();
+  let deliveryArea: DeliveryAreaStatus = { kind: 'unverified' };
+  if (source && version && row.service_area_verified_at) {
+    const radius = version.match(/^radius-([0-9]{3,5})m$/);
+    const metres = radius ? Number(radius[1]) : 0;
+    deliveryArea = metres >= 500 && metres <= 50000 ? { kind: 'radius', radiusM: metres } : { kind: 'verified' };
+  }
+  return { ...settings, orderPrefix: row.order_prefix, deliveryArea };
+}
+
+/** Only constructed after validating an explicit transactional no-order response. */
+export class PricingChangedError extends ServiceError {
+  readonly pricing: PricingTerms;
+  constructor(pricing: PricingTerms) { super('PRICING_CHANGED', 'Prices or order terms have changed. Review the revised quote.'); this.pricing = pricing; }
+}
+export function validateRevisedPricing(value: unknown, lines: readonly CartLine[]): PricingTerms {
+  const invalid = () => { throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid revised quote.'); };
+  if (!value || typeof value !== 'object') return invalid();
+  const q = value as PricingTerms;
+  const amount = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 2147483647;
+  if (!Array.isArray(q.lines) || !q.lines.length || q.lines.length !== lines.length || ![q.delivery_fee_paise, q.min_order_paise, q.subtotal_paise, q.total_paise].every(amount)) return invalid();
+  let subtotal = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const a = q.lines[i], b = lines[i];
+    if (!a || a.menu_item_id !== b.item.id || a.quantity !== b.quantity || !amount(a.unit_price_paise) || a.unit_price_paise <= 0 || !amount(a.line_total_paise) || a.line_total_paise !== a.unit_price_paise * a.quantity) return invalid();
+    subtotal += a.line_total_paise;
+  }
+  if (q.subtotal_paise !== subtotal || q.total_paise !== subtotal + q.delivery_fee_paise) return invalid();
+  // Copy just the validated contract, never trust arbitrary metadata in the response.
+  return { lines: q.lines.map(a => ({ menu_item_id: a.menu_item_id, quantity: a.quantity, unit_price_paise: a.unit_price_paise, line_total_paise: a.line_total_paise })), delivery_fee_paise: q.delivery_fee_paise, min_order_paise: q.min_order_paise, subtotal_paise: q.subtotal_paise, total_paise: q.total_paise };
+}
 
 function fail(error: { message: string; code?: string } | null, action: string): void {
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
 }
+
+const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validOrderCursor(value: unknown): value is OrderCursor {
+  if (!value || typeof value !== 'object') return false;
+  const { createdAtISO, id } = value as OrderCursor;
+  if (typeof id !== 'string' || !orderIdPattern.test(id) || typeof createdAtISO !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.exec(createdAtISO);
+  if (!match || !Number.isFinite(Date.parse(createdAtISO))) return false;
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate() && hour <= 23 && minute <= 59 && second <= 59;
+}
+function orderPageOptions(value: OrderPageOptions): { cursor: OrderCursor | null; limit: number } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ServiceError('INVALID_ORDER_QUERY', 'Choose a valid order page.');
+  const { cursor = null, limit = 20 } = value;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ServiceError('INVALID_ORDER_QUERY', 'Order page size must be a whole number from 1 to 50.');
+  if (cursor !== null && !validOrderCursor(cursor)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order page cursor is invalid.');
+  return { cursor: cursor === null ? null : { createdAtISO: cursor.createdAtISO, id: cursor.id }, limit };
+}
+
+/** SQLSTATE raised by place_order when the restaurant is closed for new orders (#58). */
+const NOT_ACCEPTING_ORDERS_SQLSTATE = 'PT409';
+/** SQLSTATE raised by place_order when the reviewed saved address was edited or deleted (#48). */
+const ADDRESS_CHANGED_SQLSTATE = 'PT412';
+const addressChanged = (cause?: unknown) => new ServiceError('ADDRESS_CHANGED', 'This address was changed or removed, maybe in the other app. Check it and try again.', cause);
 
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
@@ -90,21 +219,52 @@ function publicConfig(): PublicConfig {
   return { url: process.env.EXPO_PUBLIC_SUPABASE_URL, anonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY };
 }
 
-type MenuRow = { id: string; name: string; description: string | null; category: string; price_paise: number; available: boolean; is_demo: boolean; image_url: string | null };
-type OrderRow = { id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; created_at: string; order_items: { menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: { status: OrderStatus; created_at: string }[] };
-export function mapMenu(row: MenuRow, slug: BusinessSlug): MenuItem {
-  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.category, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, ...(row.image_url ? { imageUrl: row.image_url } : {}) };
+type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+// Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
+type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
+const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
+export function mapMenu(row: MenuRow, slug: BusinessSlug, storageBase = ''): MenuItem {
+  return { id: row.id, businessId: slug, name: row.name, description: row.description ?? '', category: row.menu_categories.name, categoryId: row.category_id, categorySortOrder: row.menu_categories.sort_order, diet: row.diet, pricePaise: row.price_paise, isAvailable: row.available, isDemo: row.is_demo, isFeatured: row.is_featured, sortOrder: row.sort_order, ...(row.image_url ? { imageUrl: storageBase + row.image_url } : {}) };
+}
+// Only a complete snapshot becomes a structured address; older typed-address orders keep addressLine alone.
+function orderAddress(row: OrderRow): { address?: OrderAddress; placedFromDistanceM?: number | null; kitchenDistanceM?: number | null } {
+  if (!row.saved_address_id || !isAddressLabel(row.address_label) || !isAddressLocationSource(row.address_location_source) || !row.address_house || !row.address_street_area) return {};
+  const address: OrderAddress = { label: row.address_label, house: row.address_house, streetArea: row.address_street_area, locationSource: row.address_location_source,
+    ...(typeof row.address_custom_label === 'string' && row.address_custom_label ? { customLabel: row.address_custom_label } : {}), ...(typeof row.address_landmark === 'string' && row.address_landmark ? { landmark: row.address_landmark } : {}) };
+  const distance = row.placed_from_distance_m;
+  const kitchen = row.kitchen_distance_m;
+  return { address, placedFromDistanceM: Number.isSafeInteger(distance) && (distance as number) >= 0 ? distance as number : null,
+    kitchenDistanceM: Number.isSafeInteger(kitchen) && (kitchen as number) >= 0 ? kitchen as number : null };
+}
+type AddressRow = { id: string; label: string; custom_label: string | null; house: string; street_area: string; landmark: string | null; latitude: number; longitude: number; location_source: string; version: number; updated_at: string; in_area: boolean; distance_m: number | null };
+export function mapSavedAddress(row: AddressRow): SavedAddress {
+  const optionalText = (value: unknown) => value === null || value === undefined || typeof value === 'string';
+  if (!row || typeof row.id !== 'string' || !isAddressLabel(row.label) || !isAddressLocationSource(row.location_source) || typeof row.house !== 'string' || !row.house.trim() || typeof row.street_area !== 'string' || !row.street_area.trim() ||
+      !optionalText(row.custom_label) || !optionalText(row.landmark) || typeof row.updated_at !== 'string' ||
+      !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90 || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180 ||
+      !Number.isSafeInteger(row.version) || row.version < 1 || typeof row.in_area !== 'boolean') {
+    throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid saved address.');
+  }
+  return { id: row.id, label: row.label, ...(row.custom_label ? { customLabel: row.custom_label } : {}), house: row.house, streetArea: row.street_area, ...(row.landmark ? { landmark: row.landmark } : {}),
+    latitude: row.latitude, longitude: row.longitude, locationSource: row.location_source, version: row.version, updatedAtISO: row.updated_at,
+    inArea: row.in_area, distanceM: Number.isSafeInteger(row.distance_m) && (row.distance_m as number) >= 0 ? row.distance_m : null };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
-const orderSelect = '*, order_items(*), order_status_history(*)';
+const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
+// History columns are explicit: customers may read status and time only (#98).
+const customerOrderSelect = '*, order_items(*), order_status_history(status, created_at)';
+const ownerOrderSelect = '*, order_items(*), order_status_history(status, created_at, order_status_actors(actor_name))';
 
 export function createMarketServices(options: ServiceOptions) {
   const { businessSlug: slug, audience } = options;
+  const orderSelect = audience === 'admin' ? ownerOrderSelect : customerOrderSelect;
   const config = options.config ?? publicConfig();
   const url = config.url?.trim();
   const key = config.anonKey?.trim();
+  const photoBase = `${url?.replace(/\/+$/, '')}/storage/v1/object/public/menu-images/`;
   if (Boolean(url) !== Boolean(key)) throw new ServiceError('INVALID_CONFIG', 'Set both EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY, or neither for demo browsing.');
   if (key && !isPublicKey(key)) throw new ServiceError('INVALID_CONFIG', 'Use a Supabase publishable key or legacy anon key for the client.');
   const persistence = safeStorage(options.storage ?? storage);
@@ -113,6 +273,7 @@ export function createMarketServices(options: ServiceOptions) {
   let generation = 0;
   let sessionUserId: string | undefined;
   const subscriptions = new Set<() => void>();
+  const publicSubscriptions = new Set<() => void>();
   const clearSubscriptions = () => { generation++; for (const unsubscribe of subscriptions) unsubscribe(); subscriptions.clear(); };
   const authListener = client?.auth.onAuthStateChange((event, session) => {
     const nextId = session?.user.id;
@@ -125,18 +286,18 @@ export function createMarketServices(options: ServiceOptions) {
     return client;
   };
   const getBusiness = async (): Promise<Business> => {
-    if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false };
-    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled').eq('slug', slug).single();
+    if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
+    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone, whatsapp_phone, settings_version').eq('slug', slug).single();
     fail(error, 'Could not load business');
     if (!data) throw new ServiceError('NOT_FOUND', 'Business not found.');
-    return { id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled };
+    return { contactPhone: data.contact_phone ?? null, whatsappPhone: data.whatsapp_phone ?? null, settingsVersion: data.settings_version, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
-    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', pricePaise: 0, isAvailable: false, isDemo: true }];
+    if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', categoryId: `sample-category-${slug}`, categorySortOrder: 0, diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
     const business = await getBusiness();
-    const { data, error } = await client.from('menu_items').select('*').eq('business_id', business.id).order('name');
+    const { data, error } = await client.from('menu_items').select(menuSelect).eq('business_id', business.id).order('sort_order').order('name').order('id');
     fail(error, 'Could not load menu');
-    return (data ?? []).map(row => mapMenu(row as MenuRow, slug));
+    return (data ?? []).map(row => mapMenu(row as MenuRow, slug, photoBase));
   };
   const getOrders = async (): Promise<Order[]> => {
     const db = requireClient(); const business = await getBusiness();
@@ -149,6 +310,52 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await query.order('created_at', { ascending: false });
     fail(error, 'Could not load orders');
     return (data ?? []).map(row => mapOrder(row as OrderRow, slug));
+  };
+  // These reads are explicitly customer-scoped, even when the customer also has
+  // an admin membership (whose database policy can otherwise see all orders).
+  const customerOrderScope = async () => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to view your order history.');
+    const ensureCurrent = (userId?: string) => {
+      if (disposed || generation !== started || (userId !== undefined && sessionUserId !== undefined && sessionUserId !== userId)) {
+        throw new ServiceError('SESSION_CHANGED', 'Your account changed. Reload your orders.');
+      }
+    };
+    const { data, error } = await db.auth.getUser();
+    ensureCurrent(); fail(error, 'Could not verify your account');
+    if (!data.user) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to view orders.');
+    const userId = data.user.id;
+    ensureCurrent(userId);
+    const business = await getBusiness();
+    ensureCurrent(userId);
+    return { db, businessId: business.id, userId, ensureCurrent: () => ensureCurrent(userId) };
+  };
+  const readCustomerOrderPage = async (options: OrderPageOptions, activeOnly: boolean): Promise<OrderPage> => {
+    const { cursor, limit } = orderPageOptions(options);
+    const scope = await customerOrderScope();
+    let query = scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);
+    if (activeOnly) query = query.in('status', ['placed', 'accepted', 'preparing', 'out_for_delivery']);
+    // Both values have a strict grammar before entering PostgREST's raw OR filter.
+    if (cursor) query = query.or(`created_at.lt.${cursor.createdAtISO},and(created_at.eq.${cursor.createdAtISO},id.lt.${cursor.id})`);
+    const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(limit + 1);
+    scope.ensureCurrent(); fail(error, 'Could not load your orders');
+    const rows = (data ?? []) as OrderRow[];
+    const visible = rows.slice(0, limit), last = visible.at(-1);
+    let nextCursor: OrderCursor | null = null;
+    if (rows.length > limit && last) {
+      nextCursor = { createdAtISO: last.created_at, id: last.id };
+      if (!validOrderCursor(nextCursor)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order page.');
+    }
+    return { orders: visible.map(row => mapOrder(row, slug)), nextCursor };
+  };
+  const getOrderHistory = (options: OrderPageOptions = {}) => readCustomerOrderPage(options, false);
+  const getActiveOrders = (options: OrderPageOptions = {}) => readCustomerOrderPage(options, true);
+  const getCustomerOrder = async (id: string): Promise<Order | null> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ORDER_QUERY', 'The order reference is invalid.');
+    const scope = await customerOrderScope();
+    const { data, error } = await scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
+    scope.ensureCurrent(); fail(error, 'Could not load your order');
+    return data ? mapOrder(data as OrderRow, slug) : null;
   };
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
@@ -168,30 +375,115 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await db.from('business_memberships').select('role').eq('business_id', business.id).eq('user_id', user.user.id).eq('role', 'admin').maybeSingle();
     fail(error, 'Could not verify admin membership'); return !!data;
   };
+  // The signed-in owner's display name for this restaurant (#98); null if unnamed or not an owner here.
+  const getOwnerDisplayName = async (): Promise<string | null> => {
+    const db = requireClient(); const business = await getBusiness();
+    const { data: user, error: userError } = await db.auth.getUser(); fail(userError, 'Could not verify your account');
+    if (!user.user) return null;
+    const { data, error } = await db.from('business_memberships').select('display_name').eq('business_id', business.id).eq('user_id', user.user.id).eq('role', 'admin').maybeSingle();
+    fail(error, 'Could not load your owner name');
+    const name = (data as { display_name?: unknown } | null)?.display_name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  };
   const requireAdminBusiness = async (): Promise<Business> => {
     if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage the menu.');
     const business = await getBusiness();
     if (!await isAdmin()) throw new ServiceError('ADMIN_REQUIRED', 'Admin membership is required to manage the menu.');
     return business;
   };
+  const getRestaurantSettings = async (): Promise<RestaurantSettingsView> => {
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version, order_prefix, service_area_source, service_area_version, service_area_verified_at').eq('id', business.id).single();
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details.');
+    fail(error, 'Could not load restaurant details');
+    return mapRestaurantSettingsView(data);
+  };
+  const saveRestaurantSettings = async (input: SaveRestaurantSettingsInput): Promise<RestaurantSettings> => {
+    const valid = validateRestaurantSettings(input);
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an owner account to change restaurant details.');
+    const initial = await db.auth.getSession(); fail(initial.error, 'Could not restore session');
+    const expected = initial.data.session ? sessionIdentity(initial.data.session.access_token) : null;
+    if (!expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SESSION_CHANGED', 'Sign in again before changing restaurant details.');
+    await requireAdminBusiness();
+    const current = await db.auth.getSession(); fail(current.error, 'Could not restore session');
+    const token = current.data.session?.access_token;
+    const identity = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started || !identity || identity.userId !== expected.userId || identity.sessionId !== expected.sessionId || current.data.session?.user.id !== identity.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details before saving.');
+    const { data, error } = await db.rpc('save_restaurant_settings', {
+      p_business_slug: slug, p_contact_phone: valid.contactPhone, p_whatsapp_phone: valid.whatsappPhone,
+      p_delivery_fee_paise: valid.deliveryFeePaise, p_min_order_paise: valid.minOrderPaise, p_expected_version: valid.expectedVersion,
+    }).setHeader('Authorization', `Bearer ${token}`);
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details to check the saved values.');
+    if (error?.code === '40001') throw new ServiceError('SETTINGS_CHANGED', 'Another owner changed restaurant details. Refresh and review them before saving again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before saving restaurant details.', error);
+    if (error?.code === '22023') {
+      const field = error.details as SettingsField;
+      if (['contactPhone', 'whatsappPhone', 'deliveryFeePaise', 'minOrderPaise', 'expectedVersion'].includes(field)) throw new RestaurantSettingsValidationError({ [field]: error.message });
+      throw new ServiceError('INVALID_SETTINGS', 'Check the restaurant details and try again.', error);
+    }
+    fail(error, 'Could not save restaurant details');
+    const saved = mapRestaurantSettings(data);
+    if (saved.contactPhone !== valid.contactPhone || saved.whatsappPhone !== valid.whatsappPhone || saved.deliveryFeePaise !== valid.deliveryFeePaise || saved.minOrderPaise !== valid.minOrderPaise || saved.version !== valid.expectedVersion + 1) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the saved restaurant details. Refresh before trying again.');
+    return saved;
+  };
+  const getCategories = async (): Promise<MenuCategory[]> => {
+    if (!client) return [{ id: `sample-category-${slug}`, businessId: slug, name: 'Samples', sortOrder: 0 }];
+    const business = await getBusiness();
+    const { data, error } = await client.from('menu_categories').select('id, name, sort_order').eq('business_id', business.id).order('sort_order').order('name').order('id');
+    fail(error, 'Could not load categories');
+    return (data ?? []).map(row => ({ id: row.id, businessId: slug, name: row.name, sortOrder: row.sort_order }));
+  };
+  const saveCategory = async (input: SaveCategoryInput): Promise<MenuCategory> => {
+    if (typeof input.name !== 'string' || !input.name.trim() || [...input.name.trim()].length > 100 ||
+        !Number.isInteger(input.sortOrder) || input.sortOrder < -2147483648 || input.sortOrder > 2147483647 ||
+        (input.id !== undefined && (typeof input.id !== 'string' || !input.id.trim()))) {
+      throw new ServiceError('INVALID_CATEGORY', 'Enter a category name from 1 to 100 characters and a whole order from -2,147,483,648 to 2,147,483,647.');
+    }
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const values = { name: input.name.trim(), sort_order: input.sortOrder };
+    const query = input.id === undefined ? db.from('menu_categories').insert({ ...values, business_id: business.id })
+      : db.from('menu_categories').update(values).eq('id', input.id).eq('business_id', business.id);
+    const { data, error } = await query.select('id, name, sort_order').maybeSingle();
+    if (error?.code === '23505') throw new ServiceError('CATEGORY_DUPLICATE', 'A category with this name already exists. Choose another name.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
+    fail(error, 'Could not save category');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
+    return { id: data.id, businessId: slug, name: data.name, sortOrder: data.sort_order };
+  };
+  const deleteCategory = async (id: string): Promise<void> => {
+    if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_CATEGORY', 'Choose a category to delete.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_categories').delete().eq('id', id).eq('business_id', business.id).select('id').maybeSingle();
+    if (error?.code === '23503') throw new ServiceError('CATEGORY_IN_USE', 'Move all dishes to another category before deleting this category.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
+    fail(error, 'Could not delete category');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
+  };
   const saveMenuItem = async (input: SaveMenuItemInput): Promise<MenuItem> => {
     if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 100 ||
-        typeof input.category !== 'string' || !input.category.trim() || input.category.trim().length > 100 ||
+        typeof input.categoryId !== 'string' || !input.categoryId.trim() ||
         typeof input.description !== 'string' || input.description.length > 1000 ||
         !Number.isSafeInteger(input.pricePaise) || input.pricePaise <= 0 || input.pricePaise > 2147483647 ||
         typeof input.isAvailable !== 'boolean' || typeof input.isDemo !== 'boolean' ||
+        typeof input.isFeatured !== 'boolean' || !Number.isInteger(input.sortOrder) || input.sortOrder < -2147483648 || input.sortOrder > 2147483647 ||
         (input.id !== undefined && (typeof input.id !== 'string' || !input.id.trim()))) {
-      throw new ServiceError('INVALID_MENU_ITEM', 'Enter a name and category (up to 100 characters), a description (up to 1000 characters), a positive whole price in paise, and availability and sample status.');
+      throw new ServiceError('INVALID_MENU_ITEM', 'Enter a name and category (up to 100 characters), a description (up to 1000 characters), a positive whole price in paise, availability, sample and featured status, and a whole item order from -2,147,483,648 to 2,147,483,647.');
+    }
+    if ((!input.id && !isDiet(input.diet)) || (input.diet !== null && !isDiet(input.diet))) {
+      throw new ServiceError('INVALID_MENU_ITEM', 'Choose Vegetarian, Contains egg or Non-vegetarian for a new dish.');
     }
     const db = requireClient(); const business = await requireAdminBusiness();
-    const values = { name: input.name.trim(), description: input.description.trim(), category: input.category.trim(), price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo };
+    const values = { diet: input.diet, name: input.name.trim(), description: input.description.trim(), category_id: input.categoryId, price_paise: input.pricePaise, available: input.isAvailable, is_demo: input.isDemo, is_featured: input.isFeatured, sort_order: input.sortOrder };
     const query = input.id === undefined
       ? db.from('menu_items').insert({ ...values, business_id: business.id })
       : db.from('menu_items').update(values).eq('id', input.id).eq('business_id', business.id);
-    const { data, error } = await query.select('*').single();
+    const { data, error } = await query.select(menuSelect).single();
+    if (error?.code === '23503') throw new ServiceError('CATEGORY_MISSING', 'This category is no longer available. Reload the menu and choose a category.', error);
     fail(error, 'Could not save menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
-    return mapMenu(data as MenuRow, slug);
+    return mapMenu(data as MenuRow, slug, photoBase);
   };
   const deleteMenuItem = async (id: string): Promise<void> => {
     if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_MENU_ITEM', 'Choose a menu item to delete.');
@@ -200,6 +492,59 @@ export function createMarketServices(options: ServiceOptions) {
     fail(error, 'Could not delete menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
+  // Only availability changes, so the list switch never overwrites a concurrent dish edit.
+  const setMenuItemAvailability = async (id: string, isAvailable: boolean): Promise<MenuItem> => {
+    if (typeof id !== 'string' || !id.trim() || typeof isAvailable !== 'boolean') throw new ServiceError('INVALID_MENU_ITEM', 'Choose a dish and whether it is available.');
+    const db = requireClient(); const business = await requireAdminBusiness();
+    const { data, error } = await db.from('menu_items').update({ available: isAvailable }).eq('id', id).eq('business_id', business.id).select(menuSelect).maybeSingle();
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not change availability');
+    if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business. Reload the menu.');
+    return mapMenu(data as MenuRow, slug, photoBase);
+  };
+  const reorder = async (fn: 'reorder_menu_items' | 'reorder_menu_categories', args: Record<string, unknown>, ids: readonly string[]): Promise<void> => {
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) throw new ServiceError('INVALID_ORDER', 'List each entry exactly once.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { error } = await db.rpc(fn, { p_business_slug: slug, ...args });
+    if (error?.code === '40001') throw new ServiceError('MENU_CHANGED', 'The menu changed on another device. It has been reloaded; arrange it again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
+    fail(error, 'Could not save the new order');
+  };
+  const reorderMenuItems = (categoryId: string, itemIds: readonly string[]) => {
+    if (typeof categoryId !== 'string' || !categoryId.trim()) throw new ServiceError('INVALID_ORDER', 'Choose a category to arrange.');
+    return reorder('reorder_menu_items', { p_category_id: categoryId, p_item_ids: itemIds }, itemIds);
+  };
+  // dateISO is an India-time calendar day (YYYY-MM-DD); omitted means today.
+  const getDailySummary = async (dateISO?: string): Promise<DailySummary> => {
+    if (dateISO !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO) || new Date(`${dateISO}T00:00:00Z`).toISOString().slice(0, 10) !== dateISO)) throw new ServiceError('INVALID_DATE', 'Choose a valid day.');
+    const db = requireClient(); await requireAdminBusiness();
+    const { data, error } = await db.rpc('daily_summary', { p_business_slug: slug, ...(dateISO ? { p_date: dateISO } : {}) });
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again to see the summary.', error);
+    fail(error, 'Could not load the day summary');
+    const row = data as { date: string; collected_paise: number; delivered_count: number; outstanding_paise: number; outstanding_count: number; placed_count: number; cancelled_count: number; top_dishes: { name: string; quantity: number }[] } | null;
+    if (!row || typeof row.date !== 'string') throw new ServiceError('SUMMARY_UNAVAILABLE', 'The day summary was not returned. Try again.');
+    return { dateISO: row.date, collectedPaise: Number(row.collected_paise), deliveredCount: Number(row.delivered_count), outstandingPaise: Number(row.outstanding_paise), outstandingCount: Number(row.outstanding_count), placedCount: Number(row.placed_count), cancelledCount: Number(row.cancelled_count), topDishes: Array.isArray(row.top_dishes) ? row.top_dishes.map(dish => ({ name: String(dish.name), quantity: Number(dish.quantity) })) : [] };
+  };
+  const reorderCategories = (categoryIds: readonly string[]) => reorder('reorder_menu_categories', { p_category_ids: categoryIds }, categoryIds);
+  const photoRequest = async (action: 'upload' | 'remove' | 'cleanup', item?: MenuItem, bytes?: ArrayBuffer): Promise<{ cleanupComplete: boolean }> => {
+    const db = requireClient();
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to manage dish photos.');
+    if (item && (item.businessId !== slug || !item.id || (item.imageUrl && !item.imageUrl.startsWith(photoBase)))) throw new ServiceError('INVALID_PHOTO', 'Reload this restaurant’s menu before changing its photo.');
+    if (action === 'upload' && (!bytes || bytes.byteLength < 1 || bytes.byteLength > 5 * 1024 * 1024)) throw new ServiceError('INVALID_PHOTO', 'Choose a photo up to 5 MB.');
+    const { data, error } = await db.auth.getSession(); fail(error, 'Could not restore your session');
+    if (!data.session) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to manage dish photos.');
+    const response = await fetch(`${url?.replace(/\/+$/, '')}/functions/v1/menu-photos`, {
+      method: 'POST', headers: { authorization: `Bearer ${data.session.access_token}`, apikey: key!, 'content-type': 'application/octet-stream', 'x-business-slug': slug, 'x-photo-action': action,
+        ...(item ? { 'x-menu-item': item.id, 'x-photo-expected': item.imageUrl?.slice(photoBase.length) ?? '' } : {}) },
+      body: bytes, signal: AbortSignal.timeout(60000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new ServiceError('PHOTO_FAILED', typeof result.message === 'string' ? result.message : 'The photo could not be saved. Reload this dish before retrying.');
+    return { cleanupComplete: result.cleanupComplete === true };
+  };
+  const uploadMenuPhoto = (item: MenuItem, bytes: ArrayBuffer) => photoRequest('upload', item, bytes);
+  const removeMenuPhoto = (item: MenuItem) => photoRequest('remove', item);
+  const retryMenuPhotoCleanup = () => photoRequest('cleanup');
   const loadOrder = async (id: string): Promise<Order> => {
     const db = requireClient(); const business = await getBusiness();
     const { data, error } = await db.from('orders').select(orderSelect).eq('business_id', business.id).eq('id', id).single();
@@ -207,20 +552,74 @@ export function createMarketServices(options: ServiceOptions) {
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'Order was saved, but its details could not be loaded.');
     return mapOrder(data as OrderRow, slug);
   };
-  const checkDeliveryEligibility = async (location: LocationFix): Promise<boolean> => {
-    const { data, error } = await requireClient().rpc('check_delivery_eligibility', { p_business_slug: slug, p_location: { latitude: location.latitude, longitude: location.longitude, accuracy: location.accuracy, captured_at: location.capturedAtISO } });
-    fail(error, 'Could not check delivery eligibility');
-    if (typeof data?.eligible !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not return delivery eligibility.');
-    return data.eligible;
-  };
   const placeOrder = async (input: PlaceOrderInput): Promise<Order> => {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
-    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery: { name: input.delivery.name, phone: input.delivery.phone, address_line: input.delivery.addressLine }, p_location: { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO }, p_idempotency_key: input.idempotencyKey });
+    const saved = input.savedAddress;
+    if (!saved || typeof saved.id !== 'string' || !orderIdPattern.test(saved.id) || !Number.isSafeInteger(saved.version) || saved.version < 1) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    const fix = input.location && { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO };
+    const p_delivery = { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version };
+    // Retries must send this exact payload: the server's request hash covers delivery and location.
+    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
+    if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
+    // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
+    if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
+    if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
-    if (typeof data.id !== 'string') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
-    return loadOrder(data.id);
+    if (data.outcome === 'pricing_changed' && !('id' in data)) throw new PricingChangedError(validateRevisedPricing(data.pricing, input.lines));
+    if (data.outcome !== 'placed' || typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
+    const order = await loadOrder(data.id);
+    const accepted = input.pricing;
+    if (order.subtotalPaise !== accepted.subtotal_paise || order.deliveryFeePaise !== accepted.delivery_fee_paise || order.totalPaise !== accepted.total_paise || order.lines.length !== accepted.lines.length ||
+        accepted.lines.some(line => !order.lines.some(saved => saved.menuItemId === line.menu_item_id && saved.quantity === line.quantity && saved.unitPricePaise === line.unit_price_paise && saved.lineTotalPaise === line.line_total_paise))) {
+      throw new ServiceError('INVALID_RESPONSE', 'The returned order does not match the accepted pricing. Retry recovery before placing another order.');
+    }
+    return order;
+  };
+  // Saved addresses (#48): the caller's own list, shared by both restaurant apps (RLS),
+  // with in-area and distance worked out by the server for this restaurant.
+  const listAddresses = async (): Promise<SavedAddress[]> => {
+    const { data, error } = await requireClient().rpc('list_addresses', { p_business_slug: slug });
+    fail(error, 'Could not load your saved addresses');
+    if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return your saved addresses.');
+    return (data as AddressRow[]).map(mapSavedAddress);
+  };
+  const addressError = (error: { code?: string; message: string } | null, action: string) => {
+    if (!error) return;
+    if (error.code === '23514' && /saved address limit reached/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
+    if (error.code === '23514' || error.code === '23502') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
+    // Signed-out callers run as anon, which has no address access at all.
+    if (error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
+    fail(error, action);
+  };
+  const addressColumns = (draft: AddressDraft) => {
+    const valid = validateAddressDraft(draft);
+    return { label: valid.label, custom_label: valid.customLabel ?? null, house: valid.house, street_area: valid.streetArea, landmark: valid.landmark ?? null, latitude: valid.latitude, longitude: valid.longitude, location_source: valid.locationSource };
+  };
+  /** Adds an address, or edits one only if it is still at the version the customer was editing. */
+  const saveAddress = async (draft: AddressDraft, current?: { id: string; version: number }): Promise<{ id: string; version: number }> => {
+    const db = requireClient(); const columns = addressColumns(draft);
+    if (!current) {
+      const { data, error } = await db.from('customer_addresses').insert(columns).select('id, version').single();
+      addressError(error, 'Could not save the address');
+      if (!data || typeof data.id !== 'string' || !Number.isSafeInteger(data.version)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return the saved address.');
+      return { id: data.id, version: data.version };
+    }
+    if (typeof current.id !== 'string' || !orderIdPattern.test(current.id) || !Number.isSafeInteger(current.version) || current.version < 1) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    const { data, error } = await db.from('customer_addresses').update(columns).eq('id', current.id).eq('version', current.version).select('id, version').maybeSingle();
+    addressError(error, 'Could not save the address');
+    // No row: deleted, someone else's, or edited elsewhere since it was opened.
+    if (!data) throw addressChanged();
+    if (typeof data.id !== 'string' || !Number.isSafeInteger(data.version)) throw new ServiceError('INVALID_RESPONSE', 'The server did not return the saved address.');
+    return { id: data.id, version: data.version };
+  };
+  /** Past orders keep their own copy, so deleting never changes them. Already gone counts as deleted.
+   *  No version check: deleting is confirmed by the customer, whatever was edited elsewhere. */
+  const deleteAddress = async (id: string): Promise<void> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_ADDRESS', 'Choose a saved address.');
+    const { error } = await requireClient().from('customer_addresses').delete().eq('id', id);
+    addressError(error, 'Could not delete the address');
   };
   const transitionOrder = async (orderId: string, status: OrderStatus, expectedVersion: number): Promise<Order> => {
     await loadOrder(orderId); // Reject orders outside the active business before mutating.
@@ -241,6 +640,35 @@ export function createMarketServices(options: ServiceOptions) {
     subscriptions.add(unsubscribe);
     return unsubscribe;
   };
+  /** Owners open or close the restaurant for new orders; the backend checks ownership. */
+  const setAcceptingOrders = async (accepting: boolean): Promise<boolean> => {
+    if (typeof accepting !== 'boolean') throw new ServiceError('INVALID_VALUE', 'Choose whether the restaurant is taking orders.');
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an admin account to change restaurant status.');
+    const initial = await db.auth.getSession(); fail(initial.error, 'Could not restore session');
+    const expected = initial.data.session ? sessionIdentity(initial.data.session.access_token) : null;
+    if (!expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SESSION_CHANGED', 'Sign in again before changing restaurant status.');
+    await requireAdminBusiness();
+    const current = await db.auth.getSession(); fail(current.error, 'Could not restore session');
+    const token = current.data.session?.access_token;
+    const identity = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started || !identity || expected.userId !== identity.userId || expected.sessionId !== identity.sessionId || current.data.session?.user.id !== identity.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Review restaurant status before trying again.');
+    // Pin this request after verification: a later auth change cannot attribute
+    // the initiating owner's action to the next account during fetch dispatch.
+    const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting }).setHeader('Authorization', `Bearer ${token}`);
+    fail(error, 'Could not change whether the restaurant is taking orders');
+    if (typeof data?.accepting_orders !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the change.');
+    return data.accepting_orders;
+  };
+  /** Public (guest-safe) updates to open/closed and dish availability; kept across sign-in and sign-out. */
+  const subscribeBusinessState = async (refresh: () => void, onError?: (error: ServiceError) => void): Promise<() => void> => {
+    const db = requireClient(); const business = await getBusiness();
+    if (disposed) throw new ServiceError('DISPOSED', 'This service has been disposed.');
+    const stop = subscribeToBusinessState(db, business.id, slug, audience, refresh, onError);
+    const unsubscribe = () => { stop(); publicSubscriptions.delete(unsubscribe); };
+    publicSubscriptions.add(unsubscribe);
+    return unsubscribe;
+  };
   // Bind the HTTP request to the initiating session, allowing its credentials to refresh.
   const deviceTokenRpc = async (action: 'register_device_token' | 'unregister_device_token', token: string, expectedAccessToken: string): Promise<void> => {
     const db = requireClient();
@@ -258,8 +686,8 @@ export function createMarketServices(options: ServiceOptions) {
   };
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
-  const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, isAdmin, saveMenuItem, deleteMenuItem, checkDeliveryEligibility, placeOrder, transitionOrder, subscribeOrders, registerDeviceToken, unregisterDeviceToken };
+  const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, isAdmin, getOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
@@ -272,5 +700,25 @@ export function subscribeToOrderChanges(db: SupabaseClient, businessId: string, 
     if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect
     else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') onError?.(new ServiceError('REALTIME_ERROR', 'Order updates disconnected. Refresh to retry.'));
   });
+  return () => { active = false; void db.removeChannel(channel); };
+}
+
+/** Refresh business state on open/closed or dish changes, and after each (re)connection. */
+export function subscribeToBusinessState(db: SupabaseClient, businessId: string, slug: BusinessSlug, audience: AppAudience, refresh: () => void, onError?: (error: ServiceError) => void): () => void {
+  let active = true;
+  const notify = () => { if (active) refresh(); };
+  const channel = db.channel(`business-state:${slug}:${audience}:${Math.random()}`)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'businesses', filter: `id=eq.${businessId}` }, notify)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `business_id=eq.${businessId}` }, notify)
+    // Realtime cannot filter deletes (the old row carries only its key), so any deleted dish triggers a refresh.
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'menu_items' }, notify)
+    // Category adds, renames and reorders change how customers see the menu (#102).
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_categories', filter: `business_id=eq.${businessId}` }, notify)
+    .subscribe(status => {
+      if (!active) return;
+      if (status === 'SUBSCRIBED') refresh(); // also re-fetch after a reconnect
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') onError?.(new ServiceError('REALTIME_ERROR', 'Menu updates disconnected. Refresh to retry.'));
+    });
   return () => { active = false; void db.removeChannel(channel); };
 }

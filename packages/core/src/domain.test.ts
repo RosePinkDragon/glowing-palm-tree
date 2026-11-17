@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { menuItem } from '../../../tests/fixtures/menu.ts';
 import {
   DomainValidationError,
+  dietLabels,
+  isDiet,
   addCartItem,
   canTransitionOrderStatus,
   cartSubtotalPaise,
@@ -14,12 +17,12 @@ import {
   type MenuItem,
 } from './index.ts';
 
-const soup: MenuItem = {
+const soup: MenuItem = menuItem({
   id: 'soup', businessId: 'ammu-sammu', name: 'Soup', description: '', category: 'Starter',
-  pricePaise: 12550, isAvailable: true, isDemo: false,
-};
+  pricePaise: 12550, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0,
+});
 const rice: MenuItem = { ...soup, id: 'rice', name: 'Rice', pricePaise: 9900 };
-const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'konkan-fine-dine' };
+const otherBusiness: MenuItem = { ...soup, id: 'fish', businessId: 'kokani-dine-inn' };
 
 function errorCode(fn: () => unknown, code: string): void {
   assert.throws(fn, (error: unknown) => error instanceof DomainValidationError && error.code === code);
@@ -76,7 +79,29 @@ test('order status transitions allow only the defined forward and cancellation p
 
 test('INR formatting uses paise and rejects unsafe amounts', () => {
   assert.equal(formatINRFromPaise(12550), '₹125.50');
-  assert.equal(formatINRFromPaise(0), '₹0.00');
+  assert.equal(formatINRFromPaise(0), '₹0');
+  assert.equal(formatINRFromPaise(43000), '₹430', 'whole rupees drop the paise');
+  assert.equal(formatINRFromPaise(188000), '₹1,880');
+  assert.equal(formatINRFromPaise(188050), '₹1,880.50', 'bill amounts keep paise when they have them');
+  assert.equal(formatINRFromPaise(5), '₹0.05');
   assert.equal(formatINRFromPaise(Number.MAX_SAFE_INTEGER), '₹9,00,71,99,25,47,409.91');
   errorCode(() => formatINRFromPaise(Number.MAX_SAFE_INTEGER + 1), 'INVALID_AMOUNT');
+});
+
+// Classification is owner supplied, including for sample dishes.
+test('diet values stay explicit through cart changes; unknown never becomes vegetarian', () => {
+  for (const diet of ['veg', 'egg', 'non_veg'] as const) {
+    assert.ok(isDiet(diet));
+    assert.ok(dietLabels[diet]);
+    assert.equal(setCartItemQuantity(addCartItem([], { ...soup, diet }), soup.id, 2)[0].item.diet, diet);
+  }
+  for (const value of [null, undefined, '', 'vegetarian', 'fish', false]) assert.equal(isDiet(value), false);
+  assert.equal(addCartItem([], { ...soup, diet: null, isDemo: true })[0].item.diet, null);
+});
+
+test('menu merchandising stays attached to cart items without affecting price or diet', () => {
+  const item = { ...soup, isFeatured: true, sortOrder: -2, diet: null };
+  const cart = setCartItemQuantity(addCartItem([], item), item.id, 2);
+  assert.deepEqual(cart[0].item, item);
+  assert.equal(cartSubtotalPaise(cart), 25100);
 });

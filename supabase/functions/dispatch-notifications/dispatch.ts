@@ -1,10 +1,11 @@
 export type Job = { job_id: string; lease_id: string };
+export type Delivery = { token: string; order_id: string | null };
 export type Result = 'sent' | 'retry' | 'unregistered' | 'discard';
 export type Ports = {
   claim: () => Promise<Job[]>;
-  destination: (job: Job) => Promise<string | null>;
+  destination: (job: Job) => Promise<Delivery | null>;
   finish: (job: Job, result: Result) => Promise<void>;
-  send: (token: string) => Promise<Result>;
+  send: (delivery: Delivery) => Promise<Result>;
 };
 const encoder = new TextEncoder();
 async function authorized(provided: string, expected: string): Promise<boolean> {
@@ -23,8 +24,8 @@ export async function dispatch(request: Request, secret: string, ports: Ports): 
     const jobs = await ports.claim();
     for (const job of jobs) {
       try {
-        const token = await ports.destination(job);
-        const result = token ? await ports.send(token) : 'discard';
+        const delivery = await ports.destination(job);
+        const result = delivery ? await ports.send(delivery) : 'discard';
         await ports.finish(job, result);
       } catch {
         try { await ports.finish(job, 'retry'); } catch { /* Lease expiry permits recovery. */ }
@@ -35,8 +36,10 @@ export async function dispatch(request: Request, secret: string, ports: Ports): 
     return new Response(null, { status: 503 });
   }
 }
-export function message(token: string) {
-  return { message: { token, data: { kind: 'order_changed' }, android: { ttl: '0s' }, apns: { headers: { 'apns-expiration': '0' } }, webpush: { headers: { TTL: '0' } } } };
+export function message(token: string, orderId?: string | null) {
+  const data: Record<string, string> = { kind: 'order_changed' };
+  if (orderId && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(orderId)) data.order_id = orderId;
+  return { message: { token, data, android: { ttl: '0s' }, apns: { headers: { 'apns-expiration': '0' } }, webpush: { headers: { TTL: '0' } } } };
 }
 export function classify(status: number, body: unknown): Result {
   if (status >= 200 && status < 300) return 'sent';

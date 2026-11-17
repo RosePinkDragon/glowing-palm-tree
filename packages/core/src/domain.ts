@@ -1,3 +1,4 @@
+import type { OrderAddress } from './address.ts';
 import type { BusinessSlug } from './index.ts';
 
 export type OrderStatus =
@@ -21,14 +22,31 @@ export function canTransitionOrderStatus(from: OrderStatus, to: OrderStatus): bo
   return orderStatusTransitions[from].includes(to);
 }
 
+export type Diet = 'veg' | 'non_veg' | 'egg';
+
+export const dietLabels: Readonly<Record<Diet, string>> = {
+  veg: 'Vegetarian', non_veg: 'Non-vegetarian', egg: 'Contains egg',
+};
+
+export function isDiet(value: unknown): value is Diet {
+  return value === 'veg' || value === 'non_veg' || value === 'egg';
+}
+
 export interface MenuItem {
   id: string;
   businessId: BusinessSlug;
   name: string;
   description: string;
+  /** Display name read from the assigned category. */
   category: string;
+  categoryId: string;
+  categorySortOrder: number;
+  /** Unclassified dishes have no mark. */
+  diet?: Diet | null;
   pricePaise: number;
   isAvailable: boolean;
+  isFeatured: boolean;
+  sortOrder: number;
   isDemo: boolean;
   imageUrl?: string;
 }
@@ -51,9 +69,9 @@ export interface LocationFix {
   capturedAtISO: string;
 }
 
-export type LocationPermissionState = 'granted' | 'denied' | 'undetermined';
-
 export interface OrderLine {
+  /** Trusted snapshot at order placement; never read from the current menu. */
+  diet?: Diet | null;
   menuItemId: string;
   name: string;
   quantity: number;
@@ -63,6 +81,8 @@ export interface OrderLine {
 
 export interface Order {
   id: string;
+  /** Server-assigned restaurant/month reference; absent only on pre-upgrade reads. */
+  orderNumber?: string;
   businessId: BusinessSlug;
   version: number;
   status: OrderStatus;
@@ -72,7 +92,16 @@ export interface Order {
   totalPaise: number;
   delivery: DeliveryDetails;
   createdAtISO: string;
-  history?: { status: OrderStatus; createdAtISO: string }[];
+  /** Delivery pin: the saved address's pin (#48) or, on older orders, the phone's GPS at checkout. */
+  location?: { latitude: number; longitude: number };
+  /** Copy of the saved address used for this order (#48); absent on orders placed with a typed address. */
+  address?: OrderAddress;
+  /** How far the customer's phone was from the delivery pin when ordering, in metres; null when unknown (#48). */
+  placedFromDistanceM?: number | null;
+  /** Straight-line metres from the restaurant's kitchen to the delivery pin, stored at order time (#100); null when unknown or on legacy orders. */
+  kitchenDistanceM?: number | null;
+  /** actorName is the owner's display name snapshot; present only on owner reads (#98). */
+  history?: { status: OrderStatus; createdAtISO: string; actorName?: string }[];
 }
 
 export type DomainFieldErrors = Record<string, string>;
@@ -161,6 +190,10 @@ export function cartSubtotalPaise(cart: readonly CartLine[]): number {
   return subtotal;
 }
 
+/**
+ * Indian rupees for display (owner decision, 16 Nov 2026): whole rupees (₹430, ₹1,880) unless the
+ * amount has paise, which only bill amounts carry after GST and other tax calculations (₹1,880.50).
+ */
 export function formatINRFromPaise(paise: number): string {
   if (!Number.isSafeInteger(paise) || paise < 0) {
     throw new DomainValidationError('INVALID_AMOUNT', 'Amount must be a non-negative safe integer in paise.', {
@@ -175,7 +208,7 @@ export function formatINRFromPaise(paise: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(rupees);
-  return `${formattedRupees}.${paiseRemainder}`;
+  return paise % 100 === 0 ? formattedRupees : `${formattedRupees}.${paiseRemainder}`;
 }
 
 export function validateDeliveryDetails(input: DeliveryDetails): DeliveryDetails {
@@ -208,3 +241,6 @@ export function validateLocationFix(fix: LocationFix, now = Date.now()): Locatio
   }
   return fix;
 }
+
+/** Owners' day summary (#61): India-time day; cash = orders delivered that day; outstanding = every open order now. */
+export interface DailySummary { dateISO: string; collectedPaise: number; deliveredCount: number; outstandingPaise: number; outstandingCount: number; placedCount: number; cancelledCount: number; topDishes: { name: string; quantity: number }[] }

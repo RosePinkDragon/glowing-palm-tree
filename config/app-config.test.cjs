@@ -5,8 +5,8 @@ const { getAppConfig } = require('./app-config.cjs');
 const keys = [
   'ammu-sammu-customer',
   'ammu-sammu-admin',
-  'konkan-fine-dine-customer',
-  'konkan-fine-dine-admin',
+  'kokani-dine-inn-customer',
+  'kokani-dine-inn-admin',
 ];
 const envNames = ['EXPO_PUBLIC_EAS_PROJECT_ID', 'EXPO_OWNER', 'EXPO_PUBLIC_WEB_BASE_PATH'];
 

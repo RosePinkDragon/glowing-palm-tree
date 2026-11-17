@@ -18,8 +18,8 @@ Resolve scope or approval ambiguity with the owner.
 
 Use a lowercase branch matching
 `(feature|bug|release)/<app_name>-<issue-number>-<short-desc>`. Valid app names are
-`ammu-sammu-customer`, `ammu-sammu-admin`, `konkan-fine-dine-customer`,
-`konkan-fine-dine-admin`, and `monorepo`. Use lowercase letters, digits, and hyphens
+`ammu-sammu-customer`, `ammu-sammu-admin`, `kokani-dine-inn-customer`,
+`kokani-dine-inn-admin`, and `monorepo`. Use lowercase letters, digits, and hyphens
 for the short description.
 
 ## Team and delivery
@@ -32,12 +32,23 @@ every task. Choose skills by substance. Do not assign concurrent edits to the sa
 files. Review implementation independently: the author cannot be its independent
 reviewer. Reviewers report evidence and findings to the lead, who assigns repairs.
 
+Every PR must target `main`. Never publish stacked or dependent PRs or use a feature
+branch as a merge target. For sequential slices of one issue, wait until the preceding
+PR merges, update from fresh `origin/main`, then publish the next slice. Independent
+issues may proceed in parallel. Before every PR publication or update, the lead must
+run `npm run pr:preflight -- --issue N --base main` successfully on the committed head.
+The command fetches current main and checks ancestry, the complete main-relative diff,
+and live open PRs; resolve failures before publishing. Updating the exact existing
+head-branch PR is allowed; another open PR for the same issue blocks a new slice.
+Preflight also enforces the Supabase migration policy in `docs/RELEASE.md`.
+
 A PR may change at most 15 reviewable files, counting additions, modifications,
 deletions, and renames. Exclude only `.gitignore`, files whose basename is README
 (including README.md), and objectively generated lockfiles. Handwritten configuration,
-CI, tests, docs, agents, and skills count. Plan the count before implementation, split
-work if needed, and verify it again before a PR. The lead alone opens or updates the
-PR and normally requests owner review. With explicit owner delegation for the current
+CI, tests, docs, agents, and skills count. Plan the complete `origin/main...HEAD`
+count before implementation, split work sequentially if needed, and verify it again
+before a PR. Never use a local or feature-branch comparison to hide cumulative
+changes. The lead alone opens or updates the PR and normally requests owner review. With explicit owner delegation for the current
 effort, the lead may merge only the independently reviewed head after its checks pass.
 Record authority and review evidence; never bypass protections or self-approve a
 GitHub review.

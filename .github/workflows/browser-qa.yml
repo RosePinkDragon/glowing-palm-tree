@@ -3,6 +3,10 @@ on:
   pull_request:
   push:
     branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
@@ -21,8 +25,12 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build:web --workspace ammu-sammu-customer
+      - run: npm run build:web --workspace kokani-dine-inn-customer
       - run: npm run build:web --workspace ammu-sammu-admin
+      - run: npm run build:web --workspace kokani-dine-inn-admin
       - run: npm run test:browser
+      - run: node tests/browser/cart.mjs
+      - run: node tests/browser/photos.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
