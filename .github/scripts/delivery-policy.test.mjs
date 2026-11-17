@@ -6,7 +6,7 @@ import { createRunner } from './run-delivery-policy.mjs';
 const repo = 'owner/repo';
 const issue = () => ({ number: 3, state: 'open', labels: [{ name: 'enhancement' }, { name: 'approved' }], body: '' });
 const pr = (number = 7, sha = 'head') => ({ number, state: 'open', head: { sha, ref: 'feature/monorepo-3-fix', repo: { id: 2 } }, base: { sha: 'base', ref: 'main', repo: { id: 1 } }, body: 'Issue: #3', draft: false, changed_files: 1 });
-const files = [{ filename: 'src/code.js' }];
+const files = [{ filename: 'src/code.js', status: 'modified' }];
 const err = (p, i, f = files) => evaluate(p, i, f, repo).errors;
 const event = { repository: { default_branch: 'main' } };
 const response = (data, status = 200, link = '') => new Response(JSON.stringify(data), { status, headers: link ? { link } : {} });
@@ -18,6 +18,12 @@ function fixture(options = {}) {
   const fetchImpl = async (url, init) => {
     const u = new URL(url), path = u.pathname;
     calls.push({ path, method: init.method, payload: init.body && JSON.parse(init.body), auth: init.headers.Authorization });
+    if (path.endsWith('/git/ref/heads/main')) return response({ object: { type: 'commit', sha: 'a'.repeat(40) } });
+    if (path.endsWith('/contents/supabase/migration-policy.json')) {
+      assert.equal(u.searchParams.get('ref'), 'a'.repeat(40));
+      if (options.policyFailure) return response({}, options.policyFailure);
+      return response({ type: 'file', path: 'supabase/migration-policy.json', encoding: 'base64', content: Buffer.from(JSON.stringify(options.policy || { mode: 'pre-release-baseline' })).toString('base64') });
+    }
     if (path.endsWith('/check-runs') && init.method === 'POST') {
       if (options.failStartHead === JSON.parse(init.body).head_sha) return response({}, 403);
       const id = nextId++; checks.push({ id, head: JSON.parse(init.body).head_sha }); return response({ id });
@@ -97,12 +103,12 @@ test('default-branch target accepts a retained older PR base snapshot', async ()
   assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'success');
 });
 
-test('non-default target is rejected and changes to base metadata are detected', async () => {
+test('non-main target is rejected and changes to base metadata are detected', async () => {
   const p = pr(); p.base.ref = 'other';
   const wrongTarget = fixture({ prs: [p] });
   await wrongTarget.runner.runBatch();
   assert.equal(wrongTarget.calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
-  assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /repository default branch/);
+  assert.match(wrongTarget.calls.find(c => c.method === 'PATCH').payload.output.summary, /target main/);
   const changed = fixture({ changePr: value => { value.base.sha = 'new-base-during-evaluation'; } });
   await changed.runner.runBatch();
   assert.match(changed.calls.find(c => c.method === 'PATCH').payload.output.summary, /metadata changed/);
@@ -115,6 +121,49 @@ test('dependent PR denial does not fail a batch containing a valid main-target P
   const results = calls.filter(c => c.method === 'PATCH');
   assert.deepEqual(results.map(c => c.payload.conclusion), ['success', 'failure']);
   assert.match(results[1].payload.output.summary, /Merge its predecessor and retarget/);
+});
+
+test('changing repository default branch cannot relax the main-only target rule', async () => {
+  const p = pr(); p.base.ref = 'feature/monorepo-3-first';
+  const { runner, calls } = fixture({ prs: [p], event: { repository: { default_branch: p.base.ref } } });
+  await runner.runBatch();
+  assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
+  assert.match(calls.find(c => c.method === 'PATCH').payload.output.summary, /target main/);
+});
+
+test('trusted migration rejection fails its PR check without failing the batch', async () => {
+  const { runner, calls } = fixture({ files: [{ filename: 'supabase/migrations/new.sql', status: 'added' }] });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'failure');
+  assert.match(result.output.summary, /fold the change into the baseline/);
+  assert.ok(calls.some(c => c.path.endsWith('/git/ref/heads/main')));
+});
+
+test('trusted policy API/configuration failures fail the batch and its check', async () => {
+  for (const options of [{ policyFailure: 503 }, { policy: { mode: 'invented-mode' } }]) {
+    const { runner, calls } = fixture(options);
+    await assert.rejects(runner.runBatch(), /evaluation failed/);
+    assert.equal(calls.find(c => c.method === 'PATCH').payload.conclusion, 'failure');
+  }
+});
+
+test('migration overrides never exempt an oversized PR from the file cap', async () => {
+  const p = pr(); p.changed_files = 16; p.body += '\nMigration-Policy-Override: shared staging applied baseline';
+  const { runner, calls } = fixture({ prs: [p], files: Array.from({ length: 16 }, (_, n) => ({ filename: `supabase/migrations/${n}.sql`, status: 'added' })) });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'failure');
+  assert.match(result.output.summary, /16 reviewable files exceed the limit of 15/);
+  assert.doesNotMatch(result.output.summary, /do not add migration files/);
+});
+
+test('pre-release-open migration warnings are published in the same successful check', async () => {
+  const { runner, calls } = fixture({ policy: { mode: 'pre-release-open' }, files: [{ filename: 'supabase/migrations/new.sql', status: 'added' }] });
+  await runner.runBatch();
+  const result = calls.find(c => c.method === 'PATCH').payload;
+  assert.equal(result.conclusion, 'success');
+  assert.match(result.output.summary, /Warning: New migration file/);
 });
 
 test('initial, evaluation and final metadata failures complete started check as failure', async () => {
