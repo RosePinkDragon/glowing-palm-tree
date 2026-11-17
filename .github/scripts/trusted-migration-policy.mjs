@@ -26,11 +26,14 @@ export async function readMainMigrationPolicy({ repository, request }) {
 }
 
 export function migrationChanges(files) {
-  const statuses = { added: 'A', copied: 'A', modified: 'M', changed: 'M', removed: 'D', renamed: 'R' };
-  return files.map(file => {
+  const statuses = { added: 'A', copied: 'A', modified: 'M', changed: 'M', removed: 'D', renamed: 'R', unchanged: null };
+  return files.flatMap(file => {
     if (typeof file.filename !== 'string' || !file.filename || !Object.hasOwn(statuses, file.status) ||
         (file.status === 'renamed' && (typeof file.previous_filename !== 'string' || !file.previous_filename))) throw new Error('File metadata is incomplete for migration policy.');
-    return { status: statuses[file.status], path: file.filename, ...(file.status === 'renamed' ? { previous: file.previous_filename } : {}) };
+    // An unchanged file contributes no migration operation. The separate
+    // reviewable-file count remains untouched and does not gain an exemption.
+    if (file.status === 'unchanged') return [];
+    return [{ status: statuses[file.status], path: file.filename, ...(file.status === 'renamed' ? { previous: file.previous_filename } : {}) }];
   });
 }
 

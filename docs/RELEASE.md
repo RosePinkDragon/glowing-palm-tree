@@ -56,7 +56,7 @@ PostGIS schema: the SQL above uses `extensions.`, which is where Supabase instal
 
 Tracked by issue #131. Status: the baseline exists. `supabase/migrations/20261117000000_baseline.sql` is the single migration; it replaces the 17 development migrations (squashed in #131 slice S3, with a one-time file-cap exception recorded on the issue). It is not frozen: freezing happens at the first persistent deployment. No migration for this application has been applied to any persistent or shared database. Local disposable PostgreSQL/PostGIS runs in tests do not count.
 
-The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). It is not yet a CI gate; a follow-up should run it in the trusted delivery-policy workflow.
+The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). The trusted `Delivery policy` CI check also applies this guard, reading the policy pinned to a resolved main commit rather than using the PR's proposed policy. Unprivileged App CI separately validates that the checked-in proposed file is a JSON object with a known mode, so malformed configuration cannot poison later trusted runs. These workflow changes take effect once #143 merges into main. The explicit migration override is self-asserted by the author and requires owner review of the stated reason and deployment evidence; it never bypasses the file cap or frozen-history rule.
 
 | Mode | Meaning | Guard |
 | --- | --- | --- |

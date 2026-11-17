@@ -89,6 +89,12 @@ test('an active main policy cannot be removed or renamed away by the PR', async 
   }
 });
 
+test('unchanged file metadata contributes no migration rewrite', async () => {
+  const file = { filename: migration('baseline'), status: 'unchanged' };
+  assert.deepEqual(migrationChanges([file]), []);
+  assert.deepEqual(await fixture('frozen').run([file]), { errors: [], warnings: [] });
+});
+
 test('ruleset proposal preserves strict main checks, no bypasses and a feasible sole-owner review gate', () => {
   const ruleset = JSON.parse(readFileSync(new URL('../../docs/policy/main-delivery-ruleset.json', import.meta.url), 'utf8'));
   assert.equal(ruleset.target, 'branch'); assert.equal(ruleset.enforcement, 'active');
