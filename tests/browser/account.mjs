@@ -320,6 +320,17 @@ const settledDrawer = async page => {
     }; frame();
   }));
 };
+// Resolves once the open dialog's rect is identical across several consecutive
+// animation frames, i.e. the slide-in transition has finished.
+const stableDialog = page => page.getByRole('dialog').evaluate(node => new Promise((resolve, reject) => {
+  let last = '', stable = 0;
+  const timeout = setTimeout(() => reject(new Error('Drawer dialog position did not stabilise')), 5000);
+  const frame = () => {
+    const r = node.getBoundingClientRect(), key = [r.x, r.y, r.width, r.height].join(',');
+    stable = key === last ? stable + 1 : 0; last = key;
+    if (stable >= 4) { clearTimeout(timeout); resolve(); } else requestAnimationFrame(frame);
+  }; frame();
+}));
 const assertDrawerTargets = async page => {
   const tooSmall = await page.getByRole('dialog').locator('[role="button"]').evaluateAll(nodes => nodes.flatMap(node => {
     const rect = node.getBoundingClientRect();
@@ -443,6 +454,7 @@ try {
         await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByRole('heading', { name: 'Rohan Sawant', exact: true }).waitFor();
+        await stableDialog(layoutPage);
         const avatar = layoutPage.getByTestId('account-avatar');
         assert.equal(await avatar.innerText(), 'RS', 'avatar uses the customer’s initials');
         const avatarStyle = await avatar.evaluate(node => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return { width: rect.width, height: rect.height, radius: parseFloat(style.borderRadius), border: style.borderTopColor }; });
@@ -458,13 +470,18 @@ try {
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByText('Phone not added', { exact: true }).waitFor();
         await layoutPage.getByText('20 orders loaded', { exact: true }).waitFor();
+        await stableDialog(layoutPage);
         assert.equal(await avatar.innerText(), '', 'missing name leaves an empty ring');
         assert.equal(await avatar.evaluate(node => getComputedStyle(node).borderTopColor), avatarStyle.border);
         const helpStyle = await layoutPage.getByRole('dialog').getByRole('button', { name: 'Help', exact: true }).evaluate(node => { const style = getComputedStyle(node); return { radius: parseFloat(style.borderRadius), background: style.backgroundColor, border: style.borderTopColor }; });
         assert.ok(helpStyle.radius >= 24, 'header Help is a pill');
         assert.equal(helpStyle.background, brand ? 'rgba(0, 0, 0, 0)' : 'rgba(255, 255, 255, 0.14)');
         if (brand) assert.equal(helpStyle.border, 'rgb(198, 172, 112)');
-        const shortcuts = await Promise.all(['Saved addresses', 'Notifications', 'Help & support'].map(label => layoutPage.getByRole('dialog').getByRole('button', { name: label, exact: true }).boundingBox()));
+        const shortcuts = await layoutPage.getByRole('dialog').evaluate(dialog => ['Saved addresses', 'Notifications', 'Help & support'].map(label => {
+          const node = Array.from(dialog.querySelectorAll('[role="button"], button')).find(n => (n.getAttribute('aria-label') || n.textContent.trim()) === label);
+          if (!node) return null;
+          const { x, y, width, height } = node.getBoundingClientRect(); return { x, y, width, height };
+        }));
         assert.ok(shortcuts.every(Boolean));
         if (!brand) {
           assert.ok(shortcuts.every(rect => Math.abs(rect.y - shortcuts[0].y) < 1), 'Ammu shortcuts share a row at 390px');
