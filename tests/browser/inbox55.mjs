@@ -81,8 +81,8 @@ try {
       await button('Account').click();
       await button('Notifications (2 unread)').waitFor();
       const badge = visible(page.getByTestId('unread-badge')); await badge.waitFor();
-      const bb = await badge.boundingBox(), lb = await visible(page.getByText('Notifications', { exact: true })).last().boundingBox();
-      assert.ok(bb.width >= 22 && bb.height >= 22 && bb.x - (lb.x + lb.width) >= 6, 'rounded pill badge with a gap from the label');
+      const bb = await badge.boundingBox(), lb = await badge.locator('xpath=preceding-sibling::*[1]').boundingBox();
+      assert.ok(bb.width >= 22 && bb.height >= 22 && bb.x - (lb.x + lb.width) >= 6, JSON.stringify({ bb, lb }) + ' ' + 'rounded pill badge with a gap from the label');
       await shot('drawer-badge-390');
       await button('Notifications (2 unread)').click();
       await text('Your food is being prepared').waitFor();
