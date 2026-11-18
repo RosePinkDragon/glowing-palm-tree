@@ -738,15 +738,22 @@ const prepareCart = async (page, add = true) => {
   if (!categoriesOnly) for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     if (selectedBrand && slug !== selectedBrand) continue;
     const owner = await serveWeb(`apps/${slug}-admin/dist/web`);
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+    // One anchor drives both Node fixtures and the browser, including the midnight regression run.
+    const midnight = process.argv.includes('--owner-clock=midnight');
+    const fixtureNow = Date.parse(midnight ? '2026-11-19T00:05:00+05:30' : '2026-11-19T12:00:00+05:30');
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Kolkata', serviceWorkers: 'block' });
+    await ctx.clock.install({ time: new Date(fixtureNow) });
+    const expiresAt = Math.floor(fixtureNow / 1000) + 3600;
+    const ownerToken = `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: '80000000-0000-4000-8000-000000000001', exp: expiresAt })}.fixture`;
+    const ownerSession = { ...session, access_token: ownerToken, expires_at: expiresAt };
     const primary = { 'ammu-sammu': 'rgb(168, 62, 50)', 'kokani-dine-inn': 'rgb(22, 92, 84)' }[slug];
     const brandName = slug === 'ammu-sammu' ? 'Ammu Sammu' : 'Kokani Dine Inn';
     const errs = [], unhandled = [], rpcCalls = [], sockets = [], joined = new Map();
-    const istDay = offset => new Date(Date.now() + 19800000 + offset * 86400000).toISOString().slice(0, 10);
+    const istDay = offset => new Date(fixtureNow + 19800000 + offset * 86400000).toISOString().slice(0, 10);
     let realtimeFail = false, gate = null, orderGets = 0, summaryFail = false, summaryGate = null; const summaryCalls = [];
     const ids = n => `40000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
     const ref = n => `${slug === 'ammu-sammu' ? 'AMS' : 'KDI'}-202611${String(n).padStart(4, '0')}`;
-    const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+    const ago = minutes => new Date(fixtureNow - minutes * 60000).toISOString();
     const row = (n, status, customer, address, minutes, lines) => ({ order_number: ref(n), id: ids(n), business_id: businessId, customer_id: userId, status, version: 1, subtotal_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0), delivery_fee_paise: 3000, total_paise: lines.reduce((sum, l) => sum + l[1] * l[2], 0) + 3000, customer_name: customer, customer_phone: '9876543210', delivery_address_line: address, created_at: ago(minutes), order_items: lines.map(([name, quantity, unit], i) => ({ menu_item_id: `20000000-0000-4000-8000-00000000010${i}`, name, quantity, unit_price_paise: unit, line_total_paise: quantity * unit })), order_status_history: [{ status: 'placed', created_at: ago(minutes) }] });
     let db = [
       row(0x1A1, 'placed', 'Priya Kadam', 'Station Road, Khed, Ratnagiri, Maharashtra 415709', 2, [['Veg thali', 2, 15000], ['Sol kadhi', 1, 10000]]),
@@ -755,7 +762,7 @@ const prepareCart = async (page, add = true) => {
       row(0x1A4, 'preparing', 'Rahul More', 'Temple Lane', 20, [['Veg thali', 1, 15000]]),
       row(0x1A5, 'delivered', 'Asha Gole', 'Mill Road', 90, [['Sol kadhi', 1, 10000]]),
     ];
-    await ctx.addInitScript(({ slug, session }) => { for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session)); }, { slug, session });
+    await ctx.addInitScript(({ slug, session }) => { for (const audience of ['customer', 'admin']) localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:${audience}`, JSON.stringify(session)); }, { slug, session: ownerSession });
     await ctx.routeWebSocket(/.*/, socket => {
       const entry = { socket, array: true, closed: false }; sockets.push(entry);
       socket.onClose(() => { entry.closed = true; });
@@ -770,12 +777,12 @@ const prepareCart = async (page, add = true) => {
       });
     });
     const activeSubscriptions = () => [...joined.values()].filter(entry => !entry.closed).length;
-    const pushChange = () => { for (const [topic, entry] of joined) if (!entry.closed) { const payload = { ids: [1], data: { schema: 'public', table: 'orders', type: 'INSERT', commit_timestamp: new Date().toISOString(), columns: [], record: {}, old_record: null, errors: null } }; entry.socket.send(JSON.stringify(entry.array ? [null, null, topic, 'postgres_changes', payload] : { topic, event: 'postgres_changes', payload, ref: null })); } };
+    const pushChange = () => { for (const [topic, entry] of joined) if (!entry.closed) { const payload = { ids: [1], data: { schema: 'public', table: 'orders', type: 'INSERT', commit_timestamp: new Date(fixtureNow).toISOString(), columns: [], record: {}, old_record: null, errors: null } }; entry.socket.send(JSON.stringify(entry.array ? [null, null, topic, 'postgres_changes', payload] : { topic, event: 'postgres_changes', payload, ref: null })); } };
     await ctx.route('**/*', route => { const url = new URL(route.request().url()); if (url.origin === origin || url.hostname === '127.0.0.1') return route.fallback(); return route.abort(); });
     await ctx.route(origin + '/**', async route => {
       const req = route.request(), url = new URL(req.url());
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
-      if (url.pathname === '/auth/v1/token') return json(session);
+      if (url.pathname === '/auth/v1/token') return json(ownerSession);
       if (url.pathname === '/auth/v1/user') return json(user);
       if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
       if (url.pathname === '/rest/v1/businesses') return json({ ...business, slug, name: brandName });
@@ -908,7 +915,8 @@ const prepareCart = async (page, add = true) => {
       await focused(page, `Order ${ref(0x1A3)}`);
       const view = panel();
       for (const text of ['Sneha Pawar', '9876543210', 'Market Yard', '1 × Fish curry meal', 'Collect in cash', 'Accepted by Suresh', 'Items', 'Delivery']) await view.getByText(text, { exact: true }).first().waitFor();
-      await view.getByText(/^Placed today, \d{1,2}:\d{2} (am|pm)$/).waitFor();
+      // At 00:05 IST the accepted fixture (12 minutes old) belongs to yesterday.
+      await view.getByText(midnight ? 'Placed 18 Nov, 11:53 pm' : 'Placed today, 11:48 am', { exact: true }).waitFor();
       await view.getByRole('heading', { name: 'History' }).waitFor();
       assert.equal(await view.getByText('Placed', { exact: true }).count(), 1, 'the placed step has no owner name');
       assert.equal(await view.getByText(/^Placed by /).count(), 0);
