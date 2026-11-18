@@ -91,10 +91,20 @@ try {
     const button = (page, label) => visible(page.getByRole('button', { name: label, exact: true }));
     const status = async (page, open) => { await text(page, open ? 'Open · taking orders' : 'Closed · not taking orders').waitFor(); await eventually(async () => await control(page).isEnabled() && await control(page).isChecked() === open); };
     const toggle = async (page, open) => { await status(page, !open); await control(page).click(); await status(page, open); };
+    // Optional design-review captures: SHOTS_DIR=/path writes full-page 390 and 1280 screenshots (no effect otherwise).
+    const shot = async (page, label) => {
+      if (!process.env.SHOTS_DIR) return;
+      for (const [width, height] of [[390, 844], [1280, 800]]) { await page.setViewportSize({ width, height }); await page.waitForTimeout(250); await page.screenshot({ path: `${process.env.SHOTS_DIR}/${slug}-${label}-${width}.png` }); }
+      await page.setViewportSize({ width: 390, height: 844 });
+    };
     let first, second, guest;
     try {
       first = await open(users[0]); second = await open(users[1]); guest = await open(null, 'customer');
       await status(first.page, false); await status(second.page, false);
+      // #53: closed = dark full-width band with white text; the switch stays available.
+      assert.equal(await text(first.page, 'Closed · not taking orders').evaluate(node => getComputedStyle(node).color), 'rgb(255, 255, 255)');
+      await shot(first.page, 'orders-closed');
+      if (process.env.SHOTS_DIR) { const signedOut = await open(null); await signedOut.page.getByText('OWNERS', { exact: true }).waitFor(); await shot(signedOut.page, 'login'); await signedOut.context.close(); }
       const customerClosed = brand ? "The kitchen isn't taking orders right now. Browse the menu and check back a little later." : 'Not taking orders right now. You can still look at the menu. Check back a little later.';
       await text(guest.page, customerClosed).waitFor();
       const pending = { arrived: deferred(), release: deferred() }; writeGate = pending;
@@ -103,6 +113,8 @@ try {
       await first.page.keyboard.press('Space'); assert.equal(writes.length, 1, 'pending control cannot submit twice');
       assert.equal(business.accepting_orders, false, 'no client-side success before server confirmation');
       pending.release.resolve(); await status(first.page, true); await status(second.page, true);
+      assert.notEqual(await text(first.page, 'Open · taking orders').evaluate(node => getComputedStyle(node).color), 'rgb(255, 255, 255)', 'open band uses coloured text');
+      await shot(first.page, 'orders-open');
       await button(guest.page, 'Add to cart').waitFor();
       await toggle(second.page, false); await status(first.page, false); await text(guest.page, customerClosed).waitFor();
       assert.equal(await button(guest.page, 'Add to cart').count(), 0); assert.equal(business.ordering_enabled, true);
@@ -115,7 +127,8 @@ try {
       }
       await first.page.setViewportSize({ width: 390, height: 844 });
       await visible(first.page.getByRole('button', { name: /^Accept order / })).click();
-      await visible(first.page.getByText(/^Order .+ updated to Accepted\.$/)).waitFor(); assert.equal(transitions.length, 1); assert.equal(business.accepting_orders, false);
+      await visible(first.page.getByText(/^Order .+ updated to Accepted\.$/)).waitFor(); assert.equal(transitions.length, 1);
+      await text(first.page, 'No new orders').waitFor(); assert.equal(await control(first.page).count(), 1, 'availability control stays visible in the empty state'); await shot(first.page, 'orders-empty'); assert.equal(business.accepting_orders, false);
       console.log(`PASS: ${slug} keyboard owner switch confirms one pending request, synchronizes another owner and guest customer, and leaves earlier orders actionable`);
 
       nextWrite = 'fail'; const beforeFailure = writes.length; await control(first.page).click();
