@@ -361,6 +361,8 @@ try {
         result.sort((a,b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
         return json(result.slice(0, Number(url.searchParams.get('limit'))));
       }
+      if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
+      if (url.pathname === '/rest/v1/rpc/list_customer_notifications') return json([]);
       throw new Error(`Unexpected account request ${url.pathname}`);
     });
     await context.addInitScript(() => {
@@ -446,7 +448,7 @@ try {
       await page.getByText('1 × History meal 1', { exact: false }).first().waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
-      for (const [label, text] of [['Saved addresses', 'No saved addresses yet'], ['Notifications', 'Your notification inbox is not available yet.'], ['Help & support', 'Contact number not available yet.']]) {
+      for (const [label, text] of [['Saved addresses', 'No saved addresses yet'], ['Notifications', 'No notifications yet'], ['Help & support', 'Contact number not available yet.']]) {
         await page.getByRole('button', { name: 'Account', exact: true }).click();
         await page.getByRole('button', { name: label, exact: true }).click();
         await page.getByText(text, { exact: false }).waitFor();

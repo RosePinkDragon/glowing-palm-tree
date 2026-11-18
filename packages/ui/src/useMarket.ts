@@ -8,6 +8,7 @@ import { attemptKey, readAttempt, type CheckoutAttempt, type Identity } from './
 import { useMarketAuth } from './useMarketAuth';
 import { useMarketCatalog } from './useMarketCatalog';
 import { useMarketOrders } from './useMarketOrders';
+import { useMarketInbox } from './useMarketInbox';
 export function messageOf(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong. Please try again.'; }
 export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'customer') {
   const services = useMemo(() => createMarketServices({ businessSlug: businessId, audience }), [businessId, audience]);
@@ -19,6 +20,7 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
   const auth = useMarketAuth(services, identity, setError);
   const catalog = useMarketCatalog(services, audience === 'customer');
   const orders = useMarketOrders(services, auth.session, identity, auth.identityVersion, audience === 'customer');
+  const { inbox } = useMarketInbox(services, auth.session, identity, auth.identityVersion, audience === 'customer');
   const preferences = useNotificationPreferences(businessId, audience, auth.session, services, orders.refreshOrders);
   useEffect(() => {
     let active = true;
@@ -33,5 +35,5 @@ export function useMarket(businessId: BusinessSlug, audience: AppAudience = 'cus
 
     return () => { active = false; stopStorage(); };
   }, [businessId]);
-  return { services, preferences, identity, error: error || catalog.catalogError || orders.ordersError, setError, attempt, setAttempt, attemptReady, storageError, ...auth, ...catalog, ...orders };
+  return { services, preferences, inbox, identity, error: error || catalog.catalogError || orders.ordersError, setError, attempt, setAttempt, attemptReady, storageError, ...auth, ...catalog, ...orders };
 }

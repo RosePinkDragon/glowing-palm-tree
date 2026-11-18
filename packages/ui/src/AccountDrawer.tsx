@@ -3,6 +3,7 @@ import { AccessibilityInfo, Animated, findNodeHandle, Modal, Platform, Pressable
 import type { useMarket } from './useMarket';
 import { MarketButton, MarketText } from './components';
 import { CustomerHistory, type ReorderAction } from './CustomerOrders';
+import { unreadLabel } from './notification-inbox';
 import { useMarketTheme } from './theme';
 
 type Market = ReturnType<typeof useMarket>;
@@ -16,6 +17,8 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
   const fullName = typeof user?.user_metadata.full_name === 'string' ? user.user_metadata.full_name.trim().slice(0, 120) : '';
   const navigate = (path: string) => { setOptions(false); close(false); go(path); };
   useEffect(() => { if (!open) { setOptions(false); setError(''); } }, [open]);
+  const refreshCount = market.inbox.refreshCount;
+  useEffect(() => { if (open && user) void refreshCount(); }, [open, user?.id, refreshCount]);
   useEffect(() => {
     if (!open || covered || Platform.OS !== 'web') return;
     const keydown = (event: KeyboardEvent) => {
@@ -63,7 +66,7 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
           </View>
           <View style={{ paddingHorizontal: 20, gap: 24 }}>
             <View style={{ flexDirection: businessId === 'ammu-sammu' ? 'row' : 'column', flexWrap: 'wrap', gap: 8 }}>
-              {[['Saved addresses', '/addresses'], ['Notifications', '/notifications'], ['Help & support', '/help']].map(([label, path]) => <Pressable key={path} accessibilityRole="button" onPress={() => navigate(path)} style={{ minHeight: 64, flexGrow: businessId === 'ammu-sammu' ? 1 : 0, flexBasis: businessId === 'ammu-sammu' ? 122 : undefined, minWidth: businessId === 'ammu-sammu' ? 122 : undefined, width: businessId === 'kokani-dine-inn' ? '100%' : undefined, alignSelf: 'stretch', justifyContent: 'center', padding: 10, borderWidth: 1, borderRadius: 14, borderColor: colors.border, backgroundColor: colors.surface }}><Text style={{ color: colors.primary, fontSize: 15, fontWeight: '700' }}>{label}</Text></Pressable>)}
+              {[['Saved addresses', '/addresses'], ['Notifications', '/notifications'], ['Help & support', '/help']].map(([label, path]) => <Pressable key={path} accessibilityRole="button" accessibilityLabel={path === '/notifications' ? `${label}${unreadLabel(market.inbox.unread)}` : label} onPress={() => navigate(path)} style={{ minHeight: 64, flexGrow: businessId === 'ammu-sammu' ? 1 : 0, flexBasis: businessId === 'ammu-sammu' ? 122 : undefined, minWidth: businessId === 'ammu-sammu' ? 122 : undefined, width: businessId === 'kokani-dine-inn' ? '100%' : undefined, alignSelf: 'stretch', justifyContent: 'center', padding: 10, borderWidth: 1, borderRadius: 14, borderColor: colors.border, backgroundColor: colors.surface }}><Text style={{ color: colors.primary, fontSize: 15, fontWeight: '700' }}>{label}{path === '/notifications' && market.inbox.unread ? <Text style={{ color: colors.onPrimary, backgroundColor: colors.primary }}>{` ${market.inbox.unread > 99 ? '99+' : market.inbox.unread} `}</Text> : null}</Text></Pressable>)}
             </View>
             <MarketButton label="Account settings" variant="secondary" onPress={() => navigate('/account')} />
             <MarketButton label="Your orders" variant="secondary" onPress={() => navigate('/orders')} />

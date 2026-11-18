@@ -91,6 +91,7 @@ try {
       if (pricingMode === 'lost') return route.abort('failed');
       return json({ outcome: 'placed', id: pricingOrder.id });
     }
+    if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });
   const open = async (index, path = '/') => {
