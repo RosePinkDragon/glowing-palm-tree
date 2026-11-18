@@ -4,6 +4,7 @@ import { formatINRFromPaise, type BusinessSlug, type Order } from '@market/core'
 import { useIsFocused } from '@react-navigation/native';
 import type { useMarket } from './useMarket';
 import { MarketButton, MarketStatus, MarketText } from './components';
+import { brandPlace } from './CustomerBrand';
 import { MarketIcon } from './MarketIcons';
 import { useFamilies } from './DishAction';
 import { useMarketTheme } from './theme';
@@ -121,7 +122,7 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
       </View>
     </View>
     <View nativeID="support-footer" style={{ alignItems: 'center', gap: 2, paddingTop: 4 }}>
-      <Text style={{ color: colors.muted, ...f.body(14, 20) }}>{name}</Text>
+      <Text style={{ color: colors.muted, ...f.body(14, 20) }}>{name} · {brandPlace}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <Pressable accessibilityRole="button" accessibilityLabel="Privacy policy" onPress={() => go('/privacy')} style={{ minHeight: 44, minWidth: 44, justifyContent: 'center', paddingHorizontal: 8 }}><Text accessible={false} style={{ color: colors.primary, textDecorationLine: 'underline', ...f.semi(14, 20) }}>Privacy policy</Text></Pressable>
         <Text aria-hidden style={{ color: colors.muted }}>·</Text>

@@ -1,7 +1,8 @@
 import { isDiet, type BusinessSlug, type Diet, type MenuItem } from '@market/core';
 
-export function featuredLabel(businessId: BusinessSlug, audience: 'admin' | 'customer'): string {
-  return businessId === 'ammu-sammu' ? "Today's special" : audience === 'admin' ? 'Signature dish' : 'Signature dishes';
+/** `customer` names the group (carousel heading); `admin` and `dish` name one dish (editor, dish sheet badge). */
+export function featuredLabel(businessId: BusinessSlug, audience: 'admin' | 'customer' | 'dish'): string {
+  return businessId === 'ammu-sammu' ? "Today's special" : audience === 'customer' ? 'Signature dishes' : 'Signature dish';
 }
 
 export function parseItemOrder(input: string): number | null {

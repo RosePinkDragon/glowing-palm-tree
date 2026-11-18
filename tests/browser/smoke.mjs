@@ -478,7 +478,7 @@ const prepareCart = async (page, add = true) => {
       // Cards and rows (#39) swap their Add button for a stepper once added, so the next Add is always the first.
       for (let index = 0; index < dishes.length; index++) await page.getByRole('button', { name: 'Add to cart', exact: true }).nth(0).click();
       await page.getByRole('button', { name: /^Cart \(/ }).click();
-      await page.getByRole('heading', { name: 'Your cart', exact: true }).waitFor(); await assertMarks(page);
+      await page.getByRole('heading', { name: slug === 'ammu-sammu' ? 'Checkout' : 'Your order', exact: true }).waitFor(); await assertMarks(page);
       await page.reload({ waitUntil: 'networkidle' }); await assertMarks(page);
       await page.setViewportSize({ width: 390, height: 2400 });
       await page.screenshot({ path: `dist/browser/${slug}-diet-checkout-mobile.png`, fullPage: true });

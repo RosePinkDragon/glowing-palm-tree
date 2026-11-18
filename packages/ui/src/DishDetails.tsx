@@ -36,7 +36,7 @@ export function DishDetails({ item, inCart, locked, onAdd, onClose, orderingAllo
   const canAdd = !(busy || locked || quantity > remaining);
   const hero = <View style={{ width: '100%', height: 260 }}>
     <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} detail flush height={260} />
-    {item.isFeatured ? <View style={{ position: 'absolute', left: 16, bottom: 14, borderRadius: 8, backgroundColor: colors.bandAccent, paddingHorizontal: 10, paddingVertical: 5 }}><Text style={{ color: colors.band, letterSpacing: 1.5, textTransform: 'uppercase', ...f.semi(12, 18) }}>{featuredLabel(businessId, 'customer')}</Text></View> : null}
+    {item.isFeatured ? <View style={{ position: 'absolute', left: 16, bottom: 14, borderRadius: 8, backgroundColor: colors.bandAccent, paddingHorizontal: 10, paddingVertical: 5 }}><Text style={{ color: colors.band, letterSpacing: 1.5, textTransform: 'uppercase', ...f.semi(12, 18) }}>{featuredLabel(businessId, 'dish')}</Text></View> : null}
   </View>;
   const eyebrow = menuLayout === 'carta' ? `${item.category}${item.isDemo ? ' · Example' : ''}` : item.isDemo ? 'Example' : '';
   return <AccessiblePanel title={item.name} onClose={() => { if (!busy) onClose(); }} closeDisabled={busy} closeLabel="Close dish details" hero={hero} titleLead={<DietMark diet={item.diet} compact />}

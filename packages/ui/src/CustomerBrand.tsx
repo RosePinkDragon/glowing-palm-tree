@@ -11,8 +11,10 @@ import { useMarketFonts, useMarketTheme } from './theme';
 
 const hidden = { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
 // Short brand lines come from the owner's design (pages 1-3); nothing here promises ratings, times, offers or food.
+/** Where both restaurants are; shown on the welcome screen and the Help footer. */
+export const brandPlace = 'Khed, Ratnagiri';
 const welcomeCopy: Record<BusinessSlug, { eyebrow: string; line: string }> = {
-  'ammu-sammu': { eyebrow: 'Khed, Ratnagiri', line: 'Home-style food delivered around Khed. Pay cash when it arrives.' },
+  'ammu-sammu': { eyebrow: brandPlace, line: 'Home-style food delivered around Khed. Pay cash when it arrives.' },
   'kokani-dine-inn': { eyebrow: 'Taste of Kokan', line: 'Seafood and Malvani classics, delivered across Khed.' },
 };
 const welcomeTimeoutMs = 1500;

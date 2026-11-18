@@ -40,6 +40,8 @@ test('brand labels match owner switch and customer heading', () => {
   assert.equal(featuredLabel('ammu-sammu', 'customer'), "Today's special");
   assert.equal(featuredLabel('kokani-dine-inn', 'admin'), 'Signature dish');
   assert.equal(featuredLabel('kokani-dine-inn', 'customer'), 'Signature dishes');
+  assert.equal(featuredLabel('kokani-dine-inn', 'dish'), 'Signature dish');
+  assert.equal(featuredLabel('ammu-sammu', 'dish'), "Today's special");
 });
 
 test('item order accepts the PostgreSQL integer range without fractional or exponent coercion', () => {

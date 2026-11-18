@@ -115,7 +115,7 @@ try {
         assert.ok((await dialog.locator('img').getAttribute('src')).endsWith('/detail.webp'));
         assert.equal(await dialog.locator('img').getAttribute('loading'), 'eager');
         await dialog.getByRole('img', { name: 'Contains egg', exact: true }).waitFor();
-        await dialog.getByText(feature, { exact: true }).waitFor();
+        await dialog.getByText(brand ? 'Signature dish' : feature, { exact: true }).waitFor();
         await dialog.getByText('Neutral synthetic test description.', { exact: true }).waitFor();
         assert.equal(await dialog.getByRole('button', { name: 'Decrease quantity' }).isDisabled(), true);
         await dialog.getByRole('button', { name: 'Increase quantity' }).click();
