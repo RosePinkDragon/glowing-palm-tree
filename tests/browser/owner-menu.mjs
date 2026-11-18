@@ -97,6 +97,8 @@ try {
     });
     try {
       const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
+      const cpuRate = Number(process.env.OWNER_MENU_CPU_RATE ?? 1);
+      if (cpuRate !== 1) await (await context.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
       await page.goto(owner.url, { waitUntil: 'networkidle' });
       await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -247,11 +249,25 @@ try {
       await add.getByText('Save the dish first, then open it again to add a photo.', { exact: true }).waitFor();
       await add.getByLabel('Dish name', { exact: true }).fill('Prawn thali'); await add.getByLabel('Price in rupees', { exact: true }).fill('410');
       await add.getByRole('button', { name: 'Category: not chosen', exact: true }).click(); await add.getByRole('button', { name: 'Thalis', exact: true }).click();
-      await button('Save dish').click(); await add.getByText('Choose a diet classification.', { exact: true }).waitFor();
-      await add.getByText('Check the highlighted fields above.', { exact: true }).waitFor(); // next to Save
-      assert.equal(posts.length, 0);
-      await add.getByRole('button', { name: 'Contains egg', exact: true }).focus(); await page.keyboard.press('Space');
-      await eventually(async () => await add.getByRole('button', { name: 'Contains egg', exact: true }).getAttribute('aria-pressed') === 'true');
+      await page.evaluate(() => {
+        window.__ownerMenuEvents = [];
+        for (const type of ['focusin', 'keydown', 'keyup']) document.addEventListener(type, event => {
+          window.__ownerMenuEvents.push({ type, id: event.target.id, label: event.target.getAttribute('aria-label'), key: event.key, time: performance.now() });
+          if (window.__ownerMenuEvents.length > 40) window.__ownerMenuEvents.shift();
+        }, true);
+      });
+      try {
+        await button('Save dish').click(); await add.getByText('Choose a diet classification.', { exact: true }).waitFor();
+        await add.getByText('Check the highlighted fields above.', { exact: true }).waitFor(); // next to Save
+        assert.equal(posts.length, 0);
+        // Validation schedules focus asynchronously; observe it before moving focus ourselves.
+        await focused('Vegetarian');
+        await add.getByRole('button', { name: 'Contains egg', exact: true }).focus(); await page.keyboard.press('Space');
+        await page.waitForFunction(() => document.getElementById('dish-diet-egg')?.getAttribute('aria-pressed') === 'true');
+      } catch (error) {
+        const trace = await page.evaluate(() => ({ active: document.activeElement?.id, events: window.__ownerMenuEvents }));
+        throw new Error(`${slug}: diet keyboard validation failed; focus/key events: ${JSON.stringify(trace)}`, { cause: error });
+      }
       await button('Save dish').click();
       await text('Dish added. Open it again to add a photo.').waitFor(); await focused('Add dish');
       assert.deepEqual(posts[0], { diet: 'egg', name: 'Prawn thali', description: '', category_id: thalis, price_paise: 41000, available: true, is_demo: false, is_featured: false, sort_order: 2, business_id: businessId });
