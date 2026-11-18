@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { formatINRFromPaise, remoteOrderFlag, type Order, type OrderStatus } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
+import { useOwnerHorizontalPadding } from './OwnerShell';
 import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ActionButton, OwnerOrderDetails } from './OwnerOrderDetails';
 import { applyOrderTransition, elapsedLabel, filterCounts, filterForStatus, filterLabel, mergeOrderSnapshot, newOrderCount, cardArea, orderReference, ordersForFilter, queueFilters, statusLabel, type QueueFilter } from './admin-model';
@@ -91,7 +93,8 @@ export type OwnerOrdersState = ReturnType<typeof useOwnerOrders>;
 /** Live / Paused indicator for the Orders header. */
 export function OrdersConnectionPill({ connection }: { connection: OrdersConnection }) {
   const label = { live: 'Live', paused: 'Paused', connecting: 'Connecting', sample: 'Sample' }[connection];
-  return <MarketPill dot tone={connection === 'live' ? 'positive' : 'quiet'} label={label} status={`Live updates: ${label}`} />;
+  const { ownerHeader } = useMarketTheme();
+  return <MarketPill dot tone={ownerHeader === 'dark' ? 'onDark' : connection === 'live' ? 'positive' : 'quiet'} label={label} status={`Live updates: ${label}`} />;
 }
 
 function useNow() {
@@ -121,7 +124,7 @@ export function RemoteOrderFlag({ order, hint, compact }: { order: Order; hint?:
   if (!message) return null;
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const regular = fonts.body ? { fontFamily: fonts.body } : {};
-  if (compact) return <View role="note" style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, minHeight: 28, borderRadius: 14, backgroundColor: colors.warningTint }}>
+  if (compact) return <View role="note" style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, minHeight: 28, borderRadius: 8, backgroundColor: colors.warningTint }}>
     <MarketIcon name="pin" color={colors.warning} size={14} />
     <Text style={{ color: colors.warning, fontSize: 12, lineHeight: 18, flexShrink: 1, ...bold }}>{message}</Text>
   </View>;
@@ -141,19 +144,19 @@ function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Ord
   return <View role="group" aria-label={`Order ${reference}, ${isNew ? 'New' : statusLabel(order.status)}`} style={{ backgroundColor: colors.surface, borderRadius: 20, borderWidth: isNew ? 2 : 1, borderColor: isNew ? colors.primary : colors.border, overflow: 'hidden' }}>
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: isNew ? colors.tint : colors.background }}>
       <Strong size={14} color={isNew ? colors.primary : colors.muted}>{`${isNew ? 'New' : statusLabel(order.status)} · ${elapsedLabel(order.createdAtISO, now)}`}</Strong>
-      <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 20, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{reference}</Text>
+      <Strong size={13}>{reference}</Strong>
     </View>
     <View style={{ padding: 16, gap: 12 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 2 }}>
-          <Text accessibilityRole="header" aria-level={3} style={{ color: colors.ink, fontSize: 19, lineHeight: 26, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{order.delivery.name}</Text>
+          <Text accessibilityRole="header" aria-level={3} style={{ color: colors.ink, fontSize: 18, lineHeight: 26, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{order.delivery.name}</Text>
           <MarketText variant="muted">{cardArea(order)}</MarketText>
         </View>
-        <View style={{ alignItems: 'flex-end' }}><Strong size={20} align="right">{formatINRFromPaise(order.totalPaise)}</Strong><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>Cash</Text></View>
+        <View style={{ alignItems: 'flex-end' }}><Text style={{ color: colors.ink, fontSize: 24, lineHeight: 30, textAlign: 'right', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{formatINRFromPaise(order.totalPaise)}</Text><Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>Cash</Text></View>
       </View>
       <RemoteOrderFlag order={order} compact />
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: 'dashed', paddingTop: 12, gap: 4 }}>
-        {order.lines.map((line, index) => <MarketText key={`${line.menuItemId}-${index}`}>{`${line.quantity} × ${line.name}`}</MarketText>)}
+        {order.lines.map((line, index) => <Text key={`${line.menuItemId}-${index}`} style={{ color: colors.ink, fontSize: 16, lineHeight: 25, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}><Text style={fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' }}>{`${line.quantity} ×`}</Text>{` ${line.name}`}</Text>)}
       </View>
       <View style={{ flexDirection: 'row', gap: 10 }}>
         {isNew ? <ActionButton grow tone="primary" label={busy ? 'Accepting…' : 'Accept order'} name={`Accept order ${reference}`} disabled={busy || demo} onPress={onAccept} /> : null}
@@ -163,8 +166,36 @@ function OrderCard({ order, now, busy, demo, onAccept, onDetails }: { order: Ord
   </View>;
 }
 
-/** Orders tab: status filters, live status, and order cards. `topSlot` sits above the list for #58's open/closed switch. */
-export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSlot?: ReactNode }) {
+/** Order status filters for the compact owners' header (#53); gold-outlined on Kokani's deep-green header. */
+export function OwnerOrderFilters({ queue }: { queue: OwnerOrdersState }) {
+  const { ownerHeader } = useMarketTheme();
+  const padding = useOwnerHorizontalPadding();
+  const counts = filterCounts(queue.orders);
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: padding }}>
+    <View role="group" aria-label="Order status filters" style={{ flexDirection: 'row', gap: 8 }}>
+      {queueFilters.map(value => {
+        const count = value === 'complete' ? 0 : counts[value];
+        return <MarketChip key={value} onDark={ownerHeader === 'dark'} label={filterLabel(value)} accessibilityLabel={count ? `${filterLabel(value)}, ${count}` : filterLabel(value)} selected={queue.filter === value} count={count || undefined} onPress={() => queue.setFilter(value)} />;
+      })}
+    </View>
+  </ScrollView>;
+}
+
+/** Empty list: outlined receipt medallion, centred in the space below the header. Copy stays honest (no ringing claim, #54). */
+function OwnerEmpty({ title, message }: { title: string; message: string }) {
+  const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  return <View style={{ flexGrow: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', gap: 12, paddingBottom: 24 }}>
+    <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+      <Svg width={36} height={36} viewBox="0 0 24 24"><Path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /></Svg>
+    </View>
+    <Text style={{ color: colors.ink, fontSize: 22, lineHeight: 29, textAlign: 'center', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{title}</Text>
+    <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23, textAlign: 'center', maxWidth: 300, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{message}</Text>
+  </View>;
+}
+
+/** Orders tab: live status and order cards. Filters live in the header (OwnerOrderFilters) and the open/closed band under it (#58). */
+export function OwnerOrders({ queue }: { queue: OwnerOrdersState }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const now = useNow();
@@ -183,19 +214,9 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
     if (target && document.activeElement !== target) target.focus();
   }, [selected, queue.filter, queue.orders]);
   const { orders, filter, loading, error, notice, success, connection, busyIds, demo } = queue;
-  const counts = filterCounts(orders);
   const visible = ordersForFilter(orders, filter);
-  return <View style={{ gap: 16 }}>
+  return <View style={{ gap: 16, flexGrow: 1 }}>
     <View role="status" aria-live="polite">{success && !selected ? <MarketText>{success}</MarketText> : null}</View>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
-      <View role="group" aria-label="Order status filters" style={{ flexDirection: 'row', gap: 8 }}>
-        {queueFilters.map(value => {
-          const active = filter === value; const count = value === 'complete' ? 0 : counts[value];
-          return <MarketChip key={value} label={filterLabel(value)} accessibilityLabel={count ? `${filterLabel(value)}, ${count}` : filterLabel(value)} selected={active} count={count || undefined} onPress={() => queue.setFilter(value)} />;
-        })}
-      </View>
-    </ScrollView>
-    {topSlot}
     {connection === 'paused' ? <View accessibilityRole="alert" style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, backgroundColor: colors.warningTint }}>
       <MarketIcon name="offline" color={colors.warning} />
       <View style={{ flex: 1 }}><MarketText><Text style={{ fontWeight: '700', color: colors.warning }}>Live updates paused.</Text> New orders may not show until you reconnect.</MarketText></View>
@@ -205,9 +226,10 @@ export function OwnerOrders({ queue, topSlot }: { queue: OwnerOrdersState; topSl
     {notice && !selected ? <MarketStatus kind="error" title="Order update notice" message={notice} action={<MarketButton label="Dismiss" variant="secondary" onPress={queue.dismissNotice} />} /> : null}
     {error ? <MarketStatus kind="error" title="Could not load orders" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => void queue.reload()} />} /> : null}
     {loading ? <MarketStatus kind="loading" title="Loading orders" /> : null}
-    {!loading && !error && !demo && !visible.length ? <MarketStatus kind="empty" title={emptyCopy[filter][0]} message={emptyCopy[filter][1]} /> : null}
+    {!loading && !error && !demo && !visible.length ? <OwnerEmpty title={emptyCopy[filter][0]} message={emptyCopy[filter][1]} /> : null}
     {selected ? <OwnerOrderDetails queue={queue} orderId={selected} now={now} onClose={closeDetails} /> : null}
     {visible.map(order => <OrderCard key={order.id} order={order} now={now} demo={demo} busy={busyIds.has(order.id)}
       onAccept={() => void queue.transition(order, 'accepted')} onDetails={() => { trigger.current = capturePanelFocus(); queue.clearMessages(); setSelected(order.id); }} />)}
+    {!demo && !loading && !error && visible.length ? <View style={{ paddingVertical: 4 }}><MarketText variant="muted">Orders placed before closing carry on as normal.</MarketText></View> : null}
   </View>;
 }
