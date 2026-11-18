@@ -73,6 +73,7 @@ try {
         placed = { ...historical, status: 'placed', subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: body.p_delivery.address_line ?? 'Flat 3, Bharne Naka', order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })) };
         return json({ outcome: 'placed', id: orderId });
       }
+      if (url.pathname === '/rest/v1/customer_businesses') return json([]);
       throw new Error(`Unexpected closed-state fixture ${request.method()} ${url.pathname}`);
     });
     const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
