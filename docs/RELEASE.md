@@ -158,3 +158,38 @@ this account lock before locking orders. It must preserve order snapshots and sh
 addresses, fence old retries by generation, and document the device-local cart/preferences
 cleanup and local sign-out handoff. PR A exposes no leave or pending-state mutation API;
 its pending-state tests use trusted fixtures. Admin memberships/tokens are unaffected.
+
+### Leave a restaurant (#52, PR B)
+
+`leaveBusiness({requestId,generation})` calls the public invoker/private definer RPC.
+Persist the UUID request ID and relationship generation before sending; retry those same
+values after a timeout/lost response. A request ID is scoped to its customer and cannot be
+reused for another business/generation. The completed receipt records the original server
+cutoff. Replaying it after rejoin returns that receipt without executing cleanup again.
+A new request with an old generation is rejected. No implicit rejoin is allowed from leave.
+
+Leave holds users → sessions → accounts → business locks, checks non-final orders and
+another active relationship, then atomically marks pending, removes only customer tokens
+and pending push jobs for this business, calls `purge_customer_notifications` with the
+original cutoff, marks the retained row left, and saves its receipt. Admin tokens and
+memberships, other businesses, shared addresses and all order/history snapshots remain.
+Completed push audit rows are retained with their removed token reference set null. Token
+rows are locked in ID order before jobs. The dispatcher unregistered path also locks the
+token first, then rechecks the job/lease, matching registration/rotation/delete cascades.
+Failure rolls the entire transaction back, including pending state and cleanup; there is
+no externally committed half-finished stage. Concurrent operations wait, then re-check.
+Future multi-transaction lifecycle work must preserve the same lock/state/generation rules.
+
+`transition_order` acquires the customer's lifecycle lock before business/order locks.
+Thus a non-final transition still blocks leave; a committed final transition is included
+in the leave cutoff and feed purge. Customer token registration uses the same lock and
+refuses pending/left relationships; admin registration remains independent. Work already
+handed to an external push provider cannot be recalled; removing its job invalidates later
+lease completion and destination lookup. No external provider or Auth deletion is called.
+
+A receipt confirms server cleanup only. Its `localCleanup` handoff identifies business,
+generation and request. Client delivery must clear only that generation's cart/preferences
+and use local sign-out after confirmation; never let an old receipt clear a later rejoin.
+Local storage cannot be cleared by SQL. This backend slice does not wire screens/device
+cleanup, and does not claim those steps or full #52 are complete. Keep the left row forever
+until account deletion; only explicit join replaces its generation.
