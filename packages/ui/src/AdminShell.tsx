@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AdminArea } from './AdminArea';
 import { AuthPanel } from './AuthPanel';
 import { MarketButton, MarketStatus, MarketText } from './components';
-import { BrandLogo, OwnerFrame, useOwnerHorizontalPadding } from './OwnerShell';
+import { OwnerFrame, useOwnerHorizontalPadding } from './OwnerShell';
+import { BrandLogo } from './BrandLogo';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { useMarket } from './useMarket';
 

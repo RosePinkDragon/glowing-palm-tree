@@ -182,7 +182,7 @@ const prepareCart = async (page, add = true) => {
   await focused(second, 'Your account');
   await second.waitForTimeout(250);
   await second.screenshot({ path: 'dist/browser/customer-drawer-mobile.png', fullPage: true });
-  await second.keyboard.press('Shift+Tab'); await focused(second, 'Browse menu');
+  await second.keyboard.press('Shift+Tab'); await focused(second, 'Log out');
   await second.keyboard.press('Tab'); await focused(second, '×');
   await second.keyboard.press('Escape'); await focused(second, 'Account');
   await second.getByRole('button', { name: 'Account', exact: true }).click();
