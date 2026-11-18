@@ -7,7 +7,8 @@ import { MarketButton, MarketCard, MarketStatus, MarketText } from './components
 import { callLink } from './admin-model';
 import { OrderStatusView, orderName, shortTime, type ReorderAction } from './CustomerOrderStatus';
 import { DietMark } from './DietMark';
-import { useMarketTheme } from './theme';
+import { useMarketFonts, useMarketTheme } from './theme';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { restorePanelFocus } from './AccessiblePanel';
 
 type Market = ReturnType<typeof useMarket>;
@@ -15,13 +16,22 @@ export type { ReorderAction } from './CustomerOrderStatus';
 export const activeOrder = (order: Order) => order.status !== 'delivered' && order.status !== 'cancelled';
 const label = (order: Order) => order.status.replaceAll('_', ' ');
 /** A past or current order in the Orders list and account drawer; the order page is OrderStatusView. */
-export function OrderCard({ order, onTrack, onReorder }: { order: Order; onTrack?: () => void; onReorder?: ReorderAction }) {
+export function OrderCard({ order, onTrack, onReorder, compact = false }: { order: Order; onTrack?: () => void; onReorder?: ReorderAction; compact?: boolean }) {
   const trigger = useRef<ComponentRef<typeof Pressable>>(null);
   const { colors } = useMarketTheme();
   const restoreFocus = () => {
     if (Platform.OS === 'web') restorePanelFocus(trigger.current as unknown as HTMLElement | null);
     else setTimeout(() => { const handle = findNodeHandle(trigger.current); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }, 0);
   };
+  if (compact) return <View style={{ backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}><View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: activeOrder(order) ? colors.warningTint : order.status === 'cancelled' ? colors.neutralTint : colors.positiveTint, flexShrink: 1 }}><Text style={{ color: activeOrder(order) ? colors.warning : order.status === 'cancelled' ? colors.ink : colors.positive, fontWeight: '700' }}>{label(order)}</Text></View><Text style={{ color: colors.ink, fontWeight: '700' }}>{formatINRFromPaise(order.totalPaise)}</Text></View>
+    <Text style={{ color: colors.ink, fontWeight: '700' }}>{`Order ${orderName(order)}`}</Text>
+    <MarketText variant="muted">{shortTime(order.createdAtISO)}</MarketText>
+    {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 2 }}><MarketText>{line.quantity} × {line.name} · {formatINRFromPaise(line.lineTotalPaise)}</MarketText><DietMark diet={line.diet} /></View>)}
+    <MarketText>Delivery: {formatINRFromPaise(order.deliveryFeePaise)}</MarketText>
+    {onTrack ? <MarketButton label={`${activeOrder(order) ? 'Track order' : 'View order'} ${orderName(order)}`} variant={activeOrder(order) ? 'primary' : 'secondary'} onPress={onTrack} /> : null}
+    {!activeOrder(order) && onReorder ? <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`Reorder order ${orderName(order)}`} onPress={() => onReorder(order, restoreFocus)} style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface }}><Text style={{ color: colors.primary, fontWeight: '700' }}>Reorder</Text></Pressable> : null}
+  </View>;
   return <MarketCard>
     <MarketText variant="heading">{`Order ${orderName(order)}`}</MarketText>
     <MarketText>Status: {label(order)}</MarketText>
@@ -34,15 +44,20 @@ export function OrderCard({ order, onTrack, onReorder }: { order: Order; onTrack
     </Pressable> : null}
   </MarketCard>;
 }
-export function CustomerHistory({ market, go, onReorder }: { market: Market; go: (path: string) => void; onReorder?: ReorderAction }) {
-  const { name, colors } = useMarketTheme();
+export function CustomerHistory({ market, go, onReorder, drawer = false }: { market: Market; go: (path: string) => void; onReorder?: ReorderAction; drawer?: boolean }) {
+  const { name, colors } = useMarketTheme(); const fonts = useMarketFonts();
   return <View style={{ gap: 16 }}>
     <MarketText variant="eyebrow">Past orders</MarketText>
-    <MarketButton label="Refresh orders" variant="secondary" onPress={() => void market.refreshOrders()} />
+    {drawer ? <Pressable accessibilityRole="button" onPress={() => void market.refreshOrders()} style={{ minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' }}><Text style={{ color: colors.primary, fontWeight: '700' }}>Refresh orders</Text></Pressable> : <MarketButton label="Refresh orders" variant="secondary" onPress={() => void market.refreshOrders()} />}
     {market.ordersLoading || (!market.ordersReady && !market.ordersError) ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
     {market.ordersError ? <MarketStatus kind="error" title="Could not load your orders" message={market.ordersError} action={<MarketButton label="Retry orders" onPress={() => void market.refreshOrders()} />} /> : null}
-    {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} onReorder={onReorder} />)}
-    {market.ordersReady && !market.orders.length ? <MarketStatus kind="empty" title="No orders yet" message={`Your orders from ${name} will appear here.`} action={<MarketButton label="Browse the menu" onPress={() => go('/')} />} /> : null}
+    {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} onReorder={onReorder} compact={drawer} />)}
+    {market.ordersReady && !market.orders.length ? drawer ? <View style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: colors.inputBorder, borderRadius: 16, padding: 24, alignItems: 'center', gap: 14, backgroundColor: colors.surface }}>
+      <View accessible={false} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}><Svg aria-hidden width={32} height={32} viewBox="0 0 32 32"><Circle cx={16} cy={16} r={8} fill="none" stroke={colors.primary} strokeWidth={2} /><Circle cx={16} cy={16} r={5} fill="none" stroke={colors.primary} strokeWidth={2} /><Path d="M4 5v8m3-8v8m-3-3h3m-1.5 3v13M27 5v21M27 5c-3 2-4 6-4 9h4" fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" /></Svg></View>
+      <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 22, textAlign: 'center', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' }) }}>No orders yet</Text>
+      <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23, textAlign: 'center' }}>{`Your orders from ${name} will appear here.`}</Text>
+      <MarketButton label="Browse the menu" onPress={() => go('/')} />
+    </View> : <MarketStatus kind="empty" title="No orders yet" message={`Your orders from ${name} will appear here.`} action={<MarketButton label="Browse the menu" onPress={() => go('/')} />} /> : null}
     {market.olderOrdersError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{market.olderOrdersError}</Text> : null}
     {market.hasOlderOrders ? <MarketButton label={market.olderOrdersLoading ? 'Loading older orders…' : market.olderOrdersError ? 'Retry older orders' : 'Load older orders'} variant="secondary" disabled={market.olderOrdersLoading || market.ordersLoading} onPress={() => void market.loadOlderOrders()} /> : null}
     <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{market.ordersReady ? `${market.orders.length} orders loaded` : ''}</MarketText></View>

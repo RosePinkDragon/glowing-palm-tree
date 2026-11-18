@@ -300,6 +300,22 @@ const settledDrawer = async page => {
     }; frame();
   }));
 };
+const assertDrawerTargets = async page => {
+  const tooSmall = await page.getByRole('dialog').locator('[role="button"]').evaluateAll(nodes => nodes.flatMap(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.width && rect.height && (rect.width < 44 || rect.height < 44) ? [`${node.getAttribute('aria-label') || node.textContent}: ${rect.width}×${rect.height}`] : [];
+  }));
+  assert.deepEqual(tooSmall, [], 'drawer controls meet the 44px target');
+};
+const scrollDrawer = async (page, bottom) => {
+  await page.getByRole('button', { name: 'Browse menu', exact: true }).evaluate((node, bottom) => {
+    let parent = node.parentElement;
+    while (parent && (!/(auto|scroll)/.test(getComputedStyle(parent).overflowY) || parent.scrollHeight <= parent.clientHeight)) parent = parent.parentElement;
+    if (!parent) throw new Error('Drawer scroll container not found');
+    parent.scrollTop = bottom ? parent.scrollHeight : 0;
+  }, bottom);
+  await page.waitForTimeout(100);
+};
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir('dist/browser', { recursive: true });
 try {
@@ -312,7 +328,7 @@ try {
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map() };
     const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), ...(index === 24 || index === 1 ? { order_number: ref(index + 1) } : {}), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
-    let failOlder = true, failDetail = false, holdOrders = false, held, release;
+    let failOlder = true, failDetail = false, holdOrders = false, held, release, emptyHistory = false;
     await context.routeWebSocket(/.*/, socket => {
       socket.onMessage(message => {
         const data = JSON.parse(String(message)), array = Array.isArray(data);
@@ -344,7 +360,7 @@ try {
         if (id) return failDetail ? json({ message: 'Detail fixture unavailable' }, 400) : json(rows.find(row => row.id === id.slice(3)) ?? null);
         const cursor = url.searchParams.get('or');
         const active = url.searchParams.has('status');
-        const capturedRows = [...(active && fixture.supportRows !== null ? fixture.supportRows : rows)].filter(row => row.customer_id === (fixture.authSession?.user.id ?? userId));
+        const capturedRows = [...(active && fixture.supportRows !== null ? fixture.supportRows : emptyHistory ? [] : rows)].filter(row => row.customer_id === (fixture.authSession?.user.id ?? userId));
         if (active) {
           assert.equal(url.searchParams.get('status'), 'in.(placed,accepted,preparing,out_for_delivery)');
           const hold = fixture.holdActive; fixture.holdActive = null; if (hold) { hold.arrived(); await hold.gate; }
@@ -375,6 +391,41 @@ try {
       Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
     });
     try {
+      if (process.env.DRAWER_EVIDENCE) {
+        const page = await context.newPage();
+        await page.goto(server.url, { waitUntil: 'networkidle' });
+        await page.getByRole('button', { name: 'Account', exact: true }).click();
+        await page.getByLabel('Email', { exact: true }).fill(user.email);
+        await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
+        await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+        await page.getByRole('button', { name: 'Account', exact: true }).click();
+        await page.getByText('20 orders loaded', { exact: true }).waitFor();
+        for (const width of [390, 1280]) {
+          await page.setViewportSize({ width, height: 844 }); await settledDrawer(page); await scrollDrawer(page, false);
+          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-orders-${width}.png` });
+          const initialY = await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y);
+          await scrollDrawer(page, true);
+          await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).scrollIntoViewIfNeeded();
+          assert.ok(await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y) < initialY, 'orders footer capture scrolls the drawer');
+          assert.ok(await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), 'orders footer is visible');
+          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-orders-lower-${width}.png` });
+        }
+        emptyHistory = true;
+        await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+        await page.getByText('No orders yet', { exact: true }).waitFor();
+        for (const width of [390, 1280]) {
+          await page.setViewportSize({ width, height: 844 }); await settledDrawer(page); await scrollDrawer(page, false);
+          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-empty-${width}.png` });
+          const initialY = await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y);
+          await scrollDrawer(page, true);
+          await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).scrollIntoViewIfNeeded();
+          assert.ok(await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y) < initialY, 'empty footer capture scrolls the drawer');
+          assert.ok(await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), 'empty footer is visible');
+          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-empty-lower-${width}.png` });
+        }
+        assert.deepEqual(errors, []); continue;
+      }
       if (process.env.SUPPORT_ONLY === '1') {
         const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
         try { await supportScenarios({ page, context, server, slug, rows, fixture, queries }); }
@@ -404,6 +455,27 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
       await page.getByText('20 orders loaded', { exact: true }).waitFor();
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 844 }); await settledDrawer(page);
+        await assertDrawerTargets(page);
+      }
+      emptyHistory = true;
+      await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+      await page.getByText('No orders yet', { exact: true }).waitFor();
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 844 }); await settledDrawer(page);
+        await assertDrawerTargets(page);
+      }
+      await page.getByRole('button', { name: 'Browse the menu', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await page.getByRole('dialog').waitFor({ state: 'hidden' });
+      emptyHistory = false;
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
+      await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+      await page.getByText('20 orders loaded', { exact: true }).waitFor();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.waitForFunction(() => document.activeElement?.textContent === 'Your account');
       await page.keyboard.press('Shift+Tab');
       await page.waitForFunction(() => document.activeElement?.textContent === 'Browse menu');
