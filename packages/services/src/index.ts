@@ -69,6 +69,12 @@ export interface NotificationPageOptions { cursor?: OrderCursor | null; limit?: 
 export interface NotificationPage { notifications: CustomerNotification[]; nextCursor: OrderCursor | null }
 export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
 
+export interface LeaveBusinessReceipt {
+  customerId: string; businessId: string; requestId: string; generation: string;
+  startedAtISO: string; completedAtISO: string; state: 'left';
+  localCleanup: { businessSlug: BusinessSlug; generation: string; requestId: string };
+}
+
 export interface CustomerBusinessRelationship {
   customerId: string;
   businessId: string;
@@ -518,6 +524,61 @@ export function createMarketServices(options: ServiceOptions) {
       throw new ServiceError('BUSINESS_JOIN_FAILED', 'Could not join this restaurant.', error);
     }
   };
+  const leaveBusiness = async (input: { requestId: string; generation: string }): Promise<LeaveBusinessReceipt> => {
+    if (!input || typeof input.requestId !== 'string' || !orderIdPattern.test(input.requestId) ||
+        typeof input.generation !== 'string' || !orderIdPattern.test(input.generation)) throw new ServiceError('INVALID_LEAVE_REQUEST', 'Use the original request ID and relationship generation.');
+    // Copy before awaiting so callers cannot retarget an in-flight leave.
+    const requestId = input.requestId.toLowerCase(), relationshipGeneration = input.generation.toLowerCase();
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to leave a restaurant.');
+    const initial = await db.auth.getSession();
+    const token = initial.data.session?.access_token;
+    const expected = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Retry leaving.');
+    if (initial.error || !token || !expected || !orderIdPattern.test(expected.userId) || !orderIdPattern.test(expected.sessionId) || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in before leaving.');
+    const ensureCurrent = async () => {
+      const current = await db.auth.getSession();
+      const identity = current.data.session?.access_token ? sessionIdentity(current.data.session.access_token) : null;
+      if (disposed || generation !== started || current.error || !identity || current.data.session?.user.id !== expected.userId ||
+          identity.userId !== expected.userId || identity.sessionId !== expected.sessionId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Retry leaving.');
+    };
+    try {
+      const verified = await db.auth.getUser(token);
+      await ensureCurrent();
+      if (verified.error) {
+        const status = verified.error.status;
+        if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in before leaving.', verified.error);
+        throw new ServiceError('BUSINESS_LEAVE_FAILED', 'Could not verify your account.', verified.error);
+      }
+      if (verified.data.user?.id !== expected.userId) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm your account.');
+      const business = await getBusiness();
+      await ensureCurrent();
+      if (!orderIdPattern.test(business.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid restaurant.');
+      const { data, error } = await db.rpc('leave_business', { p_business_slug: slug, p_request_id: requestId, p_generation: relationshipGeneration }).setHeader('Authorization', `Bearer ${token}`);
+      await ensureCurrent();
+      if (error?.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in again before leaving.', error);
+      if (error?.code === '22023' && error.details === 'INVALID_BUSINESS') throw new ServiceError('INVALID_BUSINESS', 'This restaurant is unavailable.', error);
+      lifecycleError(error);
+      const conflicts = new Set(['ACTIVE_ORDERS','LAST_BUSINESS','STALE_RELATIONSHIP','LEAVE_REQUEST_CONFLICT']);
+      if (error?.code === 'PT409' && typeof error.details === 'string' && conflicts.has(error.details)) throw new ServiceError(error.details, 'The restaurant relationship cannot be left in its current state.', error);
+      if (error?.code === '22023' && error.details === 'INVALID_LEAVE_REQUEST') throw new ServiceError('INVALID_LEAVE_REQUEST', 'Use the original request ID and relationship generation.', error);
+      if (error) throw new ServiceError('BUSINESS_LEAVE_FAILED', 'Could not leave this restaurant. Retry with the same request ID.', error);
+      if (!data || typeof data !== 'object' || Array.isArray(data) || data.customer_id !== expected.userId || data.business_id !== business.id ||
+          data.generation !== relationshipGeneration || data.request_id !== requestId || data.state !== 'left' ||
+          !validOrderCursor({ id: requestId, createdAtISO: data.started_at }) || !validOrderCursor({ id: requestId, createdAtISO: data.completed_at }) ||
+          notificationTime(data.completed_at) < notificationTime(data.started_at)) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm leave completion. Retry with the same request ID.');
+      // Server completion only. Screens perform generation-scoped cart/preferences cleanup and
+      // local sign-out separately; an old receipt must never clear a later rejoin's device data.
+      return { customerId: expected.userId, businessId: business.id, requestId, generation: relationshipGeneration,
+        startedAtISO: data.started_at, completedAtISO: data.completed_at, state: 'left',
+        localCleanup: { businessSlug: slug, generation: relationshipGeneration, requestId } };
+    } catch (error) {
+      await ensureCurrent();
+      if (error instanceof ServiceError && ['SESSION_CHANGED','SIGN_IN_REQUIRED','INVALID_RESPONSE','INVALID_BUSINESS','INVALID_LEAVE_REQUEST','ACTIVE_ORDERS','LAST_BUSINESS','STALE_RELATIONSHIP','LEAVE_REQUEST_CONFLICT','BUSINESS_LIFECYCLE_PENDING','ACCOUNT_LIFECYCLE_PENDING','BUSINESS_LEAVE_FAILED'].includes(error.code)) throw error;
+      if (error instanceof ServiceError && error.code === 'NOT_FOUND') throw new ServiceError('INVALID_BUSINESS', 'This restaurant is unavailable.', error);
+      throw new ServiceError('BUSINESS_LEAVE_FAILED', 'Could not leave this restaurant.', error);
+    }
+  };
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
     async signIn(email: string, password: string) { const { data, error } = await requireClient().auth.signInWithPassword({ email, password }); fail(error, 'Could not sign in'); return data; },
@@ -909,7 +970,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
