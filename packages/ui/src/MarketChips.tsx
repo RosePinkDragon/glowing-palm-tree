@@ -5,23 +5,25 @@ import { useMarketFonts, useMarketTheme } from './theme';
 // contrast of every text/background pair is checked in theme-tokens.test.ts.
 
 /** A selectable filter or day chip: 48px pill button, filled when selected, optional count. */
-export function MarketChip({ label, selected, onPress, accessibilityLabel, count, radio = false }: {
+export function MarketChip({ label, selected, onPress, accessibilityLabel, count, radio = false, onDark = false }: {
   label: string; selected: boolean; onPress: () => void; accessibilityLabel?: string; count?: number;
   /** One choice of a group: a radio with aria-checked, for use inside a labelled radiogroup, instead of a pressed toggle button. */
   radio?: boolean;
+  /** On the deep-green owners' header (#53): gold fill when selected, gold outline and light text otherwise. */
+  onDark?: boolean;
 }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   return <Pressable accessibilityRole={radio ? 'radio' : 'button'} accessibilityLabel={accessibilityLabel ?? label} {...(radio ? { 'aria-checked': selected } : { 'aria-pressed': selected })} accessibilityState={radio ? { checked: selected } : { selected }} onPress={onPress}
-    style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: selected ? colors.ink : colors.border, backgroundColor: selected ? colors.ink : colors.surface, opacity: pressed ? 0.85 : 1 })}>
-    <Text numberOfLines={1} style={{ color: selected ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
-    {count ? <View aria-hidden style={{ minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.primary : colors.tint }}>
-      <Text style={{ color: selected ? colors.onPrimary : colors.primary, fontSize: 12, lineHeight: 16, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{count}</Text>
+    style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, borderRadius: 24, borderWidth: 1, borderColor: onDark ? colors.accent : selected ? colors.ink : colors.border, backgroundColor: onDark ? selected ? colors.accent : 'transparent' : selected ? colors.ink : colors.surface, opacity: pressed ? 0.85 : 1 })}>
+    <Text numberOfLines={1} style={{ color: onDark ? selected ? colors.ownerHeader : colors.onOwnerHeader : selected ? colors.surface : colors.ink, fontSize: 14, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{label}</Text>
+    {count ? <View aria-hidden style={{ minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: onDark ? selected ? colors.ownerHeader : colors.accent : selected ? colors.primary : colors.tint }}>
+      <Text style={{ color: onDark ? selected ? colors.onOwnerHeader : colors.ownerHeader : selected ? colors.onPrimary : colors.primary, fontSize: 12, lineHeight: 16, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{count}</Text>
     </View> : null}
   </Pressable>;
 }
 
-export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger';
+export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'onDark';
 
 /**
  * A small status or label pill. Tones: brand (featured, order status), positive (Live),
@@ -40,6 +42,7 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     neutral: { bg: colors.neutralTint, text: colors.ink, border: undefined, dot: colors.ink },
     quiet: { bg: colors.neutralTint, text: colors.muted, border: undefined, dot: colors.muted },
     outline: { bg: colors.surface, text: colors.muted, border: colors.inputBorder, dot: colors.muted },
+    onDark: { bg: 'transparent', text: colors.onOwnerHeader, border: colors.accent, dot: '#7BD389' },
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
   }[tone];
   return <View {...(status ? { role: 'status' as const, 'aria-label': status } : {})}
