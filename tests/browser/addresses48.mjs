@@ -63,6 +63,7 @@ try {
         }
         if (method === 'DELETE') { writes.push({ method, id }); fixture.rows = fixture.rows.filter(item => item.id !== id); return route.fulfill({ status: 204, body: '' }); }
       }
+      if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
       throw new Error(`Unexpected addresses request ${method} ${url.pathname}`);
     });
     const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));

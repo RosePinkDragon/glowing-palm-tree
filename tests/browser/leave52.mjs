@@ -84,6 +84,7 @@ try {
         return json({ outcome: 'placed', id: orderId });
       }
       if (method === 'GET' && /notifications|device_tokens|unread/.test(url.pathname)) return json(rpc.includes('count') ? 0 : []);
+      if (rpc === 'customer_notification_unread_count') return json(0); // inbox badge (#55)
       fixture.errors.push(`${method} ${url.pathname}`); return json({ code: 'XX000', message: 'unexpected fixture request' }, 500);
     });
     let placed = null;

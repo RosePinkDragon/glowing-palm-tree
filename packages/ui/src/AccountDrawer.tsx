@@ -6,6 +6,7 @@ import { CustomerHistory, type ReorderAction } from './CustomerOrders';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { BrandLogo } from './BrandLogo';
+import { unreadLabel } from './notification-inbox';
 
 type Market = ReturnType<typeof useMarket>;
 export function AccountDrawer({ open, close, market, go, signOut, onReorder, covered }: { open: boolean; close: (restore?: boolean) => void; market: Market; go: (path: string) => void; signOut: () => Promise<void>; onReorder: ReorderAction; covered: boolean }) {
@@ -20,6 +21,8 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
   const initials = fullName.split(/\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join('').toUpperCase();
   const navigate = (path: string) => { setOptions(false); close(false); go(path); };
   useEffect(() => { if (!open) { setOptions(false); setError(''); } }, [open]);
+  const refreshCount = market.inbox.refreshCount;
+  useEffect(() => { if (open && user) void refreshCount(); }, [open, user?.id, refreshCount]);
   useEffect(() => {
     if (!open || covered || Platform.OS !== 'web') return;
     const keydown = (event: KeyboardEvent) => {
@@ -70,7 +73,7 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
           </View>
           <View style={{ paddingHorizontal: 16, gap: 16 }}>
             <View style={ammu ? { flexDirection: 'row', gap: 8 } : { borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 12 }}>
-              {([['Saved addresses', '/addresses', 'pin'], ['Notifications', '/notifications', 'bell'], ['Help & support', '/help', 'help']] as [string, string, MarketIconName][]).map(([label, path, icon], index) => <Pressable key={path} accessibilityRole="button" onPress={() => navigate(path)} style={ammu ? { flex: 1, minWidth: 0, minHeight: 86, padding: 10, gap: 8, borderWidth: 1, borderRadius: 14, borderColor: colors.border, backgroundColor: colors.surface } : { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: index ? 1 : 0, borderColor: colors.border }}><MarketIcon name={icon} color={colors.primary} size={19} /><Text style={{ color: colors.ink, fontSize: 14, flexShrink: 1, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' }) }}>{label}</Text>{!ammu ? <View style={{ marginLeft: 'auto' }}><MarketIcon name="chevronRight" color={colors.muted} /></View> : null}</Pressable>)}
+              {([['Saved addresses', '/addresses', 'pin'], ['Notifications', '/notifications', 'bell'], ['Help & support', '/help', 'help']] as [string, string, MarketIconName][]).map(([label, path, icon], index) => <Pressable key={path} accessibilityRole="button" accessibilityLabel={path === '/notifications' ? `${label}${unreadLabel(market.inbox.unread)}` : label} onPress={() => navigate(path)} style={ammu ? { flex: 1, minWidth: 0, minHeight: 86, padding: 10, gap: 8, borderWidth: 1, borderRadius: 14, borderColor: colors.border, backgroundColor: colors.surface } : { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: index ? 1 : 0, borderColor: colors.border }}><MarketIcon name={icon} color={colors.primary} size={19} /><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}><Text style={{ color: colors.ink, fontSize: 14, flexShrink: 1, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' }) }}>{label}</Text>{path === '/notifications' && market.inbox.unread ? <View accessible={false} testID="unread-badge" style={{ minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary }}><Text style={{ color: colors.onPrimary, fontSize: 12, lineHeight: 16, fontWeight: '700' }}>{market.inbox.unread > 99 ? '99+' : market.inbox.unread}</Text></View> : null}</View>{!ammu ? <View style={{ marginLeft: 'auto' }}><MarketIcon name="chevronRight" color={colors.muted} /></View> : null}</Pressable>)}
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {[['Account settings', '/account'], ['Your orders', '/orders']].map(([label, path]) => <Pressable key={path} accessibilityRole="button" onPress={() => navigate(path)} style={{ minHeight: 44, flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 }}><Text style={{ color: colors.primary, fontWeight: '700', textAlign: 'center' }}>{label}</Text></Pressable>)}
