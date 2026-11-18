@@ -4,7 +4,7 @@ import type { Order } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
 import { AddDishButton, AdminMenu, type AdminMenuAddDish } from './AdminMenu';
-import { OrdersConnectionPill, OwnerOrders, useOwnerOrders } from './OwnerOrders';
+import { OrdersConnectionPill, OwnerOrderFilters, OwnerOrders, useOwnerOrders } from './OwnerOrders';
 import { OwnerScreen, OwnerTabBar } from './OwnerShell';
 import { OwnerToday } from './OwnerToday';
 import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
@@ -44,9 +44,11 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   // Restaurant details (#60) is a full screen reached from Settings; Back returns to the Settings tab.
   if (detailsOpen && tab === 'settings') return <OwnerRestaurantDetails services={services} onBack={() => setDetailsOpen(false)} />;
   return <View style={{ flex: 1 }}>
-    <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}>
+    <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}
+      headerExtra={tab === 'orders' ? <OwnerOrderFilters queue={queue} /> : undefined}
+      band={tab === 'orders' ? ordersSlot ?? <OwnerOrderingSwitch services={services} /> : undefined}>
       {banner}
-      {tab === 'orders' ? <OwnerOrders queue={queue} topSlot={ordersSlot ?? <OwnerOrderingSwitch services={services} />} /> : null}
+      {tab === 'orders' ? <OwnerOrders queue={queue} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <OwnerToday services={services} /> : null}
       {tab === 'settings' ? <OwnerSettings market={market} onOpenRestaurantDetails={() => setDetailsOpen(true)} /> : null}

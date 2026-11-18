@@ -8,7 +8,8 @@ import { BrandLogo } from './BrandLogo';
 import { formatBadgeCount, ownerTabAccessibilityLabel, ownerTabs, type OwnerTabId } from './owner-navigation';
 import { MarketFontsProvider, useMarketFonts, useMarketTheme } from './theme';
 
-const contentWidth = 960;
+export const ownerContentWidth = 960;
+const contentWidth = ownerContentWidth;
 const hidden = { 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
 
 /** Root of an owners' app: active brand fonts, safe areas and the brand background. */
@@ -20,21 +21,28 @@ export function OwnerFrame({ children }: { children: ReactNode }) {
 
 export function useOwnerHorizontalPadding() { return useWindowDimensions().width >= 760 ? 40 : 20; }
 
-/** Owner screen container for #58–#61: compact branded header, optional right slot and scrollable content. */
-export function OwnerScreen({ title, headerRight, children }: { title: string; headerRight?: ReactNode; children: ReactNode }) {
-  const { colors, name } = useMarketTheme();
+/**
+ * Owner screen container for #58–#61: compact branded header (with an optional `headerExtra` row such as the
+ * Orders status filters, #53), an optional full-width `band` under it, and scrollable content on a page surface
+ * that contrasts with the header.
+ */
+export function OwnerScreen({ title, headerRight, headerExtra, band, children }: { title: string; headerRight?: ReactNode; headerExtra?: ReactNode; band?: ReactNode; children: ReactNode }) {
+  const { colors, name, ownerHeader } = useMarketTheme();
   const fonts = useMarketFonts();
   const insets = useSafeAreaInsets();
   const padding = useOwnerHorizontalPadding();
+  const dark = ownerHeader === 'dark';
   return <View style={{ flex: 1 }}>
-    <View style={{ backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border, paddingTop: insets.top }}>
-      <View style={{ width: '100%', maxWidth: contentWidth, alignSelf: 'center', minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: padding, paddingVertical: 10 }}>
+    <View style={{ backgroundColor: colors.ownerHeader, borderBottomWidth: dark ? 0 : 1, borderBottomColor: colors.border, paddingTop: insets.top }}>
+      <View style={{ width: '100%', maxWidth: contentWidth, alignSelf: 'center', minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: padding, paddingVertical: 8 }}>
         <BrandLogo height={38} label={title === name ? undefined : name} />
-        <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, color: colors.ink, fontSize: 26, lineHeight: 34, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{title}</Text>
+        <Text accessibilityRole="header" numberOfLines={1} style={{ flex: 1, color: colors.onOwnerHeader, fontSize: 26, lineHeight: 34, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{title}</Text>
         {headerRight ? <View>{headerRight}</View> : null}
       </View>
+      {headerExtra ? <View style={{ width: '100%', maxWidth: contentWidth, alignSelf: 'center', paddingBottom: 10 }}>{headerExtra}</View> : null}
     </View>
-    <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: contentWidth, alignSelf: 'center', paddingHorizontal: padding, paddingVertical: 24, gap: 20 }}>{children}</ScrollView>
+    {band}
+    <ScrollView style={{ flex: 1, backgroundColor: colors.page }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, width: '100%', maxWidth: contentWidth, alignSelf: 'center', paddingHorizontal: padding, paddingVertical: 16, gap: 16 }}>{children}</ScrollView>
   </View>;
 }
 
@@ -64,7 +72,6 @@ export function OwnerTabBar({ selected, onSelect, badges }: { selected: OwnerTab
         const badge = formatBadgeCount(badges?.[tab.id]);
         const color = active ? colors.primary : colors.muted;
         return <Pressable key={tab.id} accessibilityRole={web ? 'button' : 'tab'} accessibilityLabel={ownerTabAccessibilityLabel(tab.id, badges?.[tab.id])} accessibilityState={web ? undefined : { selected: active }} aria-current={web && active ? 'page' : undefined} onPress={() => onSelect(tab.id)} style={({ pressed }) => ({ flex: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center', gap: 3, paddingTop: 4, paddingBottom: 8, opacity: pressed ? 0.7 : 1 })}>
-          <View {...hidden} style={{ width: 28, height: 3, borderRadius: 2, marginBottom: 3, backgroundColor: active ? colors.primary : 'transparent' }} />
           <View>
             <TabIcon id={tab.id} color={color} />
             {badge ? <View {...hidden} style={{ position: 'absolute', top: -6, left: 14, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: colors.primary, borderWidth: 1.5, borderColor: colors.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 10, lineHeight: 13, fontWeight: '700' }}>{badge}</Text></View> : null}
