@@ -40,9 +40,9 @@ export function MarketRow({ title, detail, end, roomy = false }: { title: string
 }
 
 /** Padded card with its heading inside. */
-export function MarketSection({ title, children }: { title?: string; children: ReactNode }) {
+export function MarketSection({ title, children, muted = false }: { title?: string; children: ReactNode; /** Read-only information (#114, Restaurant details p. 13): muted filled panel, no border. Off keeps the white bordered card. */ muted?: boolean }) {
   const { colors } = useMarketTheme();
-  return <View style={{ backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 10 }}>
+  return <View style={muted ? { backgroundColor: colors.panelFill, borderRadius: 20, padding: 18, gap: 12 } : { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.border, padding: 16, gap: 10 }}>
     {title ? <SectionHeading title={title} /> : null}
     {children}
   </View>;
