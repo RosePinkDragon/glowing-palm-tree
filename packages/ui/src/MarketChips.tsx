@@ -42,7 +42,7 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     neutral: { bg: colors.neutralTint, text: colors.ink, border: undefined, dot: colors.ink },
     quiet: { bg: colors.neutralTint, text: colors.muted, border: undefined, dot: colors.muted },
     outline: { bg: colors.surface, text: colors.muted, border: colors.inputBorder, dot: colors.muted },
-    onDark: { bg: 'transparent', text: colors.onOwnerHeader, border: colors.accent, dot: '#7BD389' },
+    onDark: { bg: 'transparent', text: colors.onOwnerHeader, border: colors.accent, dot: colors.liveDot },
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
   }[tone];
   return <View {...(status ? { role: 'status' as const, 'aria-label': status } : {})}

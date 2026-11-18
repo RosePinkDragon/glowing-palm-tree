@@ -61,7 +61,7 @@ test('owners shell (#53): header, chips on the dark header, bands and page keep 
     const text: [string, string, string][] = [
       ['header title', c.onOwnerHeader, c.ownerHeader], ['open band', c.onOpenBand, c.openBand], ['closed band', c.onClosedBand, c.closedBand],
       ['page muted text', c.muted, c.page], ['page ink', c.ink, c.page], ['login heading', c.background, c.loginHero],
-      ['filled OWNERS badge', c.onPrimary, c.primary],
+      ['filled OWNERS badge', c.onPrimary, c.primary], ['error on open band', c.danger, c.openBand], ['error on closed band', c.onClosedBand, c.closedBand],
       ...(theme.ownerHeader === 'dark' ? [['selected chip on gold', c.ownerHeader, c.accent], ['dark chip', c.onOwnerHeader, c.ownerHeader]] as [string, string, string][] : []),
     ];
     for (const [name, fg, bg] of text) assert.ok(contrastRatio(fg, bg) >= 4.5, `${theme.name}: ${name} ${fg} on ${bg} = ${contrastRatio(fg, bg).toFixed(2)}`);

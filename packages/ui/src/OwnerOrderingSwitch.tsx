@@ -11,7 +11,7 @@ const empty = (services: MarketServices): State => ({ services, business: null, 
 
 /** Portable Orders control; the backend owns authorization and the actual value. */
 export function OwnerOrderingSwitch({ services }: { services: MarketServices }) {
-  const { colors, name } = useMarketTheme();
+  const { colors, name, ownerHeader } = useMarketTheme();
   const fonts = useMarketFonts();
   const [state, setState] = useState(() => empty(services));
   const [attempt, setAttempt] = useState(0);
@@ -65,7 +65,7 @@ export function OwnerOrderingSwitch({ services }: { services: MarketServices }) 
     return () => { active = false; request++; change.current = null; unsubscribe?.(); };
   }, [services, attempt]);
   const padding = useOwnerHorizontalPadding();
-  const body = (bg: string, children: ReactNode) => <View style={{ backgroundColor: bg }}><View style={{ width: '100%', maxWidth: ownerContentWidth, alignSelf: 'center', paddingHorizontal: padding, paddingVertical: 12, gap: 6 }}>{children}</View></View>;
+  const body = (bg: string, children: ReactNode, divider = false) => <View style={{ backgroundColor: bg, borderTopWidth: divider ? 1 : 0, borderTopColor: colors.accent }}><View style={{ width: '100%', maxWidth: ownerContentWidth, alignSelf: 'center', paddingHorizontal: padding, paddingVertical: 12, gap: 6 }}>{children}</View></View>;
   if (services.mode === 'demo') return body(colors.openBand, <Text style={{ color: colors.onOpenBand, fontSize: 15, lineHeight: 22, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>Restaurant availability cannot be changed in sample mode.</Text>);
   const current = state.services === services ? state : empty(services);
   const checked = current.business?.acceptingOrders === true;
@@ -77,6 +77,9 @@ export function OwnerOrderingSwitch({ services }: { services: MarketServices }) 
   const closed = current.ready && !checked;
   const ink = closed ? colors.onClosedBand : colors.onOpenBand;
   const sans = { color: ink, ...(fonts.body ? { fontFamily: fonts.body } : {}) };
+  // Errors are never colour or weight only: danger red on the pale band, white with a "!" marker on the dark band.
+  const alertMark = closed ? '! ' : '';
+  const alertText = { color: closed ? colors.onClosedBand : colors.danger, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) };
   const sansBold = { color: ink, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) };
   return body(closed ? colors.closedBand : colors.openBand, <>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
@@ -87,7 +90,7 @@ export function OwnerOrderingSwitch({ services }: { services: MarketServices }) 
       <MarketSwitch label={`Take new orders at ${name}`} hint={disabled ? 'Wait for the restaurant status to be confirmed.' : checked ? 'Switch off to pause new orders.' : 'Switch on to take new orders.'} value={checked} disabled={!current.ready} busy={current.saving} onValueChange={next => change.current?.(next)} />
     </View>
     {setupPending ? <Text style={{ fontSize: 14, lineHeight: 21, ...sans }}>Customer ordering setup is not enabled yet. This switch only marks the kitchen open or closed; it cannot enable customer ordering by itself.</Text> : null}
-    {current.notice ? <Text accessibilityRole={current.uncertain ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ fontSize: 14, lineHeight: 21, ...(current.uncertain ? sansBold : sans) }}>{current.notice}</Text> : null}
-    {current.error ? <><Text accessibilityRole="alert" style={{ fontSize: 14, lineHeight: 21, ...sansBold }}>{current.error}</Text><MarketButton label="Refresh restaurant status" variant="secondary" disabled={current.saving} onPress={() => setAttempt(value => value + 1)} /></> : null}
-  </>);
+    {current.notice ? <Text accessibilityRole={current.uncertain ? 'alert' : undefined} accessibilityLiveRegion="polite" style={{ fontSize: 14, lineHeight: 21, ...(current.uncertain ? alertText : sans) }}>{current.uncertain ? alertMark : ''}{current.notice}</Text> : null}
+    {current.error ? <><Text accessibilityRole="alert" style={{ fontSize: 14, lineHeight: 21, ...alertText }}>{alertMark}{current.error}</Text><MarketButton label="Refresh restaurant status" variant="secondary" disabled={current.saving} onPress={() => setAttempt(value => value + 1)} /></> : null}
+  </>, closed && ownerHeader === 'dark');
 }
