@@ -32,6 +32,7 @@ import { capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { ReorderPanel } from './ReorderPanel';
 import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 import { CustomerAddresses } from './CustomerAddresses';
+import { CustomerNotifications } from './CustomerNotifications';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { CartPage } from './CustomerCart';
 
@@ -229,7 +230,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Menu' && carta ? <CartaHeader name={name} {...menuProps} edge={width >= 760 ? 0 : edge} /> : null}
     {page === 'Menu' && !carta ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{facts ? <MarketText variant="muted">{facts}</MarketText> : null}</View> : null}
 
-    {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
+    {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' && page !== 'Notifications' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
     {!demo && (page === 'Menu' || page === 'Cart') ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
@@ -252,7 +253,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Help' ? <CustomerSupport businessId={businessId} market={market} go={path => navigation.current?.go(path)} orderReference={orderId} /> : null}
     {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Addresses' ? <CustomerAddresses market={market} /> : null}
-    {page === 'Profile' || page === 'Notifications' ? <MarketCard><MarketText variant="heading">{page === 'Profile' ? 'Edit profile' : 'Notifications'}</MarketText><MarketText>{page === 'Profile' ? 'Profile editing is not available yet. Your account settings are available below.' : 'Your notification inbox is not available yet. Order updates remain available in your order history.'}</MarketText>{page === 'Profile' ? <MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /> : null}<MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
+    {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} /> : null}
+    {page === 'Profile' ? <MarketCard><MarketText variant="heading">Edit profile</MarketText><MarketText>Profile editing is not available yet. Your account settings are available below.</MarketText><MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /><MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
   // Only the root Menu route waits for the first-launch welcome; deep links (/privacy, /login, orders) render normally.
