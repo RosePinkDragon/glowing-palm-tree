@@ -6,7 +6,9 @@ import { withSupabaseTestEnvironment } from './test-environment.ts';
 const owner = '55300000-0000-4000-8000-000000000001', other = '55300000-0000-4000-8000-000000000002';
 const session = '55300000-0000-4000-9000-000000000001', replacement = '55300000-0000-4000-9000-000000000002';
 const businessA = '10000000-0000-4000-8000-000000000001', businessB = '10000000-0000-4000-8000-000000000002';
-const jwt = (user: string, sid: string, nonce = '') => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, nonce, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`;
+// Memoized per claim set so `exp` (seconds) is fixed once; rebuilding across a second boundary must not change the pinned token.
+const jwtCache = new Map<string, string>();
+const jwt = (user: string, sid: string, nonce = '') => { const key = JSON.stringify([user, sid, nonce]); let token = jwtCache.get(key); if (!token) { token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: user, session_id: sid, nonce, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`; jwtCache.set(key, token); } return token; };
 const code = (expected: string) => (error: unknown) => error instanceof ServiceError && error.code === expected;
 type Service = ReturnType<typeof createMarketServices>;
 const member = (user = owner, business = businessA, displayName = 'Original Owner') => ({ business_id: business, user_id: user, role: 'admin', display_name: displayName });
