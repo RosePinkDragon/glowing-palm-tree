@@ -100,11 +100,25 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   changed.status = 'delivered'; changed.version++;
   await live(changed); await selected.getByText(ref(25), { exact: true }).waitFor();
   await page.getByText('The previously selected order is no longer active.', { exact: false }).waitFor();
-  for (const width of [320, 390, 1440]) {
+  for (const width of [320, 390, 1280, 1440]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     await selected.scrollIntoViewIfNeeded();
     assert.equal(await selected.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'full UUID wraps at narrow widths');
     await page.screenshot({ path: `dist/browser/${slug}-support-${width}.png`, fullPage: true });
+    // Help layout (#114): the order card comes first, then the contact actions side by side, then the FAQ card, then the footer links.
+    const help = await page.evaluate(() => {
+      const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; };
+      const card = document.getElementById('support-card'), order = document.getElementById('support-order'), contacts = document.getElementById('support-contacts'), faq = document.getElementById('support-faq'), footer = document.getElementById('support-footer');
+      const call = contacts.querySelector('[aria-label="Call restaurant"]');
+      const links = Array.from(footer.querySelectorAll('[role="button"]')).map(node => ({ label: node.getAttribute('aria-label'), ...rect(node) }));
+      return { card: rect(card), order: rect(order), contacts: rect(contacts), call: rect(call), faq: rect(faq), footer: rect(footer), links };
+    });
+    assert.ok(help.card.top < help.order.top && help.order.bottom <= help.contacts.top && help.contacts.bottom <= help.card.bottom, 'order summary precedes the contact actions inside one card');
+    assert.ok(help.card.bottom <= help.faq.top && help.faq.bottom <= help.footer.top, 'card, FAQ list and footer stack in design order');
+    assert.ok(help.call.height >= 44 && help.card.width <= 720, 'compact contact action');
+    assert.deepEqual(help.links.map(link => link.label), ['Privacy policy', 'Terms']);
+    assert.ok(help.links.every(link => link.height >= 44 && link.width >= 44) && help.links[0].right <= help.links[1].left, 'footer links are side by side 44px targets');
+    assert.ok(Math.abs((help.footer.left + help.footer.right) / 2 - (help.faq.left + help.faq.right) / 2) <= 2, 'footer is centred under the FAQ');
   }
   await page.goto(server.url + '/orders/' + orderId(25), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Help & support', exact: true }).click();
@@ -211,7 +225,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   current = await saved(); assert.equal(current.lines[0].item.pricePaise, 17500, 'cached-menu reconciliation cannot restore the old price after import');
   await detail();
   const existing = await raw(); await choice();
-  for (const width of [320, 390, 1440]) {
+  for (const width of [320, 390, 1280, 1440]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     await page.getByRole('button', { name: 'Cancel', exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: `dist/browser/${slug}-reorder-choice-${width}.png`, fullPage: true });
