@@ -72,7 +72,7 @@ export function useMarketInbox(services: Services, session: Session, identity: R
   // Nothing is requested until the drawer or the inbox is opened; a new account starts empty (see patch).
   useEffect(() => {
     if (!session || !customer || snapshot.unread === null) return;
-    const subscription = AppState.addEventListener('change', state => { if (state === 'active') void refreshCount(); });
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active' && !latest.current.ready) void refreshCount(); });
     return () => subscription.remove();
   }, [session?.user.id, customer, refreshCount, snapshot.unread === null]);
   const current = !!session && sameIdentity(snapshot.identity, identity.current);

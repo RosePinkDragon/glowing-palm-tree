@@ -241,7 +241,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Help' ? <CustomerSupport businessId={businessId} market={market} go={path => navigation.current?.go(path)} orderReference={orderId} /> : null}
     {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Addresses' ? <CustomerAddresses market={market} /> : null}
-    {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} signIn={() => navigation.current?.login('/notifications')} /> : null}
+    {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Profile' ? <MarketCard><MarketText variant="heading">Edit profile</MarketText><MarketText>Profile editing is not available yet. Your account settings are available below.</MarketText><MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /><MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;

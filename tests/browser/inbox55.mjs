@@ -80,9 +80,13 @@ try {
       await page.goto(server.url, { waitUntil: 'networkidle' });
       await button('Account').click();
       await button('Notifications (2 unread)').waitFor();
+      const badge = visible(page.getByTestId('unread-badge')); await badge.waitFor();
+      const bb = await badge.boundingBox(), lb = await visible(page.getByText('Notifications', { exact: true })).last().boundingBox();
+      assert.ok(bb.width >= 22 && bb.height >= 22 && bb.x - (lb.x + lb.width) >= 6, 'rounded pill badge with a gap from the label');
       await shot('drawer-badge-390');
       await button('Notifications (2 unread)').click();
-      await visible(page.getByRole('heading', { name: 'Notifications', exact: true })).first().waitFor();
+      await text('Your food is being prepared').waitFor();
+      assert.equal(await visible(page.getByRole('heading', { name: 'Notifications', exact: true })).count(), 1, 'one Notifications heading (the navigation header), no in-page duplicate');
       assert.equal(new URL(page.url()).pathname, '/notifications');
       // List: newest first, grouped by day, unread marked, 20 of 25 on the first page.
       await text('Your food is being prepared').waitFor();
@@ -92,6 +96,9 @@ try {
       await text('2 unread').waitFor();
       assert.equal(await visible(page.getByTestId('unread-dot')).count(), 2, 'only unread rows carry the dot');
       assert.equal(await visible(page.getByRole('button', { name: /^Unread\. /, })).count(), 2);
+      assert.equal(await visible(page.getByTestId('notification-day')).count(), 2, 'one grouped list per day');
+      assert.equal(await visible(page.getByTestId('status-icon')).count(), 20, 'a status icon on every row');
+      assert.equal(await visible(page.getByRole('button', { name: 'Refresh', exact: true })).count(), 0, 'no separate Refresh button');
       const titles = await visible(page.getByRole('button', { name: /Opens your order\.$/ })).count();
       assert.equal(titles, 20, 'first page');
       assert.equal(fixture.calls.at(-1).p_limit, 20); assert.equal(fixture.calls.at(-1).p_before_id, null);
@@ -119,16 +126,15 @@ try {
       assert.equal(await button('Mark all read').count(), 0);
       await button('Account').click(); await button('Notifications').waitFor();
       await button('Close').click();
-      // Refresh picks up a new update without realtime.
+      // Opening the screen again picks up a new update without realtime.
       fixture.rows.unshift({ id: notificationId(30), order_id: orderId(30), event_status: 'accepted', title: 'Order accepted', body: `${name} accepted your order.`, read_at: null, created_at: new Date().toISOString(), user_id: userId, business_id: businessId });
-      await button('Refresh').click(); await text('Order accepted').waitFor(); await text('1 unread').waitFor();
+      await page.reload({ waitUntil: 'networkidle' }); await text('Order accepted').waitFor(); await text('1 unread').waitFor();
       // Error with fixed copy and a retry.
-      fixture.failList = true; await button('Refresh').click();
+      fixture.failList = true; await page.reload({ waitUntil: 'networkidle' });
       await text('We could not load your notifications. Check your connection and try again.').waitFor();
       assert.equal(await page.getByText('raw internal failure detail').count(), 0, 'no raw errors');
-      await text('Order accepted').waitFor();
       await button('Retry notifications').waitFor();
-      fixture.failList = false; await button('Retry notifications').click(); await button('Retry notifications').waitFor({ state: 'hidden' });
+      fixture.failList = false; await button('Retry notifications').click(); await text('Order accepted').waitFor(); await button('Retry notifications').waitFor({ state: 'hidden' });
       await context.close();
 
       // Wide layout, keyboard: Tab reaches an update and Enter opens its order.
