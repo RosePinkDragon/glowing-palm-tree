@@ -5,9 +5,10 @@ import { MarketGroup, MarketRow } from './MarketList';
 import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
 import { dietLabels, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
-import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
+import { MarketButton, MarketStatus, MarketText } from './components';
+import { MarketIcon } from './MarketIcons';
 import { DietMark } from './DietMark';
-import { useMarketTheme } from './theme';
+import { useMarketFonts, useMarketTheme } from './theme';
 import { dishDraftErrors, dishSortOrder, featuredLabel, type DishDraft, type DishDraftErrors } from './menu-model';
 import { parseRupees, rupeesInput } from './admin-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
@@ -24,6 +25,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   onClose: () => void; onSaved: (note: string) => Promise<void>; onDeleted: (name: string) => Promise<void>; reload: () => Promise<boolean>;
 }) {
   const { colors, businessId } = useMarketTheme();
+  const fonts = useMarketFonts();
   const feature = featuredLabel(businessId, 'admin');
   const demo = services.mode === 'demo';
   const [draft, setDraft] = useState<DishDraft>(() => item
@@ -64,9 +66,13 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   const closeDelete = () => { setConfirmDelete(false); restorePanelFocus(trigger.current); };
   const closePhoto = () => { setPhotoOpen(false); restorePanelFocus(trigger.current); };
   const photo = latest?.imageUrl?.replace(/\/card\.webp$/, '/detail.webp');
-  const label = (text: string, optional?: boolean) => <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '700' }}>{text}{optional ? <Text style={{ color: colors.muted, fontWeight: '400' }}> (optional)</Text> : null}</Text>;
+  // Owners' Edit dish (#114): brand body face and lighter (still 3:1) field outlines.
+  const body = fonts.body ? { fontFamily: fonts.body } : {};
+  const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
+  const label = (text: string, optional?: boolean) => <Text style={{ color: colors.ink, fontSize: 15, ...bold }}>{text}{optional ? <Text style={{ color: colors.muted, ...body, fontWeight: '400' }}> (optional)</Text> : null}</Text>;
   const fieldError = (text?: string) => text ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{text}</Text> : null;
-  const box = { minHeight: 48, borderWidth: 1, borderRadius: 12, backgroundColor: colors.surface, paddingHorizontal: 14 } as const;
+  const box = { minHeight: 48, borderWidth: 1, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14 } as const;
+  const textField = (id: string, labelText: string, value: string, onChange: (text: string) => void, error?: string, extra?: object, multiline = false) => <View style={{ gap: 8 }}>{label(labelText)}<TextInput nativeID={id} multiline={multiline} accessibilityLabel={labelText} accessibilityState={{ disabled: !!busy }} editable={!busy} value={value} onChangeText={onChange} placeholderTextColor={colors.muted} style={{ ...box, borderColor: error ? colors.danger : colors.fieldBorder, color: colors.ink, fontSize: 16, ...body, ...extra }} />{fieldError(error)}</View>;
   return <AccessiblePanel fullScreen title={item ? 'Edit dish' : 'Add dish'} closeDisabled={!!busy} onClose={() => { if (!busy) onClose(); }}
     // Errors sit beside Save: the form is taller than a phone screen.
     footer={<>
@@ -74,8 +80,10 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
       {validation && Object.keys(errors).length ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14, fontWeight: '700', textAlign: 'center' }}>Check the highlighted fields above.</Text> : null}
       <MarketButton label={busy === 'save' ? 'Saving…' : item ? 'Save changes' : 'Save dish'} disabled={!!busy || demo} onPress={() => void save()} />
     </>}>
+    <View style={{ gap: 16 }}>
     {demo ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
-    <View role="status" aria-live="polite">{note ? <MarketText>{note}</MarketText> : null}</View>
+    {/* Always mounted so changes are announced, but out of the layout while empty (no extra gap above the photo). */}
+    <View role="status" aria-live="polite" style={note ? undefined : { position: 'absolute', width: 1, height: 1, overflow: 'hidden' }}>{note ? <MarketText>{note}</MarketText> : null}</View>
 
     <View style={{ height: 180, borderRadius: 16, overflow: 'hidden', backgroundColor: colors.tint }}>
       {photo && failedPhoto !== photo
@@ -87,57 +95,59 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
       </Pressable> : null}
     </View>
 
-    <MarketField nativeID="dish-name" label="Dish name" value={draft.name} editable={!busy} onChangeText={name => set({ name })} error={shown.name} />
+    {textField('dish-name', 'Dish name', draft.name, name => set({ name }), shown.name)}
 
     <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
       <View style={{ flex: 3, gap: 8 }}>
         {label('Category')}
         <Pressable nativeID="dish-category" accessibilityRole="button" accessibilityLabel={`Category: ${category?.name ?? 'not chosen'}`} aria-expanded={pickerOpen} accessibilityState={{ expanded: pickerOpen, disabled: !!busy }} disabled={!!busy} onPress={() => setPickerOpen(open => !open)}
-          style={{ ...box, borderColor: shown.category ? colors.danger : colors.inputBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <Text numberOfLines={1} style={{ flex: 1, fontSize: 16, color: category ? colors.ink : colors.muted }}>{category?.name ?? 'Choose'}</Text>
+          style={{ ...box, borderColor: shown.category ? colors.danger : colors.fieldBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Text numberOfLines={1} style={{ flex: 1, fontSize: 16, color: category ? colors.ink : colors.muted, ...body }}>{category?.name ?? 'Choose'}</Text>
           <Text accessible={false} aria-hidden style={{ color: colors.muted, fontSize: 14 }}>{pickerOpen ? '▴' : '▾'}</Text>
         </Pressable>
       </View>
       <View style={{ flex: 2, gap: 8 }}>
         {label('Price')}
-        <View style={{ ...box, borderColor: shown.price ? colors.danger : colors.inputBorder, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ ...box, borderColor: shown.price ? colors.danger : colors.fieldBorder, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text accessible={false} aria-hidden style={{ fontSize: 16, color: colors.ink }}>₹</Text>
-          <TextInput nativeID="dish-price" accessibilityLabel="Price in rupees" value={draft.price} editable={!busy} onChangeText={price => set({ price })} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.muted} style={{ flex: 1, minWidth: 0, minHeight: 46, fontSize: 16, color: colors.ink }} />
+          <TextInput nativeID="dish-price" accessibilityLabel="Price in rupees" value={draft.price} editable={!busy} onChangeText={price => set({ price })} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={colors.muted} style={{ flex: 1, minWidth: 0, minHeight: 46, fontSize: 16, color: colors.ink, ...body }} />
         </View>
       </View>
     </View>
     {pickerOpen ? <View role="group" aria-label="Category" style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface, overflow: 'hidden' }}>
       {categories.map((entry, index) => { const selected = entry.id === draft.categoryId; return <Pressable key={entry.id} accessibilityRole="button" aria-pressed={selected} accessibilityState={{ selected }} onPress={() => { set({ categoryId: entry.id }); setPickerOpen(false); focusById('dish-category'); }}
         style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 14, justifyContent: 'center', borderTopWidth: index ? 1 : 0, borderTopColor: colors.border, backgroundColor: selected ? colors.tint : pressed ? colors.background : colors.surface })}>
-        <Text style={{ fontSize: 16, color: colors.ink, fontWeight: selected ? '700' : '400' }}>{entry.name}</Text>
+        <Text style={{ fontSize: 16, color: colors.ink, ...(selected ? bold : body) }}>{entry.name}</Text>
       </Pressable>; })}
     </View> : null}
     {fieldError(shown.category)}{fieldError(shown.price)}
 
-    <MarketField nativeID="dish-description" label="Description (optional)" value={draft.description} editable={!busy} onChangeText={description => set({ description })} multiline style={{ minHeight: 88, paddingTop: 12, textAlignVertical: 'top' }} error={shown.description} />
+    {textField('dish-description', 'Description (optional)', draft.description, description => set({ description }), shown.description, { minHeight: 96, paddingTop: 12, textAlignVertical: 'top' }, true)}
 
     <View style={{ gap: 8 }}>
       {label('Veg, egg or non-veg')}
       <View role="group" aria-label="Veg, egg or non-veg" style={{ flexDirection: 'row', gap: 8 }}>
         {dietChoices.map(({ diet, short }) => { const selected = draft.diet === diet; return <Pressable key={diet} nativeID={`dish-diet-${diet}`} accessibilityRole="button" accessibilityLabel={dietLabels[diet]} aria-pressed={selected} accessibilityState={{ selected, disabled: !!busy }} disabled={!!busy} onPress={() => set({ diet })}
-          style={{ flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 6, borderRadius: 12, borderWidth: selected ? 2 : 1, borderColor: selected ? colors.ink : colors.inputBorder, backgroundColor: selected ? colors.tint : colors.surface }}>
-          <DietMark diet={diet} compact /><Text style={{ fontSize: 15, fontWeight: selected ? '700' : '400', color: colors.ink }}>{short}</Text>
+          style={{ flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 6, borderRadius: 14, borderWidth: selected ? 2 : 1, borderColor: selected ? colors.ink : colors.fieldBorder, backgroundColor: selected ? colors.tint : colors.surface }}>
+          <DietMark diet={diet} compact /><Text style={{ fontSize: 15, color: colors.ink, ...(selected ? bold : body) }}>{short}</Text>
         </Pressable>; })}
       </View>
       {!draft.diet ? <MarketText variant="muted">{draft.id ? 'Not classified yet. No diet mark is shown to customers.' : 'Choose one before saving this dish.'}</MarketText> : null}
       {fieldError(shown.diet)}
     </View>
 
-    <MarketGroup>
+    <MarketGroup inset>
       <MarketRow title="Available to order" detail={'Off shows "Currently unavailable"'} end={<MarketSwitch label="Available to order" value={draft.isAvailable} disabled={!!busy} onValueChange={isAvailable => set({ isAvailable })} />} />
       <MarketRow title={feature} detail={businessId === 'ammu-sammu' ? 'Shown big at the top of the menu while available' : 'Shown with the signature dishes at the top of the menu while available'} end={<MarketSwitch label={feature} value={draft.isFeatured} disabled={!!busy} onValueChange={isFeatured => set({ isFeatured })} />} />
       <MarketRow title="Sample dish" detail="For testing; labelled as a sample" end={<MarketSwitch label="Sample dish" value={draft.isDemo} disabled={!!busy} onValueChange={isDemo => set({ isDemo })} />} />
     </MarketGroup>
 
     {item ? <Pressable accessibilityRole="button" disabled={demo || !!busy} accessibilityState={{ disabled: demo || !!busy }} onPress={() => { trigger.current = capturePanelFocus(); setDeleteError(''); setConfirmDelete(true); }}
-      style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 48, justifyContent: 'center', paddingHorizontal: 4, opacity: demo || busy ? 0.5 : pressed ? 0.7 : 1 })}>
-      <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Delete this dish</Text>
+      style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, opacity: demo || busy ? 0.5 : pressed ? 0.7 : 1 })}>
+      <MarketIcon name="trash" color={colors.danger} size={18} />
+      <Text style={{ color: colors.danger, fontSize: 16, ...bold }}>Delete this dish</Text>
     </Pressable> : null}
+    </View>
 
     {photoOpen && latest ? <MenuPhotoEditor item={latest} services={services} onClose={closePhoto} onSaved={async text => { if (!await reload()) throw new Error('Could not reload the menu. Retry loading before changing the photo.'); setNote(text); }} /> : null}
     {confirmDelete && latest ? <AccessiblePanel title={`Delete ${latest.name}?`} onClose={() => { if (!busy) closeDelete(); }}>

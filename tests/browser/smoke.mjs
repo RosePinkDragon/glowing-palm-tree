@@ -1021,6 +1021,13 @@ const prepareCart = async (page, add = true) => {
       assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'today sends no p_date');
       assert.equal(await page.getByRole('button', { name: `Today, ${dayName(istToday)}`, exact: true }).getAttribute('aria-pressed'), 'true');
       for (const name of [`Today, ${dayName(istToday)}`, 'Yesterday', 'Pick a date']) { const box = await page.getByRole('button', { name, exact: true }).boundingBox(); assert.ok(box.height >= 48, 'chips are at least 48px tall'); }
+      // #114 p. 11: the day chips sit in the compact header (brand header fill), above the cash card, not in the scrolling body.
+      const chipGroup = page.getByRole('group', { name: 'Choose a day', exact: true }).filter({ visible: true });
+      assert.equal(await chipGroup.evaluate(el => { for (let node = el; node; node = node.parentElement) { const color = getComputedStyle(node).backgroundColor; if (color !== 'rgba(0, 0, 0, 0)') return color; } return ''; }), slug === 'kokani-dine-inn' ? 'rgb(16, 48, 43)' : 'rgb(255, 248, 240)', 'day chips are on the header fill');
+      const [chipBox, cashBox] = [await chipGroup.boundingBox(), await today('CASH').boundingBox()];
+      assert.ok(chipBox.y + chipBox.height <= cashBox.y, 'day chips are above the cash card');
+      assert.ok(chipBox.y < 140, 'day chips sit in the compact header region');
+      await today('Placed today').waitFor();
       assert.equal(await page.getByText(brandName === 'Ammu Sammu' ? 'Kokani' : 'Ammu', { exact: false }).filter({ visible: true }).count(), 0, 'the other brand is never shown');
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: `/tmp/review61/${slug}-today.png` });

@@ -1,5 +1,5 @@
 import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 import { formatINRFromPaise } from '@market/core';
 import { ServiceError, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
@@ -7,14 +7,41 @@ import { MarketButton, MarketStatus, MarketText } from './components';
 import { MarketSection } from './MarketList';
 import { MarketChip } from './MarketChips';
 import { useMarketFonts, useMarketTheme } from './theme';
+import { useOwnerHorizontalPadding } from './OwnerShell';
 import { scopeWord, acceptPickedDate, amountFontSize, minPickedDate, cancelledLabel, chipLabel, collectedHeading, defaultPickedDate, deliveredLabel, deliveredNote, istDateISO, outstandingNote, placedLabel, requestDate, shortDateLabel, stepPickedDate, summaryFooter, todayChips, type TodayChip } from './today-model';
 
 const rupees = (paise: number) => { try { return formatINRFromPaise(paise); } catch { return '₹0'; } };
 
-function Bold({ children, size, color }: { children: ReactNode; size: number; color?: string }) {
+function Bold({ children, size, color, heading = false }: { children: ReactNode; size: number; color?: string; /** Brand heading face (Eczar), for the cash figures (#114, p. 11). */ heading?: boolean }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  return <Text style={{ color: color ?? colors.ink, fontSize: size, lineHeight: Math.round(size * 1.25), ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{children}</Text>;
+  const face = heading && fonts.heading ? { fontFamily: fonts.heading } : fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
+  return <Text style={{ color: color ?? colors.ink, fontSize: size, lineHeight: Math.round(size * 1.25), ...face }}>{children}</Text>;
+}
+
+/** The chosen day. Lives with the owners' shell so the chips can sit in its header; it resets when the Today tab is left. */
+export type OwnerTodayDay = { chip: TodayChip; setChip: (chip: TodayChip) => void; picked: string; setPicked: (value: string | ((previous: string) => string)) => void };
+export function useOwnerTodayDay(active: boolean): OwnerTodayDay {
+  const [chip, setChip] = useState<TodayChip>('today');
+  const [picked, setPicked] = useState(() => defaultPickedDate());
+  useEffect(() => { if (!active) { setChip('today'); setPicked(defaultPickedDate()); } }, [active]);
+  return { chip, setChip, picked, setPicked };
+}
+
+/** Today / Yesterday / Pick a date chips for the compact header region, like the Orders filters. */
+export function OwnerTodayFilters({ day }: { day: OwnerTodayDay }) {
+  const { ownerHeader } = useMarketTheme();
+  const padding = useOwnerHorizontalPadding();
+  const { chip, picked, setChip, setPicked } = day;
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: padding }}>
+    <View role="group" aria-label="Choose a day" style={{ flexDirection: 'row', gap: 8 }}>
+      {todayChips.map(value => {
+        const active = chip === value;
+        return <MarketChip key={value} onDark={ownerHeader === 'dark'} selected={active} label={value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)} accessibilityLabel={value === 'date' && active ? `${shortDateLabel(picked)}, picked date` : chipLabel(value, picked)}
+          onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }} />;
+      })}
+    </View>
+  </ScrollView>;
 }
 
 /**
@@ -43,19 +70,19 @@ function DatePicker({ value, onChange }: { value: string; onChange: (dateISO: st
 
 function Tile({ label, value }: { label: string; value: number }) {
   const { colors } = useMarketTheme();
-  return <View role="group" aria-label={`${label}: ${value}`} style={{ flex: 1, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 18, padding: 14, gap: 4, minHeight: 48 }}>
+  const fonts = useMarketFonts();
+  return <View role="group" aria-label={`${label}: ${value}`} style={{ flex: 1, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 16, gap: 6, minHeight: 88 }}>
     <Bold size={28}>{String(value)}</Bold>
-    <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>{label}</Text>
+    <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{label}</Text>
   </View>;
 }
 
 /** Owners' Today tab: cash for a chosen India-time day, what is still to collect now, order counts and the most-ordered dishes. */
-export function OwnerToday({ services }: { services: MarketServices }) {
+export function OwnerToday({ services, day }: { services: MarketServices; day: OwnerTodayDay }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const demo = services.mode === 'demo';
-  const [chip, setChip] = useState<TodayChip>('today');
-  const [picked, setPicked] = useState(() => defaultPickedDate());
+  const { chip, picked, setPicked } = day;
   const [summary, setSummary] = useState<DailySummary | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error' | 'denied'>(demo ? 'ready' : 'loading');
   const [error, setError] = useState('');
@@ -86,31 +113,24 @@ export function OwnerToday({ services }: { services: MarketServices }) {
   return <View style={{ gap: 16 }}>
     {/* Always mounted, so screen readers announce changes to it. */}
     <Text role="status" aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 }}>{state === 'loading' ? 'Loading summary' : state === 'ready' && summary ? `Showing ${scopeWord(shown)}: ${rupees(summary.collectedPaise)} collected, ${rupees(summary.outstandingPaise)} still to collect.` : ''}</Text>
-    <View role="group" aria-label="Choose a day" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-      {todayChips.map(value => {
-        const active = chip === value;
-        return <MarketChip key={value} selected={active} label={value === 'date' && active ? shortDateLabel(picked) : chipLabel(value, picked)} accessibilityLabel={value === 'date' && active ? `${shortDateLabel(picked)}, picked date` : chipLabel(value, picked)}
-          onPress={() => { if (value === 'date' && !active) setPicked(prev => prev || defaultPickedDate()); setChip(value); }} />;
-      })}
-    </View>
     {chip === 'date' ? <DatePicker value={picked} onChange={setPicked} /> : null}
     {demo ? <MarketStatus kind="empty" title="Sample mode" message="There are no live orders in sample mode. Connect the backend and sign in as an administrator to see the day's summary." /> : null}
     {state === 'loading' ? <MarketStatus kind="loading" title="Loading summary" /> : null}
     {state === 'denied' ? <MarketStatus kind="error" title="Owner access needed" message={error || 'Your admin access changed. Sign in again to see the summary.'} /> : null}
     {state === 'error' ? <MarketStatus kind="error" title="Could not load the summary" message={error} action={<MarketButton label="Retry" variant="secondary" onPress={() => setAttempt(n => n + 1)} />} /> : null}
     {state === 'ready' && summary ? <View style={{ gap: 16 }}>
-      <View style={{ backgroundColor: colors.ink, borderRadius: 18, padding: 18, gap: 12 }}>
+      <View style={{ backgroundColor: colors.ink, borderRadius: 20, padding: 20, gap: 14 }}>
         <Text style={{ color: soft, fontSize: 12, lineHeight: 18, letterSpacing: 1.5, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>CASH</Text>
         <View style={{ flexDirection: 'row', gap: 16 }}>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>{shown === istDateISO() ? 'Collected' : collectedHeading(shown)}</Text>
-            <Bold size={cashSize} color={colors.surface}>{rupees(summary.collectedPaise)}</Bold>
-            <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{deliveredNote(summary.deliveredCount, shown)}</Text>
+            <Bold heading size={cashSize} color={colors.surface}>{rupees(summary.collectedPaise)}</Bold>
+            <Text style={{ color: soft, fontSize: 13, lineHeight: 18, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{deliveredNote(summary.deliveredCount, shown)}</Text>
           </View>
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={{ color: soft, fontSize: 14, lineHeight: 20 }}>Still to collect now</Text>
-            <Bold size={cashSize} color={colors.surface}>{rupees(summary.outstandingPaise)}</Bold>
-            <Text style={{ color: soft, fontSize: 13, lineHeight: 18 }}>{outstandingNote(summary.outstandingCount)}</Text>
+            <Bold heading size={cashSize} color={colors.surface}>{rupees(summary.outstandingPaise)}</Bold>
+            <Text style={{ color: soft, fontSize: 13, lineHeight: 18, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{outstandingNote(summary.outstandingCount)}</Text>
           </View>
         </View>
       </View>

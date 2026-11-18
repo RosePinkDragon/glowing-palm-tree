@@ -6,7 +6,7 @@ import { formatINRFromPaise, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketField, MarketStatus, MarketText } from './components';
 import { DietMark } from './DietMark';
-import { useMarketTheme } from './theme';
+import { useMarketFonts, useMarketTheme } from './theme';
 import { applyCategoryOrder, applyItemOrder, dragTarget, featuredLabel, menuSections, moveId, nextCategoryOrder, sectionSummary, sortCategories, sortMenuItems } from './menu-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { DishEditor } from './DishEditor';
@@ -28,6 +28,7 @@ type Drag = { id: string; categoryId: string; start: number; dy: number; height:
  */
 export function AdminMenu({ services, showHeader = true, onAddDishChange }: { services: MarketServices; showHeader?: boolean; onAddDishChange?: (action: AdminMenuAddDish) => void }) {
   const { colors, businessId } = useMarketTheme();
+  const fonts = useMarketFonts();
   const feature = featuredLabel(businessId, 'admin');
   const demo = services.mode === 'demo';
   const [items, setItems] = useState<MenuItem[]>([]);
@@ -164,23 +165,23 @@ export function AdminMenu({ services, showHeader = true, onAddDishChange }: { se
   const matches = sections.reduce((sum, section) => sum + section.items.length, 0);
   const loadStatus = loadError ? <MarketStatus kind="error" title="Could not load the menu" message={loadError} action={<MarketButton label="Retry loading menu" variant="secondary" onPress={() => void load()} />} /> : null;
   const noticeStatus = notice ? <MarketStatus kind="error" title="Menu not updated" message={notice} action={<MarketButton label="Dismiss" variant="secondary" onPress={() => setNotice('')} />} /> : null;
-  return <View style={{ gap: 16 }}>
+  return <View style={{ gap: 12 }}>
     {showHeader ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <Text nativeID="admin-menu-heading" accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 26, fontWeight: '700', color: colors.ink }}>Menu</Text>
       <AddDishButton action={{ open: () => openEditor(), disabled: addDisabled }} />
     </View> : null}
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, paddingLeft: 14 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48, borderWidth: 1, borderColor: colors.fieldBorder, borderRadius: 14, backgroundColor: colors.surface, paddingLeft: 14 }}>
       <View accessible={false} aria-hidden style={{ width: 16, height: 16 }}>
         <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.muted }} />
         <View style={{ position: 'absolute', right: 0, bottom: 1, width: 6, height: 2, backgroundColor: colors.muted, transform: [{ rotate: '45deg' }] }} />
       </View>
       <TextInput nativeID="admin-menu-search" accessibilityLabel="Search dishes" placeholder={`Search ${items.length} ${items.length === 1 ? 'dish' : 'dishes'}`} placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} autoCorrect={false} autoCapitalize="none" returnKeyType="search"
-        style={{ flex: 1, minWidth: 0, minHeight: 46, fontSize: 16, color: colors.ink }} />
+        style={{ flex: 1, minWidth: 0, minHeight: 46, fontSize: 16, color: colors.ink, ...(fonts.body ? { fontFamily: fonts.body } : {}) }} />
       {query ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => { setQuery(''); focusById('admin-menu-search'); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
         <Text accessible={false} aria-hidden style={{ color: colors.muted, fontSize: 16 }}>✕</Text>
       </Pressable> : null}
     </View>
-    <MarketText variant="muted">Switch a dish off when it runs out. Customers see it as currently unavailable. Hold ⠿ and drag to change the order, or tap ⠿ to move a dish up or down.</MarketText>
+    <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 19, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>Switch a dish off when it runs out. Customers see it as currently unavailable. Hold ⠿ and drag to change the order, or tap ⠿ to move a dish up or down.</Text>
     {demo ? <MarketText>Sample mode: connect the backend to make menu changes.</MarketText> : null}
     <View role="status" aria-live="polite">{status && !panel ? <MarketText>{status}</MarketText> : null}{query.trim() && !loading ? <MarketText variant="muted">{matches === 1 ? '1 dish matches' : `${matches} dishes match`} “{query.trim()}”.</MarketText> : null}</View>
     {!panel ? loadStatus : null}
@@ -197,15 +198,15 @@ export function AdminMenu({ services, showHeader = true, onAddDishChange }: { se
       const shown = active ? (moveId(ids, active.id, target) ?? ids) : ids;
       return <View key={section.category.id} style={{ gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, paddingTop: 6 }}>
-          <Text accessibilityRole="header" style={{ flexShrink: 1, fontSize: 21, fontWeight: '700', color: colors.ink }}>{section.category.name}</Text>
-          <Text style={{ fontSize: 13, color: colors.muted }}>{sectionSummary(total, section.unavailable)}</Text>
+          <Text accessibilityRole="header" style={{ flexShrink: 1, fontSize: 22, lineHeight: 30, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{section.category.name}</Text>
+          <Text style={{ fontSize: 13, color: colors.muted, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{sectionSummary(total, section.unavailable)}</Text>
         </View>
-        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 16 }}>
+        <View style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 18 }}>
           {!section.items.length ? <View style={{ padding: 16 }}><MarketText variant="muted">No dishes in this category yet.</MarketText></View> : null}
           {shown.map((id, index) => {
             const item = section.items.find(entry => entry.id === id)!;
             const position = ids.indexOf(id);
-            return <DishRow key={id} item={item} error={rowError?.id === item.id ? rowError.text : undefined} feature={feature} first={index === 0} isFirst={position === 0} isLast={position === ids.length - 1}
+            return <DishRow key={id} item={item} error={rowError?.id === item.id ? rowError.text : undefined} feature={feature} first={index === 0} last={index === shown.length - 1} isFirst={position === 0} isLast={position === ids.length - 1}
               offset={active?.id === id ? active.dy - (target - active.start) * active.height : null}
               canArrange={canArrange} arranging={arrangeId === id} switchDisabled={demo || pending.has(id)} editDisabled={demo || !!drag}
               onLayout={height => rowHeights.current.set(id, height)}
@@ -262,13 +263,15 @@ export function AddDishButton({ action }: { action: AdminMenuAddDish }) {
   </Pressable>;
 }
 
-function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArrange, arranging, switchDisabled, editDisabled, onLayout, onArrange, onMove, onToggle, onEdit, onDragStart, onDragMove, onDragEnd }: {
+function DishRow({ error, item, feature, first, last, isFirst, isLast, offset, canArrange, arranging, switchDisabled, editDisabled, onLayout, onArrange, onMove, onToggle, onEdit, onDragStart, onDragMove, onDragEnd }: {
   error?: string;
-  item: MenuItem; feature: string; first: boolean; isFirst: boolean; isLast: boolean; offset: number | null; canArrange: boolean; arranging: boolean; switchDisabled: boolean; editDisabled: boolean;
+  item: MenuItem; feature: string; first: boolean; last: boolean; isFirst: boolean; isLast: boolean; offset: number | null; canArrange: boolean; arranging: boolean; switchDisabled: boolean; editDisabled: boolean;
   onLayout: (height: number) => void; onArrange: () => void; onMove: (delta: -1 | 1) => void; onToggle: (value: boolean) => void; onEdit: () => void;
   onDragStart: () => void; onDragMove: (dy: number) => void; onDragEnd: (dy: number, commit: boolean) => void;
 }) {
   const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const latest = useRef({ canArrange, onDragStart, onDragMove, onDragEnd });
   latest.current = { canArrange, onDragStart, onDragMove, onDragEnd };
   // The handle's button handles taps and keyboard; a vertical move takes over as a drag.
@@ -287,8 +290,8 @@ function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArra
   const dragging = offset !== null;
   const details = `dish-${item.id}-details`;
   return <View onLayout={event => onLayout(event.nativeEvent.layout.height)}
-    style={[{ borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }, dragging ? { transform: [{ translateY: offset }], zIndex: 2, elevation: 6, backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.primary, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } } : null]}>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingLeft: 2, paddingRight: 12 }}>
+    style={[{ borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }, off && !dragging ? { backgroundColor: colors.rowOffTint, ...(first ? { borderTopLeftRadius: 17, borderTopRightRadius: 17 } : null), ...(last ? { borderBottomLeftRadius: 17, borderBottomRightRadius: 17 } : null) } : null, dragging ? { transform: [{ translateY: offset }], zIndex: 2, elevation: 6, backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.primary, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } } : null]}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingLeft: 2, paddingRight: 12 }}>
       <View {...pan.panHandlers} style={webOnly({ touchAction: 'none', userSelect: 'none', cursor: canArrange ? 'grab' : 'default' })}>
         <Pressable nativeID={`arrange-${item.id}`} accessibilityRole="button" accessibilityLabel={`Reorder ${item.name}`} aria-expanded={arranging} accessibilityState={{ expanded: arranging, disabled: !canArrange }} disabled={!canArrange} onPress={onArrange}
           style={{ width: 36, height: 48, alignItems: 'center', justifyContent: 'center', opacity: canArrange ? 1 : 0.4 }}>
@@ -296,23 +299,23 @@ function DishRow({ error, item, feature, first, isFirst, isLast, offset, canArra
         </Pressable>
       </View>
       <Pressable nativeID={`edit-${item.id}`} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`} {...(Platform.OS === 'web' ? { 'aria-describedby': details } : {})} disabled={editDisabled} accessibilityState={{ disabled: editDisabled }} onPress={onEdit}
-        style={({ pressed }) => ({ flex: 1, minWidth: 0, minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: pressed ? 0.7 : 1 })}>
-        <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center', opacity: off ? 0.55 : 1 }}>
+        style={({ pressed }) => ({ flex: 1, minWidth: 0, minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: pressed ? 0.7 : 1 })}>
+        <View style={{ width: 60, height: 60, borderRadius: 14, overflow: 'hidden', backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center', opacity: off ? 0.55 : 1 }}>
           {item.imageUrl && failed !== item.imageUrl
-            ? <Image accessible={false} source={{ uri: item.imageUrl }} onError={() => setFailed(item.imageUrl!)} resizeMode="cover" style={{ width: 52, height: 52 }} />
+            ? <Image accessible={false} source={{ uri: item.imageUrl }} onError={() => setFailed(item.imageUrl!)} resizeMode="cover" style={{ width: 60, height: 60 }} />
             : <View accessible={false} style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.border, backgroundColor: colors.surface }} />}
         </View>
         <View nativeID={details} style={{ flex: 1, minWidth: 0, gap: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <DietMark diet={item.diet} compact />
-            <Text numberOfLines={2} style={{ flexShrink: 1, fontSize: 16, fontWeight: '700', color: off ? colors.muted : colors.ink }}>{item.name}</Text>
+            <Text numberOfLines={2} style={{ flexShrink: 1, fontSize: 16, lineHeight: 22, color: off ? colors.muted : colors.ink, ...bold }}>{item.name}</Text>
           </View>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: off ? colors.muted : colors.ink }}>{formatINRFromPaise(item.pricePaise)}</Text>
-            {item.isFeatured ? <MarketPill tone="brand" star label={feature} /> : null}
+            <Text style={{ fontSize: 15, lineHeight: 20, color: off ? colors.muted : colors.ink, ...bold }}>{formatINRFromPaise(item.pricePaise)}</Text>
+            {item.isFeatured ? <MarketPill tone="featured" star label={feature} /> : null}
             {off ? <MarketPill tone="neutral" label="Currently unavailable" /> : null}
             {item.isDemo ? <MarketPill tone="outline" label="Sample" /> : null}
-            {!item.imageUrl ? <Text style={{ fontSize: 12, color: colors.muted }}>No photo</Text> : null}
+            {!item.imageUrl ? <Text style={{ fontSize: 12, color: colors.muted, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>No photo</Text> : null}
           </View>
         </View>
       </Pressable>
