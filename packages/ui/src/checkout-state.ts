@@ -45,6 +45,7 @@ export function attemptKey(businessId: BusinessSlug) { return `market:checkout:$
 /** Only an explicit transactional rejection from the order RPC can release a saved attempt. */
 export function isDefiniteOrderRejection(error: unknown): boolean {
   // A closed restaurant, a changed address or one outside the area refuse before anything is written, and a retry of an existing order is returned instead.
+  // BUSINESS_JOIN_REQUIRED / BUSINESS_LIFECYCLE_PENDING (#52) are deliberately NOT here: the relationship gate runs before the idempotency lookup, so on a replay of a saved attempt they say nothing about whether that order already exists.
   if (error instanceof Error && 'code' in error && (error.code === 'NOT_ACCEPTING_ORDERS' || error.code === 'ADDRESS_CHANGED' || error.code === 'DELIVERY_UNAVAILABLE')) return true;
   if (!(error instanceof Error) || !('code' in error) || error.code !== '22023') return false;
   return new Set(['delivery unavailable', 'invalid delivery details', 'invalid items', 'invalid item', 'invalid item quantity or duplicate', 'item unavailable', 'invalid order total']).has(error.message.replace(/^Could not place order: /, '')) && error.message.startsWith('Could not place order: ');

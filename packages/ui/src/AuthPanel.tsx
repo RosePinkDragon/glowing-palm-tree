@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Platform, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { MarketButton, MarketCard, MarketField, MarketText } from './components';
@@ -8,7 +8,7 @@ import { sameIdentity } from './checkout-state';
 import { webRedirectUrl } from './auth-callback';
 
 type Market = ReturnType<typeof useMarket>;
-export function AuthPanel({ market }: { market: Market }) {
+export function AuthPanel({ market, accountActions }: { market: Market; accountActions?: ReactNode }) {
   const { colors } = useMarketTheme();
   const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
@@ -27,7 +27,7 @@ export function AuthPanel({ market }: { market: Market }) {
   };
   const feedback = message ? <Text accessibilityRole={failed ? 'alert' : undefined} accessibilityLiveRegion="polite" role={failed ? 'alert' : 'status'} style={{ color: failed ? colors.danger : colors.ink, fontSize: 15, lineHeight: 23 }}>{message}</Text> : null;
   if (market.services.mode === 'demo') return <MarketCard><MarketText variant="heading">Account unavailable</MarketText><MarketText>Accounts and ordering are not available in this sample menu.</MarketText></MarketCard>;
-  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{feedback}</MarketCard>;
+  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{accountActions}{feedback}</MarketCard>;
   return <MarketCard><MarketText variant="heading">{market.recovery ? 'Set a new password' : mode === 'signup' ? 'Create an account' : mode === 'reset' ? 'Reset password' : 'Sign in'}</MarketText>
     {!market.recovery ? <MarketField label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" /> : null}
     {mode !== 'reset' || market.recovery ? <MarketField label="Password" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" /> : null}

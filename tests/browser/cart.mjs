@@ -91,6 +91,7 @@ try {
       if (pricingMode === 'lost') return route.abort('failed');
       return json({ outcome: 'placed', id: pricingOrder.id });
     }
+    if (url.pathname === '/rest/v1/customer_businesses') return json([]);
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });
   const open = async (index, path = '/') => {

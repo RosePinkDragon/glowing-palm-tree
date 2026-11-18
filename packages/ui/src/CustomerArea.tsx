@@ -11,6 +11,8 @@ import { useBrandFonts } from './brand-fonts';
 import { BrandWelcome, useWelcome } from './CustomerBrand';
 import { deliveryAddressLine } from './address-model';
 import { AuthPanel } from './AuthPanel';
+import { LeaveRestaurant } from './LeaveRestaurant';
+import { checkoutLifecycleCopy } from './leave-model';
 import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, readAttempt, sameIdentity, type CheckoutAttempt } from './checkout-state';
 import { prepareAttempt, withCheckoutGuard } from './checkout-guard';
 import { requestLocation } from './location';
@@ -48,6 +50,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const currentDish = selectedDish && sameIdentity(selectedDish.identity, market.identity.current) ? draft.menu.find(item => item.id === selectedDish.id) : undefined;
   const [reorder, setReorder] = useState<{ order: Order; restoreFocus: () => void; identity: typeof market.identity.current } | null>(null);
   const [cartMessage, setCartMessage] = useState('');
+  // Status notes (not errors): the post-leave notice clears on the next sign-in; the checkout rejoin note on any identity change.
+  const [leftNotice, setLeftNotice] = useState(''), [lifecycleNote, setLifecycleNote] = useState('');
+  useEffect(() => { if (market.session) setLeftNotice(''); }, [market.session]);
   const startReorder: ReorderAction = (order, restoreFocus) => { if (!reorder) setReorder({ order, restoreFocus, identity: market.identity.current }); };
   const closeReorder = () => { setReorder(null); reorder?.restoreFocus(); };
   const currentReorder = reorder && sameIdentity(reorder.identity, market.identity.current) ? reorder : null;
@@ -61,7 +66,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const [revision, setRevision] = useState<RevisedQuote | null>(null);
   const [closedRefusal, setClosedRefusal] = useState<{ business: typeof market.business; identity: typeof market.identity.current } | null>(null);
   const quote = visibleQuote(revision, market.identity.current, market.authReady);
-  useEffect(() => { setRevision(null); setLocalError(''); setReorder(null); setCartMessage(''); setConfirming(null); }, [businessId, market.identityVersion]);
+  useEffect(() => { setRevision(null); setLocalError(''); setLifecycleNote(''); setReorder(null); setCartMessage(''); setConfirming(null); }, [businessId, market.identityVersion]);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const changed = (event: StorageEvent) => {
@@ -109,6 +114,12 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
           setRevision({ original: saved, pricing: e.pricing, identity: started, sourceCart });
           navigation.current?.go('/cart');
         } catch { setLocalError('The revised quote could not be saved safely. Retry recovery before placing another order.'); }
+      } else if (e instanceof ServiceError && (e.code === 'BUSINESS_JOIN_REQUIRED' || e.code === 'BUSINESS_LIFECYCLE_PENDING')) {
+        // The relationship gate runs before the idempotency lookup, so on a replay this does not prove nothing was written: keep the saved attempt and recover the same order.
+        const pending = e.code === 'BUSINESS_LIFECYCLE_PENDING'; let rejoined = false;
+        if (!pending) { try { await market.services.joinBusiness(); rejoined = true; } catch { /* the note says so */ } }
+        if (!sameIdentity(started, market.identity.current)) return;
+        setLifecycleNote(checkoutLifecycleCopy(pending ? 'pending' : 'join-required', name, rejoined));
       } else if (isDefiniteOrderRejection(e)) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
@@ -122,7 +133,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     }
   };
   const guarded = async (work: () => Promise<void>) => {
-    if (sending.current) return; sending.current = true; setBusy(true); setLocalError('');
+    if (sending.current) return; sending.current = true; setBusy(true); setLocalError(''); setLifecycleNote('');
     try { await withCheckoutGuard(businessId, Platform.OS === 'web', work); }
     catch (e) { setLocalError(messageOf(e)); } finally { sending.current = false; setBusy(false); }
   };
@@ -223,6 +234,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {!demo && (page === 'Menu' || page === 'Cart') ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
     {market.notice ? <MarketText>{market.notice}</MarketText> : null}
+    <View role="status" accessibilityLiveRegion="polite">{leftNotice || lifecycleNote ? <MarketText>{leftNotice || lifecycleNote}</MarketText> : null}</View>
     {draft.cartError ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger }}>{draft.cartError}</Text><MarketButton label="Retry saved cart" variant="secondary" onPress={() => { void draft.retryCart().catch(() => {}); }} /><MarketButton label="Start new cart" variant="secondary" onPress={() => { void draft.resetCart().catch(() => {}); }} /></MarketCard> : null}
     {(market.error && (market.error !== market.catalogError || (page !== 'Menu' && page !== 'Cart'))) || market.storageError || (localError && !(page === 'Menu') && (page !== 'Cart' || !cart.length)) ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{market.storageError || localError || market.error}</Text>{market.error ? <MarketButton label="Retry loading" variant="secondary" onPress={() => void market.load()} /> : null}</MarketCard> : null}
     {market.storageError ? <MarketText>Saved checkout state is unavailable. Ordering is paused to avoid creating a duplicate order.</MarketText> : null}
@@ -234,7 +246,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
       placeDisabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
       localError={localError} change={changeCart} onPlace={() => void checkout()} onBrowse={() => navigation.current?.go('/')} /> : null}
-    {page === 'Account' || page === 'Login' ? <AuthPanel market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
+    {page === 'Account' || page === 'Login' ? <AuthPanel accountActions={page === 'Account' ? <LeaveRestaurant market={market} businessId={businessId} resetCart={draft.resetCart} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} onLeft={setLeftNotice} /> : null} market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}
     {page === 'Order' ? <CustomerOrderDetail market={market} id={orderId ?? ''} receipt={receipt} onReorder={startReorder} onHelp={() => navigation.current?.go(`/help?id=${orderId}`)} /> : null}
     {page === 'Help' ? <CustomerSupport businessId={businessId} market={market} go={path => navigation.current?.go(path)} orderReference={orderId} /> : null}
