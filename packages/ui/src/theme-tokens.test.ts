@@ -76,3 +76,16 @@ test('owners shell (#53): header, chips on the dark header, bands and page keep 
   assert.equal(marketThemes['kokani-dine-inn'].ownerHeader, 'dark');
   assert.equal(marketThemes['ammu-sammu'].ownerHeader, 'light');
 });
+
+test('owners Menu, Edit dish and Restaurant details (#114): featured amber badge, off-row tint, read-only panel and lighter field outlines stay accessible', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    const text: [string, string, string][] = [
+      ['featured badge', c.warning, c.warningTint], ['dish name on unavailable row', c.ink, c.rowOffTint], ['muted text on unavailable row', c.muted, c.rowOffTint],
+      ['read-only label', c.muted, c.panelFill], ['read-only value', c.ink, c.panelFill],
+    ];
+    for (const [name, fg, bg] of text) assert.ok(contrastRatio(fg, bg) >= 4.5, `${theme.name}: ${name} ${fg} on ${bg} = ${contrastRatio(fg, bg).toFixed(2)}`);
+    for (const ground of [c.surface, c.background]) assert.ok(contrastRatio(c.fieldBorder, ground) >= 3, `${theme.name}: field outline vs ${ground} = ${contrastRatio(c.fieldBorder, ground).toFixed(2)}`);
+    assert.notEqual(c.panelFill, c.surface); assert.notEqual(c.rowOffTint, c.surface);
+  }
+});

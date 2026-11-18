@@ -85,6 +85,7 @@ await context.route(origin + '/**', async route => {
   }
   if (url.pathname === '/rest/v1/rpc/transition_order') { const body = req.postDataJSON(); mutations.push(body); savedOrder = { ...savedOrder, status: body.p_status, version: savedOrder.version + 1 }; return json({ id: orderId }); }
   if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { heldOrderResponses.push(resolve); releaseOrders = () => { const pending = heldOrderResponses; heldOrderResponses = []; pending.forEach(done => done()); }; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? (savedOrder?.id === url.searchParams.get('id')?.slice(3) ? savedOrder : null) : savedOrder ? [savedOrder] : []); }
+  if (url.pathname === '/rest/v1/customer_businesses') return json([]); // one restaurant only: Leave stays hidden (#52)
   throw new Error('Unhandled fixture request: ' + req.method() + ' ' + url.pathname);
 });
 const errors = [];
@@ -447,6 +448,7 @@ const prepareCart = async (page, add = true) => {
           return json(joined(dishes.find(dish => dish.id === id)));
         }
         if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]); // signed-in carts read saved addresses (#48)
+        if (url.pathname === '/rest/v1/customer_businesses') return json([]);
         throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
       });
       const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));
@@ -1018,6 +1020,13 @@ const prepareCart = async (page, add = true) => {
       assert.deepEqual(summaryCalls.at(-1), { p_business_slug: slug }, 'today sends no p_date');
       assert.equal(await page.getByRole('button', { name: `Today, ${dayName(istToday)}`, exact: true }).getAttribute('aria-pressed'), 'true');
       for (const name of [`Today, ${dayName(istToday)}`, 'Yesterday', 'Pick a date']) { const box = await page.getByRole('button', { name, exact: true }).boundingBox(); assert.ok(box.height >= 48, 'chips are at least 48px tall'); }
+      // #114 p. 11: the day chips sit in the compact header (brand header fill), above the cash card, not in the scrolling body.
+      const chipGroup = page.getByRole('group', { name: 'Choose a day', exact: true }).filter({ visible: true });
+      assert.equal(await chipGroup.evaluate(el => { for (let node = el; node; node = node.parentElement) { const color = getComputedStyle(node).backgroundColor; if (color !== 'rgba(0, 0, 0, 0)') return color; } return ''; }), slug === 'kokani-dine-inn' ? 'rgb(16, 48, 43)' : 'rgb(255, 248, 240)', 'day chips are on the header fill');
+      const [chipBox, cashBox] = [await chipGroup.boundingBox(), await today('CASH').boundingBox()];
+      assert.ok(chipBox.y + chipBox.height <= cashBox.y, 'day chips are above the cash card');
+      assert.ok(chipBox.y < 140, 'day chips sit in the compact header region');
+      await today('Placed today').waitFor();
       assert.equal(await page.getByText(brandName === 'Ammu Sammu' ? 'Kokani' : 'Ammu', { exact: false }).filter({ visible: true }).count(), 0, 'the other brand is never shown');
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: `/tmp/review61/${slug}-today.png` });

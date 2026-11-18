@@ -23,11 +23,11 @@ export function MarketChip({ label, selected, onPress, accessibilityLabel, count
   </Pressable>;
 }
 
-export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'onDark' | 'info';
+export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'onDark' | 'info' | 'featured';
 
 /**
  * A small status or label pill. Tones: brand (featured, order status), positive (Live),
- * neutral (currently unavailable), quiet (Paused, Connecting), outline (Sample), danger (Cancelled).
+ * neutral (currently unavailable), quiet (Paused, Connecting), outline (Sample), danger (Cancelled), featured (amber, owners' Menu #114).
  * Pass `status` to make it a live status region with its own accessible name.
  * Place it in a row or content-sized parent: it sizes to its content and lets the parent align it.
  */
@@ -43,6 +43,7 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     quiet: { bg: colors.neutralTint, text: colors.muted, border: undefined, dot: colors.muted },
     outline: { bg: colors.surface, text: colors.muted, border: colors.inputBorder, dot: colors.muted },
     onDark: { bg: 'transparent', text: colors.onOwnerHeader, border: colors.accent, dot: colors.liveDot },
+    featured: { bg: colors.warningTint, text: colors.warning, border: undefined, dot: colors.warning },
     info: { bg: colors.infoTint, text: colors.info, border: undefined, dot: colors.info },
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
   }[tone];

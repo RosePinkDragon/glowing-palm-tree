@@ -85,7 +85,7 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
     const describedBy = [error ? errorId : '', opts.hint ? hintId : ''].filter(Boolean).join(' ') || undefined;
     return <View key={name} style={{ gap: 8, flex: opts.money ? 1 : undefined }}>
       <Text nativeID={labelId} style={{ ...body(15), ...bold }}>{label}{opts.optional ? <Text style={{ ...body(14), color: colors.muted, fontWeight: '400' }}>{' (optional)'}</Text> : null}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 52, borderWidth: error ? 2 : 1, borderColor: error ? colors.danger : colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14, gap: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 52, borderWidth: error ? 2 : 1, borderColor: error ? colors.danger : colors.fieldBorder, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14, gap: 6 }}>
         {opts.money ? <Text aria-hidden style={body(16)}>₹</Text> : null}
         <TextInput ref={node => { refs.current[name] = node; }} value={form[name]} editable={!saving} onChangeText={value => change(name, value)} onSubmitEditing={() => void save()}
           accessibilityLabel={accessibleName} aria-labelledby={labelId} aria-label={accessibleName} aria-invalid={error ? true : undefined} aria-required={name === 'contactPhone' ? true : undefined} aria-describedby={describedBy}
@@ -107,18 +107,22 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
         <Text accessibilityRole="header" aria-level={1} numberOfLines={1} style={{ flex: 1, color: colors.ink, fontSize: 24, lineHeight: 32, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>Restaurant details</Text>
       </View>
     </View>
-    <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', paddingHorizontal: 20, paddingVertical: 24, gap: 20 }}>
+    <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', paddingHorizontal: 20, paddingVertical: 24, gap: 28 }}>
       {load.kind === 'loading' ? <MarketStatus kind="loading" title="Loading restaurant details" /> : null}
       {load.kind === 'error' ? <MarketStatus kind="error" title="Could not load restaurant details" message={load.message} action={<MarketButton label="Try again" onPress={reload} />} /> : null}
       {load.kind === 'denied' ? <MarketStatus kind="error" title="No access" message="Your account cannot change restaurant details for this restaurant." /> : null}
       {load.kind === 'ready' ? <>
-        <Text accessibilityRole="header" aria-level={2} style={{ ...muted, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Contact</Text>
-        {field('contactPhone', { hint: 'Shown on the Call buttons in the customer app.' })}
-        {field('whatsappPhone', { optional: true })}
-        <Text accessibilityRole="header" aria-level={2} style={{ ...muted, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Ordering</Text>
-        <View style={{ flexDirection: 'row', gap: 12 }}>{field('deliveryFee', { money: true })}{field('minOrder', { money: true })}</View>
-        <Text style={muted}>Changes apply to new orders. Orders already placed keep the fee they were placed with.</Text>
-        <MarketSection>
+        <View style={{ gap: 18 }}>
+          <Text accessibilityRole="header" aria-level={2} style={{ ...muted, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Contact</Text>
+          {field('contactPhone', { hint: 'Shown on the Call buttons in the customer app.' })}
+          {field('whatsappPhone', { optional: true })}
+        </View>
+        <View style={{ gap: 18 }}>
+          <Text accessibilityRole="header" aria-level={2} style={{ ...muted, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Ordering</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>{field('deliveryFee', { money: true })}{field('minOrder', { money: true })}</View>
+          <Text style={muted}>Changes apply to new orders. Orders already placed keep the fee they were placed with.</Text>
+        </View>
+        <MarketSection muted>
           {readOnlyRow('Delivery area', deliveryAreaText(load.view.deliveryArea))}
           {readOnlyRow('Order numbers', orderNumberFormat(load.view.orderPrefix))}
           <Text style={muted}>Ask your developer to change these.</Text>

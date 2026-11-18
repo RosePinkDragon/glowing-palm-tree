@@ -79,6 +79,11 @@ try {
       assert.equal(await input('Delivery fee').inputValue(), '30'); assert.equal(await input('Minimum order').inputValue(), '150');
       await text(brand ? '2.5 km around the kitchen' : '12 km around the kitchen').waitFor(); await text(`${prefix}-YYYYMM0001`).waitFor(); await text('Ask your developer to change these.').waitFor();
       assert.equal(await visible(page.getByRole('textbox')).count(), 4, 'delivery area and prefix are not editable');
+      // #114 p. 13: read-only info is a muted filled panel (no white bordered card); field outlines use the lighter token.
+      const panel = text('Ask your developer to change these.').locator('xpath=..');
+      const panelLook = await panel.evaluate(el => { const style = getComputedStyle(el); return { bg: style.backgroundColor, border: style.borderTopWidth }; });
+      assert.equal(panelLook.bg, brand ? 'rgb(233, 235, 225)' : 'rgb(239, 232, 225)', 'read-only panel is muted filled'); assert.equal(panelLook.border, '0px', 'read-only panel has no outline');
+      assert.equal(await input('Phone number for customers').locator('xpath=..').evaluate(el => getComputedStyle(el).borderTopColor), brand ? 'rgb(120, 141, 135)' : 'rgb(143, 124, 117)', 'field outline is the lighter token');
       assert.equal(await input('Phone number for customers').getAttribute('aria-required'), 'true');
       await shot('normal');
       // Invalid values: every field says what is wrong, focus goes to the first, nothing is sent.
