@@ -207,7 +207,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.goForward(); await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).click();
   // The cart page has no separate cart bar; wait until the added dish is saved (three in total).
-  for (let i = 0; i < 100 && (await saved()).lines.reduce((total, line) => total + line.quantity, 0) !== 3; i++) await page.waitForTimeout(100);
+  await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).lines.reduce((total, line) => total + line.quantity, 0) === 3, key);
   current = await saved(); assert.equal(current.lines[0].item.pricePaise, 17500, 'cached-menu reconciliation cannot restore the old price after import');
   await detail();
   const existing = await raw(); await choice();
@@ -257,11 +257,17 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   const other = await context.newPage(); await other.goto(server.url + '/orders/' + target.id, { waitUntil: 'networkidle' });
   await other.getByRole('button', { name: 'Order this again for order 000024', exact: true }).waitFor();
   await choice();
-  const addInOther = () => other.evaluate(key => { const value = JSON.parse(localStorage.getItem(key)); value.revision++; value.lines[0].quantity++; localStorage.setItem(key, JSON.stringify(value)); }, key);
-  await addInOther(); await page.getByRole('button', { name: 'Review current cart', exact: true }).waitFor();
+  const addInOther = () => other.evaluate(key => { const value = JSON.parse(localStorage.getItem(key)); value.revision++; value.lines[0].quantity++; const written = JSON.stringify(value); localStorage.setItem(key, written); return written; }, key);
+  const firstWrite = await addInOther();
+  await page.waitForFunction(({ key, written }) => localStorage.getItem(key) === written, { key, written: firstWrite });
+  await page.getByRole('button', { name: 'Review current cart', exact: true }).waitFor();
   const crossTab = await raw(); assert.equal(await page.getByRole('button', { name: 'Replace cart', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Review current cart', exact: true }).click(); await page.getByRole('button', { name: 'Replace cart', exact: true }).waitFor();
-  await page.evaluate(() => { window.__delayCartEvents = true; }); await addInOther(); const delayed = await raw();
+  await page.evaluate(() => { window.__delayCartEvents = true; });
+  const secondWrite = await addInOther();
+  assert.notEqual(secondWrite, crossTab, 'the second tab wrote a new cart revision');
+  await page.waitForFunction(({ key, written }) => localStorage.getItem(key) === written, { key, written: secondWrite });
+  const delayed = await raw();
   await page.getByRole('button', { name: 'Replace cart', exact: true }).click(); await page.getByRole('button', { name: 'Review current cart', exact: true }).waitFor();
   assert.notEqual(delayed, crossTab); assert.equal(await raw(), delayed, 'locked revision check rejects a delayed cross-tab event'); await cancel();
   await page.evaluate(() => { window.__delayCartEvents = false; });
@@ -300,6 +306,13 @@ const settledDrawer = async page => {
     }; frame();
   }));
 };
+const assertDrawerTargets = async page => {
+  const tooSmall = await page.getByRole('dialog').locator('[role="button"]').evaluateAll(nodes => nodes.flatMap(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.width && rect.height && (rect.width < 44 || rect.height < 44) ? [`${node.getAttribute('aria-label') || node.textContent}: ${rect.width}×${rect.height}`] : [];
+  }));
+  assert.deepEqual(tooSmall, [], 'drawer controls meet the 44px target');
+};
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir('dist/browser', { recursive: true });
 try {
@@ -312,70 +325,81 @@ try {
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map() };
     const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), ...(index === 24 || index === 1 ? { order_number: ref(index + 1) } : {}), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
-    let failOlder = true, failDetail = false, holdOrders = false, held, release;
-    await context.routeWebSocket(/.*/, socket => {
-      socket.onMessage(message => {
-        const data = JSON.parse(String(message)), array = Array.isArray(data);
-        const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
-        const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
-        if (event === 'phx_join' && payload?.config?.postgres_changes?.some(value => value.table === 'orders')) fixture.orderChannels.set(topic, { socket, join, topic, array });
-        if (event === 'phx_leave') fixture.orderChannels.delete(topic);
-        if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
+    let failOlder = true, failDetail = false, holdOrders = false, held, release, emptyHistory = false;
+    const setupContext = async context => {
+      await context.routeWebSocket(/.*/, socket => {
+        socket.onMessage(message => {
+          const data = JSON.parse(String(message)), array = Array.isArray(data);
+          const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
+          const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
+          if (event === 'phx_join' && payload?.config?.postgres_changes?.some(value => value.table === 'orders')) fixture.orderChannels.set(topic, { socket, join, topic, array });
+          if (event === 'phx_leave') fixture.orderChannels.delete(topic);
+          if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
+        });
       });
-    });
-    await context.route('**/*', async route => {
-      const request = route.request(), url = new URL(request.url());
-      if (url.hostname === '127.0.0.1') return route.fallback();
-      assert.equal(url.origin, api, 'no third-party requests without consent');
-      const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
-      if (url.pathname === '/auth/v1/token') return json(fixture.authSession ?? session);
-      if (url.pathname === '/auth/v1/user') return json(fixture.authSession?.user ?? user);
-      if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
-      if (url.pathname === '/rest/v1/businesses') return json(business);
-      if (url.pathname === '/rest/v1/menu_items') { const hold = fixture.holdMenu; fixture.holdMenu = null; if (hold) { hold.arrived(); await hold.gate; } return json(fixture.menu); }
-      if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]);
-      if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
-      if (url.pathname === '/rest/v1/orders') {
-        queries.push(url);
-        assert.equal(url.searchParams.get('business_id'), 'eq.' + businessId);
-        assert.equal(url.searchParams.get('customer_id'), 'eq.' + (fixture.authSession?.user.id ?? userId));
-        if (holdOrders) { holdOrders = false; held?.(); await new Promise(resolve => { release = resolve; }); }
-        const id = url.searchParams.get('id');
-        if (id) return failDetail ? json({ message: 'Detail fixture unavailable' }, 400) : json(rows.find(row => row.id === id.slice(3)) ?? null);
-        const cursor = url.searchParams.get('or');
-        const active = url.searchParams.has('status');
-        const capturedRows = [...(active && fixture.supportRows !== null ? fixture.supportRows : rows)].filter(row => row.customer_id === (fixture.authSession?.user.id ?? userId));
-        if (active) {
-          assert.equal(url.searchParams.get('status'), 'in.(placed,accepted,preparing,out_for_delivery)');
-          const hold = fixture.holdActive; fixture.holdActive = null; if (hold) { hold.arrived(); await hold.gate; }
-          if (fixture.failActive || cursor && fixture.failActiveMore) return json({ message: 'Active order fixture unavailable' }, 400);
+      await context.route('**/*', async route => {
+        const request = route.request(), url = new URL(request.url());
+        if (url.hostname === '127.0.0.1') return route.fallback();
+        assert.equal(url.origin, api, 'no third-party requests without consent');
+        let heldOrderResponse = false;
+        const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: heldOrderResponse ? { 'x-fixture-held-order': 'yes', 'access-control-expose-headers': 'x-fixture-held-order' } : undefined, body: JSON.stringify(value) });
+        if (url.pathname === '/auth/v1/token') return json(fixture.authSession ?? session);
+        if (url.pathname === '/auth/v1/user') return json(fixture.authSession?.user ?? user);
+        if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
+        if (url.pathname === '/rest/v1/businesses') return json(business);
+        if (url.pathname === '/rest/v1/menu_items') { const hold = fixture.holdMenu; fixture.holdMenu = null; if (hold) { hold.arrived(); await hold.gate; } return json(fixture.menu); }
+        if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]);
+        if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
+        if (url.pathname === '/rest/v1/orders') {
+          queries.push(url);
+          assert.equal(url.searchParams.get('business_id'), 'eq.' + businessId);
+          assert.equal(url.searchParams.get('customer_id'), 'eq.' + (fixture.authSession?.user.id ?? userId));
+          if (holdOrders) { holdOrders = false; heldOrderResponse = true; held?.(); await new Promise(resolve => { release = resolve; }); }
+          const id = url.searchParams.get('id');
+          if (id) return failDetail ? json({ message: 'Detail fixture unavailable' }, 400) : json(rows.find(row => row.id === id.slice(3)) ?? null);
+          const cursor = url.searchParams.get('or');
+          const active = url.searchParams.has('status');
+          const capturedRows = [...(active && fixture.supportRows !== null ? fixture.supportRows : emptyHistory ? [] : rows)].filter(row => row.customer_id === (fixture.authSession?.user.id ?? userId));
+          if (active) {
+            assert.equal(url.searchParams.get('status'), 'in.(placed,accepted,preparing,out_for_delivery)');
+            const hold = fixture.holdActive; fixture.holdActive = null; if (hold) { hold.arrived(); await hold.gate; }
+            if (fixture.failActive || cursor && fixture.failActiveMore) return json({ message: 'Active order fixture unavailable' }, 400);
+          }
+          if (!active && cursor && failOlder) return json({ message: 'Older history fixture unavailable' }, 400);
+          let result = capturedRows;
+          if (active) result = result.filter(row => ['placed', 'accepted', 'preparing', 'out_for_delivery'].includes(row.status));
+          if (cursor) {
+            const parts = /^\(created_at\.lt\.([^,]+),and\(created_at\.eq\.([^,]+),id\.lt\.([^)]+)\)\)$/.exec(cursor);
+            assert.ok(parts); result = result.filter(row => row.created_at < parts[1] || (row.created_at === parts[1] && row.id < parts[3]));
+          }
+          assert.equal(url.searchParams.get('order'), 'created_at.desc,id.desc');
+          result.sort((a,b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+          return json(result.slice(0, Number(url.searchParams.get('limit'))));
         }
-        if (!active && cursor && failOlder) return json({ message: 'Older history fixture unavailable' }, 400);
-        let result = capturedRows;
-        if (active) result = result.filter(row => ['placed', 'accepted', 'preparing', 'out_for_delivery'].includes(row.status));
-        if (cursor) {
-          const parts = /^\(created_at\.lt\.([^,]+),and\(created_at\.eq\.([^,]+),id\.lt\.([^)]+)\)\)$/.exec(cursor);
-          assert.ok(parts); result = result.filter(row => row.created_at < parts[1] || (row.created_at === parts[1] && row.id < parts[3]));
-        }
-        assert.equal(url.searchParams.get('order'), 'created_at.desc,id.desc');
-        result.sort((a,b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
-        return json(result.slice(0, Number(url.searchParams.get('limit'))));
-      }
-      if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
-      if (url.pathname === '/rest/v1/rpc/list_customer_notifications') return json([]);
-      throw new Error(`Unexpected account request ${url.pathname}`);
-    });
-    await context.addInitScript(() => {
-      const add = window.addEventListener.bind(window), remove = window.removeEventListener.bind(window), listeners = new WeakMap();
-      window.addEventListener = function(type, listener, options) {
-        if (type !== 'storage' || !listener) return add(type, listener, options);
-        const wrapped = event => { if (window.__delayCartEvents && event.key?.startsWith('market:cart:')) return; if (typeof listener === 'function') listener.call(window, event); else listener.handleEvent(event); };
-        listeners.set(listener, wrapped); return add(type, wrapped, options);
-      };
-      window.removeEventListener = function(type, listener, options) { return remove(type, type === 'storage' && listener ? listeners.get(listener) ?? listener : listener, options); };
-      const set = Storage.prototype.setItem;
-      Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
-    });
+        if (url.pathname === '/rest/v1/customer_businesses') return json([]);
+        if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
+        if (url.pathname === '/rest/v1/rpc/list_customer_notifications') return json([]);
+        throw new Error(`Unexpected account request ${url.pathname}`);
+      });
+      await context.addInitScript(() => {
+        const add = window.addEventListener.bind(window), remove = window.removeEventListener.bind(window), listeners = new WeakMap();
+        window.addEventListener = function(type, listener, options) {
+          if (type !== 'storage' || !listener) return add(type, listener, options);
+          const wrapped = event => { if (window.__delayCartEvents && event.key?.startsWith('market:cart:')) return; if (typeof listener === 'function') listener.call(window, event); else listener.handleEvent(event); };
+          listeners.set(listener, wrapped); return add(type, wrapped, options);
+        };
+        window.removeEventListener = function(type, listener, options) { return remove(type, type === 'storage' && listener ? listeners.get(listener) ?? listener : listener, options); };
+        const text = Response.prototype.text;
+        Response.prototype.text = async function() {
+          const body = await text.call(this);
+          if (this.headers.get('x-fixture-held-order') === 'yes') window.__heldOrdersRead = (window.__heldOrdersRead ?? 0) + 1;
+          return body;
+        };
+        const set = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
+      });
+    };
+    await setupContext(context);
     try {
       if (process.env.SUPPORT_ONLY === '1') {
         const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
@@ -393,6 +417,69 @@ try {
         }
         assert.deepEqual(errors, []); continue;
       }
+      const layoutContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
+      try {
+        await setupContext(layoutContext);
+        const layoutPage = await layoutContext.newPage(); layoutPage.on('pageerror', error => errors.push(error.message));
+        await layoutPage.goto(server.url, { waitUntil: 'networkidle' });
+        await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
+        await layoutPage.getByLabel('Email', { exact: true }).waitFor();
+        fixture.authSession = { ...session, user: { ...user, user_metadata: { full_name: 'Rohan Sawant' } } };
+        await layoutPage.getByLabel('Email', { exact: true }).fill(user.email);
+        await layoutPage.getByLabel('Password', { exact: true }).fill('synthetic-password');
+        await layoutPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+        await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
+        await layoutPage.getByRole('heading', { name: 'Rohan Sawant', exact: true }).waitFor();
+        const avatar = layoutPage.getByTestId('account-avatar');
+        assert.equal(await avatar.innerText(), 'RS', 'avatar uses the customer’s initials');
+        const avatarStyle = await avatar.evaluate(node => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return { width: rect.width, height: rect.height, radius: parseFloat(style.borderRadius), border: style.borderTopColor }; });
+        assert.ok(Math.abs(avatarStyle.width - 60) < 0.1, 'avatar is 60px wide'); assert.ok(Math.abs(avatarStyle.height - 60) < 0.1, 'avatar is 60px high'); assert.equal(avatarStyle.radius, 30);
+        assert.equal(avatarStyle.border, brand ? 'rgb(198, 172, 112)' : 'rgb(255, 255, 255)');
+        await layoutPage.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click();
+        fixture.authSession = null;
+        await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
+        await layoutPage.getByLabel('Email', { exact: true }).fill(user.email);
+        await layoutPage.getByLabel('Password', { exact: true }).fill('synthetic-password');
+        await layoutPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+        await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
+        await layoutPage.getByText('Phone not added', { exact: true }).waitFor();
+        await layoutPage.getByText('20 orders loaded', { exact: true }).waitFor();
+        assert.equal(await avatar.innerText(), '', 'missing name leaves an empty ring');
+        assert.equal(await avatar.evaluate(node => getComputedStyle(node).borderTopColor), avatarStyle.border);
+        const helpStyle = await layoutPage.getByRole('dialog').getByRole('button', { name: 'Help', exact: true }).evaluate(node => { const style = getComputedStyle(node); return { radius: parseFloat(style.borderRadius), background: style.backgroundColor, border: style.borderTopColor }; });
+        assert.ok(helpStyle.radius >= 24, 'header Help is a pill');
+        assert.equal(helpStyle.background, brand ? 'rgba(0, 0, 0, 0)' : 'rgba(255, 255, 255, 0.14)');
+        if (brand) assert.equal(helpStyle.border, 'rgb(198, 172, 112)');
+        const shortcuts = await Promise.all(['Saved addresses', 'Notifications', 'Help & support'].map(label => layoutPage.getByRole('dialog').getByRole('button', { name: label, exact: true }).boundingBox()));
+        assert.ok(shortcuts.every(Boolean));
+        if (!brand) {
+          assert.ok(shortcuts.every(rect => Math.abs(rect.y - shortcuts[0].y) < 1), 'Ammu shortcuts share a row at 390px');
+          assert.ok(shortcuts[0].x + shortcuts[0].width <= shortcuts[1].x && shortcuts[1].x + shortcuts[1].width <= shortcuts[2].x, 'Ammu shortcuts sit side by side');
+        } else {
+          assert.ok(shortcuts[0].y + shortcuts[0].height <= shortcuts[1].y && shortcuts[1].y + shortcuts[1].height <= shortcuts[2].y, 'Kokani shortcuts form a vertical panel');
+        }
+        assert.equal(await layoutPage.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).evaluate(node => node.nextElementSibling?.getAttribute('data-testid')), 'account-brand-footer', 'brand footer directly follows logout');
+        for (const width of [390, 1280]) {
+          await layoutPage.setViewportSize({ width, height: 844 }); await settledDrawer(layoutPage);
+          await assertDrawerTargets(layoutPage);
+        }
+        emptyHistory = true;
+        await layoutPage.getByRole('button', { name: 'Refresh orders', exact: true }).click();
+        await layoutPage.getByText('No orders yet', { exact: true }).waitFor();
+        for (const width of [390, 1280]) {
+          await layoutPage.setViewportSize({ width, height: 844 }); await settledDrawer(layoutPage);
+          await assertDrawerTargets(layoutPage);
+        }
+        await layoutPage.getByRole('button', { name: 'Browse the menu', exact: true }).focus();
+        await layoutPage.keyboard.press('Enter');
+        await layoutPage.getByRole('dialog').waitFor({ state: 'hidden' });
+      } finally {
+        emptyHistory = false; fixture.authSession = null;
+        await layoutContext.close();
+        fixture.orderChannels.clear(); queries.length = 0;
+      }
       const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
       await page.goto(server.url, { waitUntil: 'networkidle' });
       await page.getByRole('button', { name: 'Account', exact: true }).click();
@@ -408,7 +495,7 @@ try {
       await page.getByText('20 orders loaded', { exact: true }).waitFor();
       await page.waitForFunction(() => document.activeElement?.textContent === 'Your account');
       await page.keyboard.press('Shift+Tab');
-      await page.waitForFunction(() => document.activeElement?.textContent === 'Browse menu');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Log out');
       await page.keyboard.press('Tab'); await page.waitForFunction(() => document.activeElement?.textContent === '×');
       await page.keyboard.press('Escape'); await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
       await page.getByRole('button', { name: 'Account', exact: true }).click();
@@ -424,11 +511,11 @@ try {
       assert.equal(await paging.isDisabled(), true);
       const heldCount = queries.length;
       await paging.evaluate(node => node.click());
-      await page.waitForTimeout(50);
       assert.equal(queries.length, heldCount, 'disabled paging cannot supersede an in-flight refresh');
       assert.equal(await page.getByText('1 × History meal 25 · ₹100', { exact: true }).count(), 1);
       release?.();
       await page.waitForFunction(() => { const button = Array.from(document.querySelectorAll('[role="button"]')).find(node => /^(Load|Retry) older orders$/.test(node.textContent)); return button && button.getAttribute('aria-disabled') !== 'true'; });
+      assert.equal(queries.length, heldCount, 'disabled paging did not start a request during the held refresh');
       await page.getByRole('button', { name: /^(Load|Retry) older orders$/ }).scrollIntoViewIfNeeded();
       await page.getByRole('button', { name: 'Retry older orders', exact: true }).waitFor();
       await page.getByText('History meal 25', { exact: false }).waitFor();
@@ -475,12 +562,14 @@ try {
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
       await page.getByRole('button', { name: 'Account', exact: true }).click();
+      const readCount = await page.evaluate(() => window.__heldOrdersRead ?? 0);
       const waitForHeld = new Promise(resolve => { held = resolve; }); holdOrders = true;
       await page.getByRole('button', { name: 'Refresh orders', exact: true }).click(); await waitForHeld;
       await page.getByRole('button', { name: 'Account options', exact: true }).click();
       await page.getByRole('button', { name: 'Log out', exact: true }).first().click();
       release?.();
-      await page.waitForTimeout(100);
+      await page.waitForFunction(count => (window.__heldOrdersRead ?? 0) > count, readCount);
+      await page.getByText('Phone not added', { exact: true }).waitFor({ state: 'hidden' });
       assert.equal(await page.getByText('Phone not added', { exact: true }).count(), 0);
       assert.equal(await page.getByText('1 × History meal 25 · ₹100', { exact: true }).filter({ visible: true }).count(), 0);
       await page.getByRole('button', { name: 'Account', exact: true }).click();

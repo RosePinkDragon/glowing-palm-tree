@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { menuItem } from '../../../tests/fixtures/menu.ts';
 import { freezeAttempt, readAttempt } from './checkout-state.ts';
+import { cleanupDecision, ensureLeaveRequest, leaveFailure, leaveRequestIsFinal, leaveRetryCopy, leaveTarget, type LeaveLink, type LeaveStorage } from './leave-model.ts';
 
 test('a persisted attempt preserves the original request for retries', () => {
   const source = { businessId: 'ammu-sammu' as const, userId: 'user', idempotencyKey: 'key', pricing: { lines: [{ menu_item_id: 'dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 50, subtotal_paise: 100, total_paise: 120 }, lines: [{ item: menuItem(), quantity: 1 }], delivery: { name: 'Name', phone: '123' }, location: { latitude: 1, longitude: 2, accuracy: 3, capturedAtISO: '2026-01-01T00:00:00Z' }, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 3 } };
@@ -18,6 +19,8 @@ test('a persisted attempt preserves the original request for retries', () => {
 test('only a definite RPC rejection can release an attempt', async () => {
   const { isDefiniteOrderRejection } = await import('./checkout-state.ts');
   const error = (message: string, code: string) => Object.assign(new Error(message), { code });
+  assert.equal(isDefiniteOrderRejection(error('Join this restaurant before placing an order.', 'BUSINESS_JOIN_REQUIRED')), false, 'a replay may already exist: keep the attempt');
+  assert.equal(isDefiniteOrderRejection(error('Retry when it finishes.', 'BUSINESS_LIFECYCLE_PENDING')), false);
   assert.equal(isDefiniteOrderRejection(error('Could not place order: delivery unavailable', '22023')), true);
   assert.equal(isDefiniteOrderRejection(error('Could not place order: idempotency key reused with different request', '22023')), false);
   assert.equal(isDefiniteOrderRejection(error('Order was saved, but its details could not be loaded', '22023')), false);
@@ -178,4 +181,57 @@ test('the phone fix is dropped, not awaited forever, when it fails or never answ
   assert.equal(await withTimeout(Promise.resolve(5), 50), 5);
   assert.equal(await withTimeout(Promise.reject(new Error('denied')), 50), null);
   assert.equal(await withTimeout(new Promise(() => {}), 20), null);
+});
+
+// #52 leave rules (kept here so the package test list stays unchanged)
+
+const link = (slug: 'ammu-sammu' | 'kokani-dine-inn', name: string, generation: string, state: LeaveLink['state'] = 'active'): LeaveLink => ({ businessSlug: slug, businessName: name, generation, state });
+const memory = (): LeaveStorage & { map: Map<string, string> } => { const map = new Map<string, string>(); return { map, getItem: async k => map.get(k) ?? null, setItem: async (k, v) => { map.set(k, v); }, removeItem: async k => { map.delete(k); } }; };
+const err = (code: string, message = 'RAW backend text') => Object.assign(new Error(message), { code });
+
+test('Leave appears only for an active link here plus another active restaurant, naming the other from data', () => {
+  assert.deepEqual(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1'), link('kokani-dine-inn', 'Kokani Dine Inn', 'g2')], 'ammu-sammu'), { generation: 'g1', otherName: 'Kokani Dine Inn' });
+  assert.deepEqual(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1'), link('kokani-dine-inn', 'Kokani Dine Inn', 'g2')], 'kokani-dine-inn'), { generation: 'g2', otherName: 'Ammu Sammu' });
+  assert.equal(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1')], 'ammu-sammu'), null);
+  assert.equal(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1'), link('kokani-dine-inn', 'Kokani Dine Inn', 'g2', 'left')], 'ammu-sammu'), null);
+  assert.equal(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1', 'left'), link('kokani-dine-inn', 'Kokani Dine Inn', 'g2')], 'ammu-sammu'), null);
+  assert.equal(leaveTarget([link('ammu-sammu', 'Ammu Sammu', 'g1'), link('kokani-dine-inn', 'Kokani Dine Inn', 'g2', 'leave_pending')], 'ammu-sammu'), null);
+  assert.equal(leaveTarget(null, 'ammu-sammu'), null);
+});
+
+test('the request ID is persisted per user and generation, reused on retry and replaced for a new generation', async () => {
+  const storage = memory(); let n = 0; const fresh = () => `id-${++n}`;
+  assert.equal(await ensureLeaveRequest(storage, 'ammu-sammu', 'u1', 'g1', fresh), 'id-1');
+  assert.equal(await ensureLeaveRequest(storage, 'ammu-sammu', 'u1', 'g1', fresh), 'id-1', 'a retry after a lost response reuses it');
+  assert.equal(await ensureLeaveRequest(storage, 'ammu-sammu', 'u2', 'g1', fresh), 'id-2', 'another user is isolated');
+  assert.equal(await ensureLeaveRequest(storage, 'kokani-dine-inn', 'u1', 'g1', fresh), 'id-3', 'another restaurant is isolated');
+  assert.equal(await ensureLeaveRequest(storage, 'ammu-sammu', 'u1', 'g9', fresh), 'id-4', 'a later generation never reuses an old request');
+  storage.map.set([...storage.map.keys()][0], '{not json');
+  assert.equal(await ensureLeaveRequest(storage, 'ammu-sammu', 'u1', 'g9', fresh), 'id-5', 'corrupt storage is replaced');
+});
+
+test('local cleanup is scoped to the receipt generation and the server still showing it as left', () => {
+  const sent = { slug: 'ammu-sammu' as const, generation: 'g1', requestId: 'r1' };
+  const receipt = { state: 'left', generation: 'g1', requestId: 'r1', localCleanup: { businessSlug: 'ammu-sammu' as const, generation: 'g1', requestId: 'r1' } };
+  assert.equal(cleanupDecision(receipt, sent, link('ammu-sammu', 'Ammu Sammu', 'g1', 'left')), 'clean');
+  assert.equal(cleanupDecision(receipt, sent, link('ammu-sammu', 'Ammu Sammu', 'g2')), 'superseded', 'replayed receipt after a rejoin');
+  assert.equal(cleanupDecision(receipt, sent, link('ammu-sammu', 'Ammu Sammu', 'g1')), 'invalid', 'not left on the server');
+  assert.equal(cleanupDecision(receipt, sent, undefined), 'invalid');
+  assert.equal(cleanupDecision({ ...receipt, generation: 'g0' }, sent, link('ammu-sammu', 'Ammu Sammu', 'g1', 'left')), 'invalid');
+  assert.equal(cleanupDecision({ ...receipt, localCleanup: { ...receipt.localCleanup, businessSlug: 'kokani-dine-inn' } }, sent, link('ammu-sammu', 'Ammu Sammu', 'g1', 'left')), 'invalid');
+  assert.equal(cleanupDecision({ ...receipt, requestId: 'r2' }, sent, link('ammu-sammu', 'Ammu Sammu', 'g1', 'left')), 'invalid');
+});
+
+test('errors map to fixed copy and never expose raw text', () => {
+  assert.match(leaveFailure(err('ACTIVE_ORDERS'), 'Ammu Sammu').message, /delivered or cancelled/);
+  assert.match(leaveFailure(err('LAST_BUSINESS'), 'Ammu Sammu').message, /only restaurant/);
+  assert.deepEqual(leaveFailure(err('BUSINESS_LIFECYCLE_PENDING'), 'X'), { message: 'Your account is being updated. Try again shortly.', retry: true, refresh: false, signIn: false });
+  assert.equal(leaveFailure(err('STALE_RELATIONSHIP'), 'X').refresh, true);
+  assert.equal(leaveFailure(err('SESSION_CHANGED'), 'X').signIn, true);
+  for (const e of [err('BUSINESS_LEAVE_FAILED'), err('INVALID_RESPONSE'), new TypeError('Failed to fetch RAW'), 'string', null]) {
+    const failure = leaveFailure(e, 'X'); assert.equal(failure.message, leaveRetryCopy); assert.equal(failure.retry, true); assert.doesNotMatch(failure.message, /RAW/);
+  }
+  assert.equal(leaveRequestIsFinal(err('ACTIVE_ORDERS')), true);
+  assert.equal(leaveRequestIsFinal(err('BUSINESS_LEAVE_FAILED')), false);
+  assert.equal(leaveRequestIsFinal(err('BUSINESS_LIFECYCLE_PENDING')), false);
 });

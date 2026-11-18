@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 
@@ -43,6 +43,8 @@ try {
       }));
       await context.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url());
+        // The static test server only rewrites known routes to the app; /notifications is served as the app document here.
+        if (url.origin === server.url && url.pathname === '/notifications') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: await readFile(`apps/${slug}-customer/dist/web/index.html`, 'utf8') });
         if (url.origin === server.url) return route.fallback();
         assert.equal(url.origin, api, 'no third-party requests');
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
