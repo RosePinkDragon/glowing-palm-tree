@@ -120,13 +120,13 @@ try {
     const page = await open(index); pages.push(page); await add(page); await goCart(page);
     await page.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Memory-only private name');
     await page.reload({ waitUntil: 'networkidle' });
-    await page.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByRole('group', { name: /: ₹150 × 1 = ₹150$/ }).filter({ visible: true }).waitFor();
     assert.equal(await page.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), '');
     const raw = await saved(page, slugs[index]); assert.equal(raw.lines.length, 1); assert.equal(raw.ownerId, null);
     assert.equal(JSON.stringify(raw).includes('Private address'), false);
     // Guest → login preserves this restaurant's draft, and survives another restart.
     await login(page); await goCart(page); await page.reload({ waitUntil: 'networkidle' });
-    await page.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
+    await page.getByRole('group', { name: /: ₹150 × 1 = ₹150$/ }).filter({ visible: true }).waitFor();
     assert.equal((await saved(page, slugs[index])).ownerId, users[0].id);
   }
   assert.equal((await saved(pages[0], slugs[0])).lines[0].item.businessId, slugs[0]);
@@ -135,14 +135,14 @@ try {
 
   // Existing tabs share additions instead of overwriting each other's quantities.
   const other = await open(0, '/cart');
-  await other.getByText('₹150 × 1 = ₹150', { exact: true }).filter({ visible: true }).waitFor();
+  await other.getByRole('group', { name: /: ₹150 × 1 = ₹150$/ }).filter({ visible: true }).waitFor();
   const plus = page => page.getByRole('button', { name: 'Add one Ammu meal', exact: true });
   await Promise.all([plus(pages[0]).click(), plus(other).click()]);
-  await pages[0].getByText('₹150 × 3 = ₹450', { exact: true }).filter({ visible: true }).waitFor();
-  await other.getByText('₹150 × 3 = ₹450', { exact: true }).filter({ visible: true }).waitFor();
+  await pages[0].getByRole('group', { name: /: ₹150 × 3 = ₹450$/ }).filter({ visible: true }).waitFor();
+  await other.getByRole('group', { name: /: ₹150 × 3 = ₹450$/ }).filter({ visible: true }).waitFor();
   menus[0][0] = { ...menus[0][0], price_paise: 17500, name: 'Current Ammu meal' };
   await pages[0].reload({ waitUntil: 'networkidle' });
-  await pages[0].getByText('₹175 × 3 = ₹525', { exact: true }).filter({ visible: true }).waitFor();
+  await pages[0].getByRole('group', { name: /: ₹175 × 3 = ₹525$/ }).filter({ visible: true }).waitFor();
   await assertEventually(async () => (await saved(pages[0], slugs[0])).lines[0].item.name === 'Current Ammu meal');
   menus[0] = [];
   await pages[0].reload({ waitUntil: 'networkidle' });
