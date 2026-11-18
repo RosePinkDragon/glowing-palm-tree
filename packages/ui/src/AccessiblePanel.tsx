@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { AccessibilityInfo, findNodeHandle, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { AccessibilityInfo, findNodeHandle, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { ComponentRef, ReactNode } from 'react';
 import { MarketCard } from './components';
@@ -25,8 +25,10 @@ function NoBreakTail({ text }: { text: string }) {
  * `sheet` is the phone confirmation layout: rises from the bottom with a grab handle.
  * Titles use the brand heading font when the owners' app has loaded it.
  */
-export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false, owner = false, subtitle, headerEnd }: {
+export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false, owner = false, subtitle, headerEnd, hero, titleLead, closeLabel = 'Close' }: {
   title: string; children: ReactNode; onClose: () => void; fullScreen?: boolean; sheet?: boolean; footer?: ReactNode; closeDisabled?: boolean;
+  /** Dish details (#114): opt-in photo-led bottom sheet. `hero` is the edge-to-edge photo with a round close button in its top corner, the backdrop dismisses, and `footer` is pinned at the bottom. No hero keeps every other layout unchanged. */
+  hero?: ReactNode; titleLead?: ReactNode; closeLabel?: string;
   /** Owners' order details and cancel sheet (#53): back arrow, `page` surface, subtitle and header-end slot, roomier sheet. Off keeps the editor and customer layouts unchanged. */
   owner?: boolean; subtitle?: string; headerEnd?: ReactNode;
 }) {
@@ -55,6 +57,28 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
       <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: owner ? 16 : 18 }}>{children}</ScrollView>
       {footer ? <View style={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: 10, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background }}>{footer}</View> : null}
     </SafeAreaView></SafeAreaProvider>
+  </Modal>;
+  if (hero) return <Modal visible transparent animationType={Platform.OS === 'web' ? 'fade' : 'slide'} onRequestClose={onClose} onShow={focusHeading}>
+    <SafeAreaProvider><View accessibilityViewIsModal style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+      <Pressable accessible={false} aria-hidden {...(Platform.OS === 'web' ? { tabIndex: -1 } as object : {})} disabled={closeDisabled} onPress={onClose} style={StyleSheet.absoluteFill} />
+      <SafeAreaView nativeID="panel-sheet" edges={['bottom', 'left', 'right']} style={{ width: '100%', maxWidth: 600, maxHeight: '92%', alignSelf: 'center', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
+        <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 12 }}>
+          {hero}
+          <View style={{ paddingHorizontal: 16, paddingTop: 16, gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              {titleLead}
+              <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ flexShrink: 1, fontSize: 28, lineHeight: 36, color: colors.ink, ...titleFont }}>{title}</Text>
+            </View>
+            {children}
+          </View>
+        </ScrollView>
+        {footer ? <View style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 10, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background }}>{footer}</View> : null}
+        <Pressable accessibilityRole="button" accessibilityLabel={closeLabel} accessibilityState={{ disabled: closeDisabled }} disabled={closeDisabled} onPress={onClose}
+          style={({ pressed }) => ({ position: 'absolute', top: 12, right: 12, width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', opacity: closeDisabled ? 0.5 : pressed ? 0.8 : 1 })}>
+          <Text accessible={false} aria-hidden style={{ fontSize: 20, lineHeight: 24, color: colors.ink }}>✕</Text>
+        </Pressable>
+      </SafeAreaView>
+    </View></SafeAreaProvider>
   </Modal>;
   if (sheet) return <Modal visible transparent animationType={Platform.OS === 'web' ? 'fade' : 'slide'} onRequestClose={onClose} onShow={focusHeading}>
     <SafeAreaProvider><View accessibilityViewIsModal style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>

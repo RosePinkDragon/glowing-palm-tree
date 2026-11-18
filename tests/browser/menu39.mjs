@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { assertDishSheet, closeDishSheet } from './dish-sheet.mjs';
 
 // #39 slice 2: Ammu Sammu photo-grid menu (search, Today's special, add -> stepper, category chips) plus a Kokani sanity pass (its menu is tested in kokani39.mjs).
 // Synthetic fixtures only. Set SHOTS_DIR to also write screenshots.
@@ -158,8 +159,8 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       await area.evaluate(node => { node.scrollTop = 0; });
       await page.getByRole('button', { name: 'View details for Misal pav', exact: true }).click();
       await page.getByRole('dialog').waitFor();
-      await page.keyboard.press('Escape');
-      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'View details for Misal pav');
+      await assertDishSheet(page, 'Misal pav');
+      await closeDishSheet(page, 'View details for Misal pav');
       assert.deepEqual(errors, []);
       await context.close();
       console.log(`PASS: ammu-sammu ${label} special card, search, add/stepper with focus, chips jump and follow`);

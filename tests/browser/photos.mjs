@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { assertDishSheet } from './dish-sheet.mjs';
 
 // Optional focused reuse: --brand=kokani-dine-inn --owners-only
 const selectedBrand = process.argv.find(arg => arg.startsWith('--brand='))?.slice(8);
@@ -109,11 +110,12 @@ try {
         assert.equal(requests.some(path => path.endsWith('/detail.webp')), false);
         assert.equal(requests.some(path => path.includes(`/${menu.at(-1).id}/`)), false, 'offscreen image loaded before scrolling');
         let dialog = await open('Photo dish');
+        await assertDishSheet(page, 'Photo dish');
         await dialog.getByRole('img', { name: 'Photo dish', exact: true }).waitFor();
         assert.ok((await dialog.locator('img').getAttribute('src')).endsWith('/detail.webp'));
         assert.equal(await dialog.locator('img').getAttribute('loading'), 'eager');
         await dialog.getByRole('img', { name: 'Contains egg', exact: true }).waitFor();
-        await dialog.getByText(feature, { exact: true }).waitFor();
+        await dialog.getByText(brand ? 'Signature dish' : feature, { exact: true }).waitFor();
         await dialog.getByText('Neutral synthetic test description.', { exact: true }).waitFor();
         assert.equal(await dialog.getByRole('button', { name: 'Decrease quantity' }).isDisabled(), true);
         await dialog.getByRole('button', { name: 'Increase quantity' }).click();

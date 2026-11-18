@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { assertDishSheet, backdropCloseDishSheet, closeDishSheet } from './dish-sheet.mjs';
 
 // #39 slice 3: Kokani Dine Inn menu (signature carousel on the dark header, text a la carte list with dotted price leaders).
 // Synthetic fixtures only. Set SHOTS_DIR to also write screenshots.
@@ -136,8 +137,17 @@ const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
       // Dish details open from the row (keyboard reachable) and focus returns.
       await page.getByRole('button', { name: 'View details for Suranachi kaap', exact: true }).focus(); await page.keyboard.press('Enter');
       await page.getByRole('dialog').waitFor();
-      await page.keyboard.press('Escape');
-      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'View details for Suranachi kaap');
+      await assertDishSheet(page, 'Suranachi kaap');
+      await closeDishSheet(page, 'View details for Suranachi kaap');
+      // Third entry path: the signature carousel opens the same sheet and focus returns to its card.
+      const signature = page.locator('#featured-menu').getByRole('button', { name: /^View details for / }).first();
+      const signatureLabel = await signature.getAttribute('aria-label');
+      await signature.focus(); await page.keyboard.press('Enter');
+      await assertDishSheet(page, signatureLabel.slice('View details for '.length));
+      await closeDishSheet(page, signatureLabel);
+      await signature.focus(); await page.keyboard.press('Enter');
+      await assertDishSheet(page, signatureLabel.slice('View details for '.length));
+      await backdropCloseDishSheet(page, signatureLabel);
       assert.deepEqual(errors, []);
       await context.close();
       console.log(`PASS: kokani-dine-inn ${label} signature carousel, text list with hidden leaders, add/stepper in both, chips, details`);
