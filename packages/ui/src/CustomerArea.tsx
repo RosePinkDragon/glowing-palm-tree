@@ -11,6 +11,8 @@ import { useBrandFonts } from './brand-fonts';
 import { BrandWelcome, useWelcome } from './CustomerBrand';
 import { deliveryAddressLine } from './address-model';
 import { AuthPanel } from './AuthPanel';
+import { LeaveRestaurant } from './LeaveRestaurant';
+import { checkoutLifecycleCopy } from './leave-model';
 import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, readAttempt, sameIdentity, type CheckoutAttempt } from './checkout-state';
 import { prepareAttempt, withCheckoutGuard } from './checkout-guard';
 import { requestLocation } from './location';
@@ -112,11 +114,13 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       } else if (isDefiniteOrderRejection(e)) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
+        const lifecycle = code === 'BUSINESS_JOIN_REQUIRED' ? 'join-required' as const : code === 'BUSINESS_LIFECYCLE_PENDING' ? 'pending' as const : null;
         if (closed) setClosedRefusal({ business: ordering.current.business, identity: started });
         try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; setDetails({ name: saved.delivery.name, phone: saved.delivery.phone });
           if (changed) addrs.refresh();
           if (outside) { addrs.select(null); addrs.refresh(); }
-          setLocalError(closed ? '' : changed ? addressChangedMessage : outside ? outsideAreaMessage : `${messageOf(e)} Please check your details and try again.`); if (closed) market.load(); } }
+          if (lifecycle === 'join-required') { let rejoined = false; try { await market.services.joinBusiness(); rejoined = true; } catch { /* the copy below says so */ } if (!sameIdentity(started, market.identity.current)) return; setLocalError(checkoutLifecycleCopy(lifecycle, name, rejoined)); }
+          else setLocalError(lifecycle ? checkoutLifecycleCopy(lifecycle, name) : closed ? '' : changed ? addressChangedMessage : outside ? outsideAreaMessage : `${messageOf(e)} Please check your details and try again.`); if (closed) market.load(); } }
         catch { setLocalError('The order was declined, but its saved attempt could not be cleared. Retry recovery before placing another order.'); }
       } else setLocalError(`${messageOf(e)} The result may be uncertain. Retry this same order to recover its status.`);
     }
@@ -234,7 +238,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
       placeDisabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
       localError={localError} change={changeCart} onPlace={() => void checkout()} onBrowse={() => navigation.current?.go('/')} /> : null}
-    {page === 'Account' || page === 'Login' ? <AuthPanel market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
+    {page === 'Account' || page === 'Login' ? <AuthPanel accountActions={page === 'Account' ? <LeaveRestaurant market={market} businessId={businessId} resetCart={draft.resetCart} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} /> : null} market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}
     {page === 'Order' ? <CustomerOrderDetail market={market} id={orderId ?? ''} receipt={receipt} onReorder={startReorder} onHelp={() => navigation.current?.go(`/help?id=${orderId}`)} /> : null}
     {page === 'Help' ? <CustomerSupport businessId={businessId} market={market} go={path => navigation.current?.go(path)} orderReference={orderId} /> : null}

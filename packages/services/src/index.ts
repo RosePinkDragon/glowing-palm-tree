@@ -83,6 +83,12 @@ export interface CustomerBusinessRelationship {
   state: 'active';
 }
 
+/** One of the caller's own customer_businesses rows (#52), with the restaurant it points at. */
+export interface CustomerRestaurantLink {
+  businessId: string; businessSlug: BusinessSlug; businessName: string; generation: string;
+  state: 'active' | 'leave_pending' | 'left';
+}
+
 export class ServiceError extends Error {
   readonly code: string;
   override readonly cause?: unknown;
@@ -523,6 +529,33 @@ export function createMarketServices(options: ServiceOptions) {
       if (error instanceof ServiceError) throw error;
       throw new ServiceError('BUSINESS_JOIN_FAILED', 'Could not join this restaurant.', error);
     }
+  };
+  /** The signed-in customer's own restaurant links (RLS: self-select only), strictly validated. */
+  const getMyRestaurants = async (): Promise<CustomerRestaurantLink[]> => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to see your restaurants.');
+    const initial = await db.auth.getSession();
+    const token = initial.data.session?.access_token;
+    const expected = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Try again.');
+    if (initial.error || !token || !expected || !orderIdPattern.test(expected.userId) || !orderIdPattern.test(expected.sessionId) || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to see your restaurants.');
+    const { data, error } = await db.from('customer_businesses').select('business_id,generation,state,businesses(slug,name)').eq('customer_id', expected.userId);
+    const current = await db.auth.getSession();
+    const identity = current.data.session?.access_token ? sessionIdentity(current.data.session.access_token) : null;
+    if (disposed || generation !== started || current.error || !identity || identity.userId !== expected.userId || identity.sessionId !== expected.sessionId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Try again.');
+    if (error) throw new ServiceError('RESTAURANTS_UNAVAILABLE', 'Could not load your restaurants.', error);
+    const invalid = () => new ServiceError('INVALID_RESPONSE', 'The server returned invalid restaurant links.');
+    if (!Array.isArray(data) || data.length > 20) throw invalid();
+    const seen = new Set<string>();
+    return data.map((row: unknown) => {
+      const r = row as { business_id?: unknown; generation?: unknown; state?: unknown; businesses?: { slug?: unknown; name?: unknown } | null } | null;
+      const b = r?.businesses;
+      if (!r || typeof r.business_id !== 'string' || !orderIdPattern.test(r.business_id) || seen.has(r.business_id.toLowerCase()) || typeof r.generation !== 'string' || !orderIdPattern.test(r.generation) ||
+        (r.state !== 'active' && r.state !== 'leave_pending' && r.state !== 'left') || !b || Array.isArray(b) || (b.slug !== 'ammu-sammu' && b.slug !== 'kokani-dine-inn') ||
+        typeof b.name !== 'string' || !b.name.trim() || b.name.length > 120 || /[\u0000-\u001f\u007f]/.test(b.name)) throw invalid();
+      seen.add(r.business_id.toLowerCase());
+      return { businessId: r.business_id, businessSlug: b.slug, businessName: b.name.trim(), generation: r.generation.toLowerCase(), state: r.state };
+    });
   };
   const leaveBusiness = async (input: { requestId: string; generation: string }): Promise<LeaveBusinessReceipt> => {
     if (!input || typeof input.requestId !== 'string' || !orderIdPattern.test(input.requestId) ||
@@ -970,7 +1003,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

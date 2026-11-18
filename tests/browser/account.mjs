@@ -361,6 +361,7 @@ try {
         result.sort((a,b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
         return json(result.slice(0, Number(url.searchParams.get('limit'))));
       }
+      if (url.pathname === '/rest/v1/customer_businesses') return json([]);
       throw new Error(`Unexpected account request ${url.pathname}`);
     });
     await context.addInitScript(() => {
