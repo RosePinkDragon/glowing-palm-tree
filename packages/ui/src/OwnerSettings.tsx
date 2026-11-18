@@ -106,39 +106,39 @@ export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Ma
   const displayName = ownerName ?? contact;
   const loadingName = ownerName === undefined;
   const switchRow = (title: string, detail: string, value: boolean, onChange: (next: boolean) => void) =>
-    <MarketRow title={title} detail={detail} end={<MarketSwitch label={title} hint={detail} value={value} disabled={!settings.ready} busy={settings.busy} onValueChange={onChange} />} />;
+    <MarketRow roomy title={title} detail={detail} end={<MarketSwitch label={title} hint={detail} value={value} disabled={!settings.ready} busy={settings.busy} onValueChange={onChange} />} />;
 
-  return <View style={{ gap: 20 }}>
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border }}>
-      <View aria-hidden style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
-        {loadingName ? null : <Text style={{ color: colors.onPrimary, fontSize: 16, ...bold }}>{ownerInitials(displayName)}</Text>}
+  return <View style={{ gap: 24 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: 20, backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.border }}>
+      <View aria-hidden style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+        {loadingName ? null : <Text style={{ color: colors.onPrimary, fontSize: 22, ...bold }}>{ownerInitials(displayName)}</Text>}
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         {loadingName ? <View aria-label="Loading your name" role="progressbar" style={{ gap: 6 }}><View style={{ width: 140, height: 16, borderRadius: 8, backgroundColor: colors.border }} /><View style={{ width: 100, height: 12, borderRadius: 6, backgroundColor: colors.border }} /></View> : <>
-        <Text accessibilityRole="header" aria-level={2} style={{ ...body(17), ...bold }}>{displayName}</Text>
+        <Text accessibilityRole="header" aria-level={2} style={{ ...body(19), ...bold }}>{displayName}</Text>
         <Text style={muted}>{ownerName ? `${contact} · Owner` : 'Owner'}</Text></>}
       </View>
     </View>
     {loadingName ? null : <OwnerNameSection key={session.user.id} services={market.services} saved={ownerName ?? null} onSaved={setOwnerName} />}
     {!market.services.persistenceAvailable() ? <Text style={muted}>This session is stored only for this visit because device storage is unavailable.</Text> : null}
-    <MarketGroup title="Restaurant">
+    <MarketGroup inset title="Restaurant">
       {onOpenRestaurantDetails
         ? <Pressable accessibilityRole="button" accessibilityLabel="Restaurant details" accessibilityHint="Phone numbers, delivery fee, minimum order" onPress={onOpenRestaurantDetails} style={({ pressed }) => ({ backgroundColor: pressed ? colors.tint : 'transparent' })}>
-          <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={<MarketIcon name="chevronRight" color={colors.muted} />} />
+          <MarketRow roomy title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={<MarketIcon name="chevronRight" color={colors.muted} />} />
         </Pressable>
-        : <MarketRow title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />}
-      <MarketRow title="Owners" detail={`Who can manage ${name}`} end={soon} />
+        : <MarketRow roomy title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />}
+      <MarketRow roomy title="Owners" detail={`Who can manage ${name}`} end={soon} />
     </MarketGroup>
-    <MarketGroup title="New order alerts on this phone">
+    <MarketGroup inset title="New order alerts on this phone">
       {switchRow('Notifications', 'Even when the app is closed', settings.prefs.push, next => settings.setPush(next))}
-      <MarketRow title="Ring for new orders" detail="Loud sound until someone opens it" end={soon} />
-      <MarketRow title="Play a test alert" end={soon} />
+      <MarketRow roomy title="Ring for new orders" detail="Loud sound until someone opens it" end={soon} />
+      <MarketRow roomy title="Play a test alert" end={soon} />
     </MarketGroup>
     {status(settings.pushMessage)}
-    <MarketGroup title="Privacy">{switchRow('Share app usage', 'Anonymous data that helps us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next))}</MarketGroup>
+    <MarketGroup inset title="Privacy">{switchRow('Share app usage', 'Anonymous data that helps us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next))}</MarketGroup>
     {status(settings.analyticsMessage)}
     <Pressable accessibilityRole="button" disabled={settings.busy} onPress={() => { setSignOutError(''); void settings.signOut().catch(e => setSignOutError(messageOf(e))); }}
-      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.tint : colors.surface, opacity: settings.busy ? 0.6 : 1 })}>
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 56, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.tint : colors.surface, opacity: settings.busy ? 0.6 : 1 })}>
       <MarketIcon name="logout" color={colors.ink} />
       <Text style={{ ...body(15), ...bold }}>Log out</Text>
     </Pressable>

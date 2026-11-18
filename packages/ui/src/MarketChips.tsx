@@ -23,7 +23,7 @@ export function MarketChip({ label, selected, onPress, accessibilityLabel, count
   </Pressable>;
 }
 
-export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'onDark';
+export type PillTone = 'brand' | 'positive' | 'neutral' | 'quiet' | 'outline' | 'danger' | 'onDark' | 'info';
 
 /**
  * A small status or label pill. Tones: brand (featured, order status), positive (Live),
@@ -43,6 +43,7 @@ export function MarketPill({ label, tone, dot = false, star = false, status }: {
     quiet: { bg: colors.neutralTint, text: colors.muted, border: undefined, dot: colors.muted },
     outline: { bg: colors.surface, text: colors.muted, border: colors.inputBorder, dot: colors.muted },
     onDark: { bg: 'transparent', text: colors.onOwnerHeader, border: colors.accent, dot: colors.liveDot },
+    info: { bg: colors.infoTint, text: colors.info, border: undefined, dot: colors.info },
     danger: { bg: colors.background, text: colors.danger, border: colors.border, dot: colors.danger },
   }[tone];
   return <View {...(status ? { role: 'status' as const, 'aria-label': status } : {})}

@@ -3,6 +3,7 @@ import { AccessibilityInfo, findNodeHandle, Modal, Platform, Pressable, ScrollVi
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { ComponentRef, ReactNode } from 'react';
 import { MarketCard } from './components';
+import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 // Capture the initiating control before opening so closing returns keyboard focus.
@@ -12,14 +13,22 @@ export function capturePanelFocus(): HTMLElement | null {
 export function restorePanelFocus(element: HTMLElement | null) {
   if (Platform.OS === 'web') setTimeout(() => { if (element?.isConnected) element.focus(); }, 0);
 }
+/** Keeps the last word (the order number) whole: the text content is unchanged, only the wrapping rule. */
+function NoBreakTail({ text }: { text: string }) {
+  const cut = text.lastIndexOf(' ');
+  if (cut < 0) return <>{text}</>;
+  return <>{text.slice(0, cut + 1)}<Text style={Platform.OS === 'web' ? ({ whiteSpace: 'nowrap' } as object) : undefined}>{text.slice(cut + 1)}</Text></>;
+}
 /**
  * A modal that moves focus to its heading when shown. `fullScreen` is the phone
  * editor layout: close button and title on top, scrolling body, pinned footer.
  * `sheet` is the phone confirmation layout: rises from the bottom with a grab handle.
  * Titles use the brand heading font when the owners' app has loaded it.
  */
-export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false }: {
+export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false, owner = false, subtitle, headerEnd }: {
   title: string; children: ReactNode; onClose: () => void; fullScreen?: boolean; sheet?: boolean; footer?: ReactNode; closeDisabled?: boolean;
+  /** Owners' order details and cancel sheet (#53): back arrow, `page` surface, subtitle and header-end slot, roomier sheet. Off keeps the editor and customer layouts unchanged. */
+  owner?: boolean; subtitle?: string; headerEnd?: ReactNode;
 }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
@@ -32,14 +41,18 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
   };
   if (fullScreen) return <Modal visible animationType={Platform.OS === 'web' ? 'fade' : 'slide'} onRequestClose={onClose} onShow={focusHeading}>
     {/* Modals render outside the app's providers; measure insets here. */}
-    <SafeAreaProvider><SafeAreaView accessibilityViewIsModal edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.background }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close" accessibilityState={{ disabled: closeDisabled }} disabled={closeDisabled} onPress={onClose} style={({ pressed }) => ({ width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 24, opacity: closeDisabled ? 0.4 : pressed ? 0.6 : 1 })}>
-          <Text accessible={false} aria-hidden style={{ fontSize: 22, lineHeight: 26, color: colors.ink }}>✕</Text>
+    <SafeAreaProvider><SafeAreaView accessibilityViewIsModal edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: owner ? colors.page : colors.background }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background }}>
+        <Pressable accessibilityRole="button" accessibilityLabel={owner ? 'Back' : 'Close'} accessibilityState={{ disabled: closeDisabled }} disabled={closeDisabled} onPress={onClose} style={({ pressed }) => ({ width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 24, opacity: closeDisabled ? 0.4 : pressed ? 0.6 : 1 })}>
+          {owner ? <MarketIcon name="back" color={colors.ink} size={24} /> : <Text accessible={false} aria-hidden style={{ fontSize: 22, lineHeight: 26, color: colors.ink }}>✕</Text>}
         </Pressable>
-        <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ flex: 1, fontSize: 22, lineHeight: 28, color: colors.ink, ...titleFont }}>{title}</Text>
+        <View style={{ flex: 1 }}>
+          <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 22, lineHeight: 28, color: colors.ink, ...titleFont }}>{title}</Text>
+          {subtitle ? <Text style={{ fontSize: 13, lineHeight: 18, color: colors.muted, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{subtitle}</Text> : null}
+        </View>
+        {headerEnd ? <View style={{ paddingRight: 8 }}>{headerEnd}</View> : null}
       </View>
-      <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: 18 }}>{children}</ScrollView>
+      <ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1 }} contentContainerStyle={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: owner ? 16 : 18 }}>{children}</ScrollView>
       {footer ? <View style={{ width: '100%', maxWidth: 600, alignSelf: 'center', padding: 16, gap: 10, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background }}>{footer}</View> : null}
     </SafeAreaView></SafeAreaProvider>
   </Modal>;
@@ -47,9 +60,9 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
     <SafeAreaProvider><View accessibilityViewIsModal style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
       <SafeAreaView edges={['bottom', 'left', 'right']} style={{ width: '100%', maxWidth: 600, maxHeight: '90%', alignSelf: 'center', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
         {/* Bounded height: long content or large text scrolls instead of pushing the buttons off screen. */}
-        <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: 20, paddingTop: 10, gap: 14 }}>
+        <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }} contentContainerStyle={{ padding: owner ? 24 : 20, paddingTop: 10, gap: owner ? 18 : 14 }}>
           <View aria-hidden style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 4 }} />
-          <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 24, lineHeight: 30, color: colors.ink, ...titleFont }}>{title}</Text>
+          <Text ref={heading} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ fontSize: 24, lineHeight: 30, color: colors.ink, ...titleFont }}>{owner ? <NoBreakTail text={title} /> : title}</Text>
           {children}
         </ScrollView>
       </SafeAreaView>
