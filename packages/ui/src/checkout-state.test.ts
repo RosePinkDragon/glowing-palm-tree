@@ -19,8 +19,8 @@ test('a persisted attempt preserves the original request for retries', () => {
 test('only a definite RPC rejection can release an attempt', async () => {
   const { isDefiniteOrderRejection } = await import('./checkout-state.ts');
   const error = (message: string, code: string) => Object.assign(new Error(message), { code });
-  assert.equal(isDefiniteOrderRejection(error('Join this restaurant before placing an order.', 'BUSINESS_JOIN_REQUIRED')), true);
-  assert.equal(isDefiniteOrderRejection(error('Retry when it finishes.', 'BUSINESS_LIFECYCLE_PENDING')), true);
+  assert.equal(isDefiniteOrderRejection(error('Join this restaurant before placing an order.', 'BUSINESS_JOIN_REQUIRED')), false, 'a replay may already exist: keep the attempt');
+  assert.equal(isDefiniteOrderRejection(error('Retry when it finishes.', 'BUSINESS_LIFECYCLE_PENDING')), false);
   assert.equal(isDefiniteOrderRejection(error('Could not place order: delivery unavailable', '22023')), true);
   assert.equal(isDefiniteOrderRejection(error('Could not place order: idempotency key reused with different request', '22023')), false);
   assert.equal(isDefiniteOrderRejection(error('Order was saved, but its details could not be loaded', '22023')), false);

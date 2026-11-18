@@ -55,14 +55,14 @@ export function leaveFailure(error: unknown, name: string): LeaveFailure {
 export const leaveRequestIsFinal = (error: unknown) => ['ACTIVE_ORDERS', 'LAST_BUSINESS', 'STALE_RELATIONSHIP', 'LEAVE_REQUEST_CONFLICT'].includes(error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : '');
 
 export const leaveEffects = (name: string, otherName: string) => [
-  `You'll stop getting updates and notifications from ${name} on this phone.`,
+  `You'll stop getting updates and notifications from ${name} on your devices.`,
   'Your saved cart here is cleared.',
   'Your past orders and saved addresses stay.',
   `You'll be signed out of this app only. Your account stays for the ${otherName} app.`,
 ];
 
-/** Checkout of a customer who left: rejoin once, then ask them to place the order again. */
+/** Checkout of a customer who left: the saved attempt is kept; rejoin once, then ask them to recover that same order. */
 export function checkoutLifecycleCopy(kind: 'join-required' | 'pending', name: string, rejoined?: boolean): string {
-  if (kind === 'pending') return 'Your account is being updated. Try placing your order again shortly.';
-  return rejoined ? `You're back at ${name}. Your order has not been placed yet. Check it and place it again.` : `We could not rejoin ${name} just now. Check your connection and place your order again to retry.`;
+  if (kind === 'pending') return 'Your account is being updated. Try Retry order recovery again shortly; your order is kept.';
+  return rejoined ? `You're back at ${name}. Press Retry order recovery to finish your order; it will not be placed twice.` : `We could not rejoin ${name} just now. Check your connection and press Retry order recovery to try again.`;
 }

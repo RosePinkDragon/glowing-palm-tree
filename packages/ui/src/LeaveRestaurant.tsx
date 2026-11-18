@@ -18,7 +18,7 @@ type Market = ReturnType<typeof useMarket>;
  * another restaurant too. The server leave comes first; this phone is only cleaned (and signed
  * out of this app) once the server receipt is in and still matches the relationship we left.
  */
-export function LeaveRestaurant({ market, businessId, resetCart, signOut }: { market: Market; businessId: BusinessSlug; resetCart: () => Promise<void>; signOut: () => Promise<void> }) {
+export function LeaveRestaurant({ market, businessId, resetCart, signOut, onLeft }: { market: Market; businessId: BusinessSlug; resetCart: () => Promise<void>; signOut: () => Promise<void>; onLeft: (message: string) => void }) {
   const { colors, name } = useMarketTheme();
   const userId = market.session?.user.id ?? null;
   const backend = market.services.mode === 'backend';
@@ -49,15 +49,15 @@ export function LeaveRestaurant({ market, businessId, resetCart, signOut }: { ma
       const current = (await market.services.getMyRestaurants()).find(row => row.businessSlug === businessId);
       if (!sameIdentity(started, market.identity.current)) return;
       const decision = cleanupDecision(receipt, { slug: businessId, generation: shown.generation, requestId }, current);
-      if (decision === 'superseded') { await clearLeaveRequest(storage, businessId, userId); setFailure({ message: `You have already rejoined ${name} on another device, so nothing was cleared on this phone.`, retry: false, refresh: true, signIn: false }); return; }
+      if (decision === 'superseded') { await clearLeaveRequest(storage, businessId, userId); setFailure({ message: `This changed, so we have refreshed it. Nothing was cleared on this phone.`, retry: false, refresh: true, signIn: false }); setReload(value => value + 1); return; }
       if (decision !== 'clean') throw new Error('Leave could not be confirmed');
       // Only now is anything removed from this phone; a failure here leaves the request ID so Retry replays the same receipt.
       await resetCart();
       await storage.removeItem(preferenceKey(businessId, 'customer', userId));
-      setOpen(false);
       await signOut();
       await clearLeaveRequest(storage, businessId, userId).catch(() => {});
-      market.setNotice(`You left ${name}. Your account stays for the ${shown.otherName} app.`);
+      setOpen(false);
+      onLeft(`You left ${name}. Your account stays for the ${shown.otherName} app.`);
     } catch (e) {
       if (!sameIdentity(started, market.identity.current)) return;
       if (leaveRequestIsFinal(e)) await clearLeaveRequest(storage, businessId, userId).catch(() => {});

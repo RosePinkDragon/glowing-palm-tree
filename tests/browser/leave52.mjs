@@ -28,7 +28,7 @@ try {
     const business = { id: ids[slug], slug, name, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     const link = (s, state = 'active') => ({ business_id: ids[s], generation: generations[s], state, businesses: { slug: s, name: names[s] } });
     // The fixture owns the "server": links, leave behaviour, and every call it saw.
-    const fixture = { links: [link(slug)], leave: [], leaveMode: 'ok', leaveDelay: 0, joins: 0, orders: 0, placeMode: 'ok', logouts: [], authed: true, errors: [] };
+    const fixture = { links: [link(slug)], leave: [], leaveMode: 'ok', leaveDelay: 0, joins: 0, orders: 0, keys: [], created: 0, placeMode: 'ok', logouts: [], authed: true, errors: [] };
     const requestKey = `market:leave:${slug}:${encodeURIComponent(userId)}`, cartStorageKey = `market:cart:${slug}`, prefKey = `market:preferences:${slug}:customer:${encodeURIComponent(userId)}`, sessionKey = `market:${encodeURIComponent(api)}:${slug}:customer`;
     const item = { id: '52900000-0000-4000-8000-000000000001', name: 'Leave fixture meal', description: 'Synthetic fixture', category_id: '52900000-0000-4000-8000-000000000002', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
     const cartItem = { id: item.id, businessId: slug, name: item.name, categoryId: item.category_id, categorySortOrder: 0, description: '', category: 'Meals', pricePaise: 10000, isAvailable: true, isDemo: false };
@@ -76,8 +76,11 @@ try {
       if (rpc === 'place_order') {
         fixture.orders++; const body = request.postDataJSON();
         if (fixture.placeMode === 'join-required') return json({ code: 'PT403', message: 'RAW SERVER TEXT', details: 'BUSINESS_JOIN_REQUIRED', hint: null }, 403);
+        fixture.keys.push(body.p_idempotency_key);
         const terms = body.p_accepted_pricing;
-        placed = { id: orderId, business_id: ids[slug], customer_id: userId, status: 'placed', version: 1, created_at: new Date().toISOString(), subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: 'Flat 3, Sai Krupa Apartments, Bharne Naka', order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })), order_status_history: [] };
+        if (!placed) fixture.created++;
+        placed ??= { id: orderId, business_id: ids[slug], customer_id: userId, status: 'placed', version: 1, created_at: new Date().toISOString(), subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: 'Flat 3, Sai Krupa Apartments, Bharne Naka', order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })), order_status_history: [] };
+        if (fixture.placeMode === 'lost') return route.abort('failed'); // committed; the response was lost
         return json({ outcome: 'placed', id: orderId });
       }
       if (method === 'GET' && /notifications|device_tokens|unread/.test(url.pathname)) return json(rpc.includes('count') ? 0 : []);
@@ -117,7 +120,7 @@ try {
       await leave.focus(); await page.keyboard.press('Enter');
       const heading = visible(page.getByRole('heading', { name: `Leave ${name}?`, exact: true })); await heading.waitFor();
       await page.waitForFunction(() => document.activeElement?.textContent?.startsWith('Leave ') && document.activeElement.textContent.endsWith('?'));
-      for (const line of [`You'll stop getting updates and notifications from ${name} on this phone.`, 'Your saved cart here is cleared.', 'Your past orders and saved addresses stay.', `You'll be signed out of this app only. Your account stays for the ${other} app.`]) await text(line).waitFor();
+      for (const line of [`You'll stop getting updates and notifications from ${name} on your devices.`, 'Your saved cart here is cleared.', 'Your past orders and saved addresses stay.', `You'll be signed out of this app only. Your account stays for the ${other} app.`]) await text(line).waitFor();
       await shot('sheet');
       const confirmButton = button(`Leave ${name}`).last();
       const colours = await confirmButton.evaluate(node => { const label = node.querySelector('div,span') ?? node; return { bg: getComputedStyle(node).backgroundColor, fg: getComputedStyle(label).color }; });
@@ -157,7 +160,7 @@ try {
       assert.equal(JSON.parse(await stored(cartStorageKey)).lines.length, 1, 'nothing is cleared on this phone before the server receipt');
       assert.deepEqual(fixture.logouts, [], 'not signed out before the receipt');
       await button(`Try again to leave ${name}`).focus(); await page.keyboard.press('Enter');
-      await text(`You left ${name}. Your account stays for the ${other} app.`).waitFor();
+      await page.getByRole('status').filter({ hasText: `You left ${name}. Your account stays for the ${other} app.` }).waitFor();
       assert.equal(new Set(fixture.leave.slice(-3).map(call => call.p_request_id)).size, 1, 'every retry carried the same request ID');
       assert.deepEqual(fixture.leave.at(-1), { p_business_slug: slug, p_request_id: pendingId, p_generation: generations[slug] });
       assert.equal(JSON.parse(await stored(cartStorageKey)).lines.length, 0, 'this restaurant\'s saved cart is cleared');
@@ -173,18 +176,28 @@ try {
       await button('Sign in').click(); await signedIn();
       await page.waitForTimeout(400);
       assert.equal(await button(`Leave ${name}`).count(), 0, 'a left restaurant offers no Leave');
-      fixture.placeMode = 'join-required';
       await page.goto(server.url, { waitUntil: 'networkidle' });
+      assert.equal(await visible(page.getByText(`You left ${name}.`, { exact: false })).count(), 0, 'the post-leave notice clears on the next sign-in');
       await button('Add to cart').first().click();
       await visible(page.getByRole('button', { name: /^Cart \(/ })).click(); await text('Delivery details').waitFor();
       await visible(page.getByLabel('Name', { exact: true })).fill('Rohan Sawant'); await visible(page.getByLabel('Mobile number', { exact: true })).fill('9876543210');
-      await button('Place order').click();
-      await text(`You're back at ${name}. Your order has not been placed yet. Check it and place it again.`).waitFor();
-      assert.equal(fixture.joins, 1, 'checkout asked the server to rejoin once');
-      assert.doesNotMatch(await page.locator('body').innerText(), /RAW SERVER TEXT/);
+      // The order is committed but its response is lost; the customer then leaves and returns, so the replay hits the relationship gate first.
+      const attemptKey = `market:checkout:${slug}`;
+      fixture.placeMode = 'lost'; await button('Place order').click();
+      await visible(page.getByText(/The result may be uncertain/)).waitFor();
+      const saved = await stored(attemptKey); assert.ok(saved, 'the attempt is saved');
+      assert.equal(fixture.created, 1);
+      fixture.placeMode = 'join-required'; await button('Retry order recovery').click();
+      const note = page.getByRole('status').filter({ hasText: `You're back at ${name}. Press Retry order recovery to finish your order; it will not be placed twice.` }); await note.waitFor();
+      assert.equal(fixture.joins, 1, 'the replay asked the server to rejoin once');
+      assert.equal(await stored(attemptKey), saved, 'the saved attempt is kept, not released');
+      assert.equal(await page.getByRole('alert').filter({ hasText: /back at/ }).count(), 0, 'the rejoin note is a status, not an error');
+      assert.doesNotMatch(await page.locator('body').innerText(), /RAW SERVER TEXT|not been placed yet/);
       await shot('rejoin');
-      fixture.placeMode = 'ok'; await button('Place order').click(); await page.waitForURL(/\/orders\//);
-      assert.equal(fixture.orders, 2);
+      fixture.placeMode = 'ok'; await button('Retry order recovery').click(); await page.waitForURL(/\/orders\//);
+      assert.equal(fixture.created, 1, 'recovery returned the existing order: no second order');
+      assert.equal(new Set(fixture.keys).size, 1, 'every send used the same idempotency key');
+      assert.equal(fixture.orders, 3);
       assert.deepEqual(fixture.errors, [], 'no unexpected requests');
       assert.deepEqual(pageErrors, [], 'no page errors');
       console.log(`PASS: ${slug} leave hidden/shown, honest sheet, refusals, no double submit, request ID reuse, receipt-gated local cleanup, local sign-out, rejoin at checkout`);
