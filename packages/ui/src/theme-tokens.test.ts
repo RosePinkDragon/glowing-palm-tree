@@ -24,7 +24,7 @@ test('pill and chip text stays readable on its background in both themes (WCAG 1
   for (const theme of Object.values(marketThemes)) {
     const c = theme.colors;
     const pairs: [string, string, string][] = [
-      ['brand pill', c.primary, c.tint], ['positive pill', c.positive, c.positiveTint], ['neutral pill', c.ink, c.neutralTint],
+      ['brand pill', c.primary, c.tint], ['info pill (Accepted)', c.info, c.infoTint], ['positive pill', c.positive, c.positiveTint], ['neutral pill', c.ink, c.neutralTint],
       ['quiet pill', c.muted, c.neutralTint], ['outline pill', c.muted, c.surface], ['danger pill', c.danger, c.background],
       ['selected chip', c.surface, c.ink], ['chip', c.ink, c.surface], ['chip count', c.primary, c.tint], ['selected chip count', c.onPrimary, c.primary],
     ];
@@ -53,4 +53,26 @@ test('the closed-restaurant notice keeps its text readable in both themes (WCAG 
     const c = theme.colors;
     assert.ok(contrastRatio(c.onNotice, c.notice) >= 4.5, `${theme.name}: notice ${c.onNotice} on ${c.notice}`);
   }
+});
+
+test('owners shell (#53): header, chips on the dark header, bands and page keep text readable in both themes', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    const text: [string, string, string][] = [
+      ['header title', c.onOwnerHeader, c.ownerHeader], ['open band', c.onOpenBand, c.openBand], ['closed band', c.onClosedBand, c.closedBand],
+      ['page muted text', c.muted, c.page], ['page ink', c.ink, c.page], ['login heading', c.background, c.loginHero],
+      ['filled OWNERS badge', c.onPrimary, c.primary], ['error on open band', c.danger, c.openBand], ['error on closed band', c.onClosedBand, c.closedBand],
+      ...(theme.ownerHeader === 'dark' ? [['selected chip on gold', c.ownerHeader, c.accent], ['dark chip', c.onOwnerHeader, c.ownerHeader]] as [string, string, string][] : []),
+    ];
+    for (const [name, fg, bg] of text) assert.ok(contrastRatio(fg, bg) >= 4.5, `${theme.name}: ${name} ${fg} on ${bg} = ${contrastRatio(fg, bg).toFixed(2)}`);
+    const graphics: [string, string, string][] = [
+      ['switch on open band', c.switchOn, c.openBand], ['switch off on closed band', c.switchOff, c.closedBand], ['thumb on off track', c.surface, c.switchOff],
+      ...(theme.ownerHeader === 'dark' ? [['gold outline on header', c.accent, c.ownerHeader] as [string, string, string]] : []),
+    ];
+    for (const [name, fg, bg] of graphics) assert.ok(contrastRatio(fg, bg) >= 3, `${theme.name}: ${name} ${contrastRatio(fg, bg).toFixed(2)}`);
+    assert.ok(contrastRatio(c.page, c.ownerHeader) > 1, `${theme.name}: page differs from header`);
+    assert.notEqual(c.page, c.surface);
+  }
+  assert.equal(marketThemes['kokani-dine-inn'].ownerHeader, 'dark');
+  assert.equal(marketThemes['ammu-sammu'].ownerHeader, 'light');
 });

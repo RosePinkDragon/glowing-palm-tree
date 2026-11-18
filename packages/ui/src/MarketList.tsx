@@ -15,23 +15,23 @@ function SectionHeading({ title }: { title: string }) {
 }
 
 /** Heading above a bordered card whose rows are separated by dividers. */
-export function MarketGroup({ title, children }: { title?: string; children: ReactNode }) {
+export function MarketGroup({ title, children, inset = false }: { title?: string; children: ReactNode; /** Owners' Settings (#53 p. 10): dividers inset 16px and a roomier card. Off keeps full-width dividers. */ inset?: boolean }) {
   const { colors } = useMarketTheme();
   const rows = Children.toArray(children).filter(Boolean);
   return <View style={{ gap: 8 }}>
     {title ? <SectionHeading title={title} /> : null}
-    <View style={{ backgroundColor: colors.surface, borderRadius: 16, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
-      {rows.map((row, index) => <View key={index} style={{ borderTopWidth: index ? 1 : 0, borderTopColor: colors.border }}>{row}</View>)}
+    <View style={{ backgroundColor: colors.surface, borderRadius: inset ? 20 : 16, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
+      {rows.map((row, index) => <View key={index}>{index ? <View aria-hidden style={{ height: 1, backgroundColor: colors.border, marginHorizontal: inset ? 16 : 0 }} /> : null}{row}</View>)}
     </View>
   </View>;
 }
 
 /** Title, optional grey detail line, and an optional trailing control (switch, text, button). */
-export function MarketRow({ title, detail, end }: { title: string; detail?: ReactNode; end?: ReactNode }) {
+export function MarketRow({ title, detail, end, roomy = false }: { title: string; detail?: ReactNode; end?: ReactNode; roomy?: boolean }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingHorizontal: 16, paddingVertical: 10 }}>
-    <View style={{ flex: 1, gap: 2 }}>
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: roomy ? 68 : 56, paddingHorizontal: 16, paddingVertical: roomy ? 14 : 10 }}>
+    <View style={{ flex: 1, gap: roomy ? 4 : 2 }}>
       <Text style={{ color: colors.ink, fontSize: 15, lineHeight: 22, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>{title}</Text>
       {detail ? <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{detail}</Text> : null}
     </View>

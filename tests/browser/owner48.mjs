@@ -66,8 +66,8 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
   assert.equal(await visible(card('AMS-2026110004').getByText(/Ordered from|not confirmed/)).count(), 0, 'legacy order never has a flag, whatever its distance');
   await flagIn(card('AMS-2026110005'), 'Ordered from 450 m away').waitFor();
 
-  const details = async (reference, name) => { await visible(page.getByRole('button', { name: `Details for ${reference}`, exact: true })).click(); const heading = visible(page.getByRole('heading', { name, level: 2, exact: true })); await heading.waitFor(); panel = heading.locator('xpath=ancestor::*[.//button[@aria-label="Close"]][1]'); };
-  const close = () => visible(page.getByRole('button', { name: 'Close', exact: true })).click();
+  const details = async (reference, name) => { await visible(page.getByRole('button', { name: `Details for ${reference}`, exact: true })).click(); const heading = visible(page.getByRole('heading', { name, level: 2, exact: true })); await heading.waitFor(); panel = heading.locator('xpath=ancestor::*[.//button[@aria-label="Back"]][1]'); };
+  const close = () => visible(page.getByRole('button', { name: 'Back', exact: true })).click();
   const text = value => visible(panel.getByText(value, { exact: true }));
   await details('AMS-2026110001', 'Far customer');
   for (const value of ['Aai', '12, Shivaji Nagar', 'Station Road, Khed', 'Landmark: Near the temple', 'Ordered from 12 km away']) await text(value).waitFor();
@@ -87,6 +87,13 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
   await details('AMS-2026110005', 'Close-by customer');
   await text('Home').waitFor(); await text('Ordered from 450 m away').waitFor(); await text('1.2 km · pin checked inside delivery area').waitFor();
   assert.equal(await visible(panel.getByText(/^Landmark:/)).count(), 0, 'missing landmark is not invented');
+  { // #53 p5: back arrow, status pill at header-right, placed time under the order number
+    const back = (await visible(page.getByRole('button', { name: 'Back', exact: true })).boundingBox()); const title = await visible(page.getByRole('heading', { name: /^Order AMS-2026110005$/ })).boundingBox();
+    const pill = await visible(page.getByRole('status', { name: /^Status: /i })).boundingBox(); const placed = await visible(page.getByText(/^Placed /).first()).boundingBox();
+    assert.ok(back.width >= 44 && back.height >= 44, 'back control is a 44px target');
+    assert.ok(back.x < title.x && pill.x > title.x + title.width - 1, 'back arrow left of the title, status pill right of it');
+    assert.ok(Math.abs((pill.y + pill.height / 2) - (title.y + title.height / 2)) < 40 && placed.y >= title.y + title.height - 2, 'placed time sits under the order number');
+  }
   assert.deepEqual(errors, []);
   console.log(`PASS (${slug}): owner queue and details show the structured address, kitchen distance and remote-order flag only for saved-address orders`);
   await context.close();
