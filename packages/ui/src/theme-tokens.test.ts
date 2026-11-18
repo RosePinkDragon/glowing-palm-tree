@@ -47,3 +47,10 @@ test('the order status band keeps its text readable in both themes (WCAG 1.4.3, 
     assert.ok(contrastRatio(c.updatesIcon, c.updatesTint) >= 3, `${theme.name}: updates bell`);
   }
 });
+
+test('the closed-restaurant notice keeps its text readable in both themes (WCAG 1.4.3, 4.5:1)', () => {
+  for (const theme of Object.values(marketThemes)) {
+    const c = theme.colors;
+    assert.ok(contrastRatio(c.onNotice, c.notice) >= 4.5, `${theme.name}: notice ${c.onNotice} on ${c.notice}`);
+  }
+});

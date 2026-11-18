@@ -107,6 +107,12 @@ try {
       assert.equal(await add().count(), 0); assert.equal(await closed().count(), 0, 'unknown is not labelled closed');
       holdAll = null; firstBusiness.resolve();
       await closed().waitFor();
+      // Brand-styled notice (#39 slice 4): a status region with the brand's notice colour, a bold lead, and the saved-cart line.
+      const notice = page.getByRole('status').filter({ hasText: text }).last();
+      await notice.waitFor();
+      assert.equal(await notice.evaluate(node => { let el = node; while (el && getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)') el = el.parentElement; return getComputedStyle(el).backgroundColor; }), brand ? 'rgb(200, 180, 124)' : 'rgb(46, 33, 30)', 'notice uses the brand colour');
+      assert.equal(await closed().evaluate(node => Number(getComputedStyle(node.firstElementChild).fontWeight) >= 600 || getComputedStyle(node.firstElementChild).fontFamily !== getComputedStyle(node).fontFamily), true, 'lead is emphasised');
+      await notice.getByText('Your saved cart is kept for later.', { exact: true }).waitFor();
       await visible(page.getByText(item.name, { exact: true })).waitFor();
       assert.equal(await add().count(), 0); assert.equal(await cart().count(), 0);
       for (const width of [320, 390, 1440]) {

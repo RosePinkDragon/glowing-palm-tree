@@ -115,7 +115,7 @@ function Lines({ order }: { order: Order }) {
   const { colors, receiptRule } = useMarketTheme();
   const cancelled = order.status === 'cancelled';
   return <MarketSection>
-    {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><MarketLine left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} /></View>)}
+    <View style={{ gap: 14 }}>{order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} role="group" accessibilityLabel={`${line.quantity} × ${line.name}`} style={{ gap: 2 }}><MarketLine left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} compact /></View>)}</View>
     <MarketLine left={<Text style={{ color: colors.muted }}>Delivery</Text>} right={<Text style={{ color: colors.muted, fontSize: 15 }}>{formatINRFromPaise(order.deliveryFeePaise)}</Text>} />
     <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 10 }}>
       <MarketLine bold left={cancelled ? 'Total' : 'Paid in cash'} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
@@ -123,11 +123,11 @@ function Lines({ order }: { order: Order }) {
   </MarketSection>;
 }
 
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+function DetailRow({ label, children, first = false }: { label: string; children: ReactNode; first?: boolean }) {
   const { colors } = useMarketTheme();
-  return <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
+  return <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16, paddingTop: first ? 0 : 10, borderTopWidth: first ? 0 : 1, borderTopColor: colors.border }}>
     <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{label}</Text>
-    <Text style={{ color: colors.ink, fontSize: 15, lineHeight: 22, flex: 1, textAlign: 'right' }}>{children}</Text>
+    {typeof children === 'string' ? <Text style={{ color: colors.ink, fontSize: 15, lineHeight: 22, flex: 1, textAlign: 'right' }}>{children}</Text> : <View style={{ flex: 1, alignItems: 'flex-end' }}>{children}</View>}
   </View>;
 }
 
@@ -197,10 +197,14 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
       </View>
     </View>
     {active ? <MarketSection title="Order details">
-      <View style={{ gap: 6 }}>
-        <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{voice === 'we' ? 'Dishes' : 'Items'}</Text>
-        {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} style={{ gap: 4 }}><Text style={{ color: colors.ink, fontSize: 15, lineHeight: 22 }}>{`${line.quantity} × ${line.name}`}</Text><DietMark diet={line.diet} /></View>)}
-      </View>
+      <DetailRow first label={voice === 'we' ? 'Dishes' : 'Items'}>
+        <View style={{ gap: 12, alignItems: 'flex-end' }}>
+          {order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} role="group" accessibilityLabel={`${line.quantity} × ${line.name}`} style={{ gap: 2, alignItems: 'flex-end' }}>
+            <Text style={{ flexShrink: 1, color: colors.ink, fontSize: 15, lineHeight: 22, textAlign: 'right' }}>{`${line.quantity} × ${line.name}`}</Text>
+            <DietMark diet={line.diet} compact />
+          </View>)}
+        </View>
+      </DetailRow>
       <DetailRow label="Deliver to">{addressTitle ? `${addressTitle} · ${address}` : address}</DetailRow>
       <DetailRow label="Payment">{`${formatINRFromPaise(order.totalPaise)} cash on delivery`}</DetailRow>
     </MarketSection> : <Lines order={order} />}
