@@ -24,7 +24,7 @@ test('pill and chip text stays readable on its background in both themes (WCAG 1
   for (const theme of Object.values(marketThemes)) {
     const c = theme.colors;
     const pairs: [string, string, string][] = [
-      ['brand pill', c.primary, c.tint], ['positive pill', c.positive, c.positiveTint], ['neutral pill', c.ink, c.neutralTint],
+      ['brand pill', c.primary, c.tint], ['info pill (Accepted)', c.info, c.infoTint], ['positive pill', c.positive, c.positiveTint], ['neutral pill', c.ink, c.neutralTint],
       ['quiet pill', c.muted, c.neutralTint], ['outline pill', c.muted, c.surface], ['danger pill', c.danger, c.background],
       ['selected chip', c.surface, c.ink], ['chip', c.ink, c.surface], ['chip count', c.primary, c.tint], ['selected chip count', c.onPrimary, c.primary],
     ];

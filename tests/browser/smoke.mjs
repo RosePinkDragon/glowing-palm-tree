@@ -256,6 +256,10 @@ const prepareCart = async (page, add = true) => {
   await focused(admin, 'Order AMS-2026110001');
   await admin.getByRole('button', { name: 'Cancel order', exact: true }).click();
   await focused(admin, 'Cancel order AMS-2026110001?');
+  { // #53 p6: the full order number stays on one line in the cancel title
+    const lines = await admin.getByText('AMS-2026110001?', { exact: true }).filter({ visible: true }).evaluate(el => el.getClientRects().length);
+    assert.equal(lines, 1, 'cancel title keeps the order number unbroken');
+  }
   await admin.getByRole('button', { name: 'Keep the order', exact: true }).click();
   await focused(admin, 'Cancel order');
   assert.equal(mutations.length, 0);
@@ -268,7 +272,7 @@ const prepareCart = async (page, add = true) => {
   await admin.getByText('Order AMS-2026110001 updated to Cancelled.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(mutations[1].p_status, 'cancelled');
   assert.equal(await admin.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0, 'cancelled orders have no actions');
-  await admin.getByRole('button', { name: 'Close', exact: true }).click();
+  await admin.getByRole('button', { name: 'Back', exact: true }).click();
   await admin.getByRole('button', { name: 'Menu', exact: true }).click();
   await admin.getByRole('button', { name: 'Add dish', exact: true }).click();
   const addDialog = admin.getByRole('dialog');
@@ -519,7 +523,7 @@ const prepareCart = async (page, add = true) => {
       console.log(`PASS: ${slug} owner shell brand logo/fonts isolation and responsive bottom tabs`);
       await adminPage.getByRole('button', { name: `Details for ${historical.order_number}`, exact: true }).click();
       await assertMarks(adminPage);
-      await adminPage.getByRole('button', { name: 'Close', exact: true }).click();
+      await adminPage.getByRole('button', { name: 'Back', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Menu', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Edit Diet fixture 4', exact: true }).click();
       await dialog.getByText('Not classified yet. No diet mark is shown to customers.', { exact: true }).waitFor();
@@ -896,7 +900,7 @@ const prepareCart = async (page, add = true) => {
       assert.equal(await panel().getByRole('link', { name: /^Call /, exact: true }).count(), 0, 'no Call for an invalid phone');
       assert.equal(await panel().getByRole('link', { name: 'Open in Maps', exact: true }).count(), 0, 'no Maps without a pin');
       await panel().getByRole('button', { name: 'Accept order', exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
       await page.waitForFunction(label => document.activeElement?.getAttribute('aria-label') === label, `Details for ${ref(0x1A6)}`);
       // Full details for an accepted order: contact, links, bill, history with the owner snapshot.
       await page.getByRole('button', { name: 'Accepted, 3', exact: true }).click();
@@ -937,7 +941,7 @@ const prepareCart = async (page, add = true) => {
       await view.getByRole('status', { name: 'Status: Delivered' }).waitFor();
       await view.getByText('This order was delivered. No further actions.', { exact: true }).waitFor();
       assert.equal(await page.getByRole('button', { name: /^(Mark delivered|Cancel order|Start preparing|Accept order)$/ }).filter({ visible: true }).count(), 0, 'terminal orders have no actions');
-      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
       await page.getByRole('button', { name: 'Done', exact: true }).waitFor();
       await detailsButton(0x1A3).waitFor();
       await focused(page, `Details for ${ref(0x1A3)}`); // the card moved to Done; focus still returns to it
@@ -974,7 +978,7 @@ const prepareCart = async (page, add = true) => {
       assert.deepEqual(rpcFor(0x1A4), [{ p_order_id: ids(0x1A4), p_status: 'cancelled', p_expected_version: 1 }]);
       await page.getByRole('status', { name: 'Status: Cancelled' }).waitFor();
       await page.getByText('This order was cancelled. No further actions.', { exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
       // A retry after a lost response: the order is already cancelled, so the stale cancel is refused, nothing is cancelled twice, and the screen shows Cancelled.
       await page.getByRole('button', { name: 'New, 3', exact: true }).click();
       await detailsButton(0x1A7).click();
@@ -985,14 +989,14 @@ const prepareCart = async (page, add = true) => {
       await page.getByRole('status', { name: 'Status: Cancelled' }).waitFor();
       assert.deepEqual(rpcFor(0x1A7).map(call => call.p_status), ['cancelled']);
       assert.equal(await page.getByRole('button', { name: 'Cancel order', exact: true }).count(), 0);
-      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await detailsButton(0x1A5).click();
       await page.getByRole('dialog').first().getByText('This order was delivered. No further actions.', { exact: true }).waitFor();
       assert.equal(await page.getByText(new RegExp(`^Order ${ref(0x1A7)} was not updated`)).filter({ visible: true }).count(), 0, "another order's notice is not shown here");
       await page.screenshot({ path: `/tmp/review101/${slug}-details-wide.png` });
-      await page.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
       assert.deepEqual(unhandled, []); assert.deepEqual(errs, []);
       console.log(`PASS: ${slug} owners' Orders queue cards, accept, in-flight, conflict, empty, live badge, single subscription and Paused/Reconnect, plus order details (#101): contact/maps/bill/history, version-checked steps, conflict reload, cancel sheet, terminal state`);
       // Today tab (#61): India-time days, date-scoped labels, current outstanding, stale responses, error + Retry.
