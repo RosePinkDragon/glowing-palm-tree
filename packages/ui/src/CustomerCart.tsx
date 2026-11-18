@@ -94,7 +94,7 @@ export function CartPage(p: CartPageProps) {
   const keepAboveBar = (event: { target: unknown }) => {
     if (Platform.OS !== 'web') return;
     const target = event.target as HTMLElement | null, pinned = bar.current as unknown as HTMLElement | null;
-    if (!target?.getBoundingClientRect || !pinned?.getBoundingClientRect || pinned.contains(target)) return;
+    if (!target?.getBoundingClientRect || !pinned?.getBoundingClientRect || pinned.contains(target) || !target.matches(':focus-visible')) return; // pointer focus must not scroll: it would move the control under the press
     const gap = target.getBoundingClientRect().bottom - pinned.getBoundingClientRect().top + 16;
     if (gap <= 0) return;
     let parent = target.parentElement;

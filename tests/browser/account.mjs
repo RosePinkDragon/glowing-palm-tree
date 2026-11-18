@@ -206,7 +206,8 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   await page.locator('#regular-menu').getByText('Account fixture meal', { exact: true }).waitFor();
   await page.goForward(); await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Add one Account fixture meal', exact: true }).click();
-  await page.getByRole('group', { name: /Account fixture meal: .* × 3 = / }).waitFor();
+  // The cart page has no separate cart bar; wait until the added dish is saved (three in total).
+  for (let i = 0; i < 100 && (await saved()).lines.reduce((total, line) => total + line.quantity, 0) !== 3; i++) await page.waitForTimeout(100);
   current = await saved(); assert.equal(current.lines[0].item.pricePaise, 17500, 'cached-menu reconciliation cannot restore the old price after import');
   await detail();
   const existing = await raw(); await choice();
