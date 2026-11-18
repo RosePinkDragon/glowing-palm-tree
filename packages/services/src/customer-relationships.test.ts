@@ -5,7 +5,9 @@ import { createMarketServices, ServiceError } from './index.ts';
 const user = '35200000-0000-4000-8000-000000000001', sid = '35200000-0000-4000-9000-000000000001';
 const business = '10000000-0000-4000-8000-000000000001', otherBusiness = '10000000-0000-4000-8000-000000000002';
 const generation = '35200000-0000-4000-a000-000000000001';
-const jwt = (id = user, session = sid) => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: id, session_id: session, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`;
+// Memoized per claim set so `exp` (seconds) is fixed once; rebuilding across a second boundary must not change the pinned token.
+const jwtCache = new Map<string, string>();
+const jwt = (id = user, session = sid) => { const key = `${id}|${session}`; let token = jwtCache.get(key); if (!token) { token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: id, session_id: session, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.sig`; jwtCache.set(key, token); } return token; };
 const code = (value: string) => (error: unknown) => error instanceof ServiceError && error.code === value;
 
 type Service = ReturnType<typeof createMarketServices>;
