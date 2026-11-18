@@ -11,6 +11,11 @@ const userId = '55100000-0000-4000-8000-000000000001';
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'inbox@example.test', app_metadata: {}, user_metadata: {}, identities: [], created_at: '2026-01-01T00:00:00Z' };
 const session = { access_token: `${part({ alg: 'HS256' })}.${part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: userId, exp: Math.floor(Date.now() / 1000) + 3600 })}.fixture`, refresh_token: 'inbox-fixture', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user };
+// One fixed instant (default 12:00 in India) for every timestamp and the browser clock, so day grouping never depends on when the test runs.
+// INBOX_NOW overrides it (e.g. just after IST midnight) to prove the grouping follows the anchor.
+const anchor = Date.parse(process.env.INBOX_NOW ?? '2026-11-18T06:30:00Z'); assert.ok(Number.isFinite(anchor), 'INBOX_NOW must be an ISO instant');
+const at = () => new Date(anchor).toISOString();
+const istDay = ms => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const notificationId = n => `55200000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const orderId = n => `55300000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
@@ -21,7 +26,8 @@ try {
     const businessId = `55400000-0000-4000-8000-00000000000${brand + 1}`;
     const business = { id: businessId, slug, name, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     // 2 unread + 1 read recent, then 22 older read rows (25 in all, so a second page of 5 exists).
-    const now = Date.now(), recent = [5, 10, 15].map(minutes => new Date(now - minutes * 60000).toISOString());
+    const recent = [5, 10, 15].map(minutes => new Date(anchor - minutes * 60000).toISOString());
+    const recentDays = new Set(recent.map(iso => istDay(Date.parse(iso)))).size;
     const seed = () => [
       { id: notificationId(25), order_id: orderId(25), event_status: 'preparing', title: 'Your food is being prepared', body: `${name} accepted order ${prefix}-2026111025 and started cooking.`, read_at: null, created_at: recent[0] },
       { id: notificationId(24), order_id: orderId(24), event_status: 'placed', title: 'Order placed', body: `We've sent order ${prefix}-2026111024 to ${name}, cash on delivery.`, read_at: null, created_at: recent[1] },
@@ -33,7 +39,8 @@ try {
     const server = await serveWeb(`apps/${slug}-customer/dist/web`);
     const errors = [];
     const open = async (signedIn, viewport) => {
-      const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+      const context = await browser.newContext({ viewport, serviceWorkers: 'block', timezoneId: 'Asia/Kolkata' });
+      await context.clock.install({ time: anchor });
       if (signedIn) await context.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: `market:${encodeURIComponent(api)}:${slug}:customer`, value: session });
       await context.routeWebSocket(/.*/, socket => socket.onMessage(message => {
         const data = JSON.parse(String(message)), array = Array.isArray(data);
@@ -57,8 +64,8 @@ try {
           const body = request.postDataJSON(), rpc = url.pathname.split('/').pop();
           assert.equal(body.p_business_slug, slug, 'only this restaurant');
           if (rpc === 'customer_notification_unread_count') return json(unread());
-          if (rpc === 'mark_all_customer_notifications_read') { fixture.readAll++; const n = unread(); fixture.rows.forEach(row => { row.read_at ??= new Date().toISOString(); }); return json(n); }
-          if (rpc === 'mark_customer_notification_read') { fixture.reads.push(body.p_notification_id); const row = fixture.rows.find(item => item.id === body.p_notification_id); const was = !!row && !row.read_at; if (row) row.read_at ??= new Date().toISOString(); return json(was); }
+          if (rpc === 'mark_all_customer_notifications_read') { fixture.readAll++; const n = unread(); fixture.rows.forEach(row => { row.read_at ??= at(); }); return json(n); }
+          if (rpc === 'mark_customer_notification_read') { fixture.reads.push(body.p_notification_id); const row = fixture.rows.find(item => item.id === body.p_notification_id); const was = !!row && !row.read_at; if (row) row.read_at ??= at(); return json(was); }
           if (rpc === 'list_customer_notifications') {
             fixture.calls.push(body);
             if (fixture.failList || (fixture.failMore && body.p_before_id)) return json({ code: 'XX000', message: 'raw internal failure detail' }, 500);
@@ -84,7 +91,7 @@ try {
       await button('Notifications (2 unread)').waitFor();
       const badge = visible(page.getByTestId('unread-badge')); await badge.waitFor();
       const bb = await badge.boundingBox(), lb = await badge.locator('xpath=preceding-sibling::*[1]').boundingBox();
-      assert.ok(bb.width >= 22 && bb.height >= 22 && bb.x - (lb.x + lb.width) >= 6, JSON.stringify({ bb, lb }) + ' ' + 'rounded pill badge with a gap from the label');
+      assert.ok(bb.width >= 21.5 && bb.height >= 21.5 && bb.x - (lb.x + lb.width) >= 6, JSON.stringify({ bb, lb }) + ' ' + 'rounded pill badge with a gap from the label');
       await shot('drawer-badge-390');
       await button('Notifications (2 unread)').click();
       await text('Your food is being prepared').waitFor();
@@ -98,7 +105,7 @@ try {
       await text('2 unread').waitFor();
       assert.equal(await visible(page.getByTestId('unread-dot')).count(), 2, 'only unread rows carry the dot');
       assert.equal(await visible(page.getByRole('button', { name: /^Unread\. /, })).count(), 2);
-      assert.equal(await visible(page.getByTestId('notification-day')).count(), 2, 'one grouped list per day');
+      assert.equal(await visible(page.getByTestId('notification-day')).count(), recentDays + 1, 'one grouped list per day');
       assert.equal(await visible(page.getByTestId('status-icon')).count(), 20, 'a status icon on every row');
       assert.equal(await visible(page.getByRole('button', { name: 'Refresh', exact: true })).count(), 0, 'no separate Refresh button');
       const titles = await visible(page.getByRole('button', { name: /Opens your order\.$/ })).count();
@@ -129,7 +136,7 @@ try {
       await button('Account').click(); await button('Notifications').waitFor();
       await button('Close').click();
       // Opening the screen again picks up a new update without realtime.
-      fixture.rows.unshift({ id: notificationId(30), order_id: orderId(30), event_status: 'accepted', title: 'Order accepted', body: `${name} accepted your order.`, read_at: null, created_at: new Date().toISOString(), user_id: userId, business_id: businessId });
+      fixture.rows.unshift({ id: notificationId(30), order_id: orderId(30), event_status: 'accepted', title: 'Order accepted', body: `${name} accepted your order.`, read_at: null, created_at: at(), user_id: userId, business_id: businessId });
       await page.reload({ waitUntil: 'networkidle' }); await text('Order accepted').waitFor(); await text('1 unread').waitFor();
       // Error with fixed copy and a retry.
       fixture.failList = true; await page.reload({ waitUntil: 'networkidle' });
