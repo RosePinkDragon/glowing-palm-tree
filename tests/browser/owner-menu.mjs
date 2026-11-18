@@ -122,6 +122,13 @@ try {
       assert.deepEqual(await order(['Fish thali', 'Veg thali', 'Chicken thali']), ['Fish thali', 'Veg thali', 'Chicken thali']);
       await page.getByRole('heading', { name: 'Menu', exact: true }).waitFor();
       assert.equal(await button('Add dish').count(), 1, 'Add dish sits in the Menu header');
+      // #114 p. 8: amber featured badge, subtly tinted unavailable row, brand heading face for categories.
+      const paint = locator => locator.evaluate(el => { for (let node = el; node; node = node.parentElement) { const color = getComputedStyle(node).backgroundColor; if (color !== 'rgba(0, 0, 0, 0)') return color; } return ''; });
+      assert.equal(await paint(page.getByText(feature, { exact: true }).first()), 'rgb(255, 241, 214)', 'featured badge is amber');
+      assert.equal(await paint(button('Edit Kothimbir vadi')), brand ? 'rgb(243, 244, 236)' : 'rgb(247, 241, 236)', 'unavailable row is subtly tinted');
+      assert.equal(await paint(button('Edit Veg thali')), 'rgb(255, 255, 255)', 'available rows stay white');
+      const family = locator => locator.evaluate(el => getComputedStyle(el).fontFamily);
+      assert.notEqual(await family(page.getByRole('heading', { name: 'Thalis', exact: true })), await family(text('Fish thali')), 'category headings use the brand heading face, dish names the body face');
       await page.screenshot({ path: `${shots}/${slug}-owner-menu.png` });
       await page.setViewportSize({ width: 390, height: 2000 }); await page.screenshot({ path: `${shots}/${slug}-owner-menu-full.png` }); await page.setViewportSize({ width: 390, height: 844 });
 
@@ -224,6 +231,12 @@ try {
       assert.equal(await dialog.getByRole('switch', { name: feature, exact: true }).isChecked(), true);
       assert.equal(await dialog.getByRole('switch', { name: 'Sample dish', exact: true }).isChecked(), false);
       assert.equal(await dialog.getByLabel(/order within|category order|^order$/i).count(), 0, 'no numeric order field');
+      // #114 p. 9: lighter field outline, inset toggle dividers, Delete with a trash icon.
+      assert.equal(await dialog.getByLabel('Dish name', { exact: true }).evaluate(el => getComputedStyle(el).borderTopColor), brand ? 'rgb(120, 141, 135)' : 'rgb(143, 124, 117)', 'field outline uses the lighter token');
+      assert.equal(await dialog.locator('div[aria-hidden="true"]').evaluateAll(els => els.some(el => el.getBoundingClientRect().height === 1 && getComputedStyle(el).marginLeft === '16px')), true, 'toggle-row dividers are inset');
+      assert.equal(await dialog.getByRole('button', { name: 'Delete this dish', exact: true }).locator('svg').count(), 1, 'Delete has a trash icon');
+      assert.equal(await dialog.getByRole('button', { name: 'Close', exact: true }).count(), 1, 'the editor keeps its X close control');
+      assert.ok((await dialog.getByRole('button', { name: 'Delete this dish', exact: true }).boundingBox()).height >= 44, 'Delete keeps a 44px target');
       await page.screenshot({ path: `${shots}/${slug}-owner-edit-dish.png` });
       await page.setViewportSize({ width: 390, height: 1400 }); await page.screenshot({ path: `${shots}/${slug}-owner-edit-dish-full.png` }); await page.setViewportSize({ width: 390, height: 844 });
       await dialog.getByLabel('Price in rupees', { exact: true }).fill('1.234'); await dialog.getByLabel('Dish name', { exact: true }).fill(' ');

@@ -6,7 +6,7 @@ import { MarketButton, MarketCard, MarketStatus, MarketText } from './components
 import { AddDishButton, AdminMenu, type AdminMenuAddDish } from './AdminMenu';
 import { OrdersConnectionPill, OwnerOrderFilters, OwnerOrders, useOwnerOrders } from './OwnerOrders';
 import { OwnerScreen, OwnerTabBar } from './OwnerShell';
-import { OwnerToday } from './OwnerToday';
+import { OwnerToday, OwnerTodayFilters, useOwnerTodayDay } from './OwnerToday';
 import { defaultOwnerTab, ownerTabLabel, selectOwnerTab, type OwnerTabId } from './owner-navigation';
 import { useMarketTheme } from './theme';
 import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
@@ -25,6 +25,7 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   const [tab, setTab] = useState<OwnerTabId>(defaultOwnerTab);
   const [addDish, setAddDish] = useState<AdminMenuAddDish | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const todayDay = useOwnerTodayDay(tab === 'today');
   // One order list and realtime subscription for every tab, so the Orders badge stays current.
   const queue = useOwnerOrders(services, access === 'allowed', onNewOrders);
   useEffect(() => {
@@ -45,12 +46,12 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   if (detailsOpen && tab === 'settings') return <OwnerRestaurantDetails services={services} onBack={() => setDetailsOpen(false)} />;
   return <View style={{ flex: 1 }}>
     <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}
-      headerExtra={tab === 'orders' ? <OwnerOrderFilters queue={queue} /> : undefined}
+      headerExtra={tab === 'orders' ? <OwnerOrderFilters queue={queue} /> : tab === 'today' ? <OwnerTodayFilters day={todayDay} /> : undefined}
       band={tab === 'orders' ? ordersSlot ?? <OwnerOrderingSwitch services={services} /> : undefined}>
       {banner}
       {tab === 'orders' ? <OwnerOrders queue={queue} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
-      {tab === 'today' ? <OwnerToday services={services} /> : null}
+      {tab === 'today' ? <OwnerToday services={services} day={todayDay} /> : null}
       {tab === 'settings' ? <OwnerSettings market={market} onOpenRestaurantDetails={() => setDetailsOpen(true)} /> : null}
     </OwnerScreen>
     <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} badges={{ orders: queue.newCount }} />
