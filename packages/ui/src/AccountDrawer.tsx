@@ -5,7 +5,7 @@ import { MarketButton, MarketText } from './components';
 import { CustomerHistory, type ReorderAction } from './CustomerOrders';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
-import { BrandLogo } from './OwnerShell';
+import { BrandLogo } from './BrandLogo';
 
 type Market = ReturnType<typeof useMarket>;
 export function AccountDrawer({ open, close, market, go, signOut, onReorder, covered }: { open: boolean; close: (restore?: boolean) => void; market: Market; go: (path: string) => void; signOut: () => Promise<void>; onReorder: ReorderAction; covered: boolean }) {
@@ -58,11 +58,11 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
           <View style={{ paddingHorizontal: 20, paddingBottom: 20, gap: 8, backgroundColor: ammu ? colors.primary : colors.band }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => close()} style={{ minHeight: 48, minWidth: 48, justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>×</Text></Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Help" onPress={() => navigate('/help')} style={{ minHeight: 48, paddingHorizontal: 16, justifyContent: 'center', marginLeft: 'auto' }}><Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Help</Text></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Help" onPress={() => navigate('/help')} style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', marginLeft: 'auto', borderRadius: 999, borderWidth: 1, borderColor: ammu ? 'transparent' : colors.bandAccent, backgroundColor: ammu ? 'rgba(255,255,255,0.14)' : 'transparent' }}><Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Help</Text></Pressable>
               <Pressable ref={optionTrigger} accessibilityRole="button" accessibilityLabel="Account options" accessibilityState={{ expanded: options }} onPress={() => setOptions(value => !value)} style={{ minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 26 }}>⋮</Text></Pressable>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-              <View accessible={false} style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 1, borderColor: colors.onPrimary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: colors.onPrimary, fontSize: 22 }}>{initials || '◯'}</Text></View>
+              <View testID="account-avatar" accessible={false} aria-hidden style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 1, borderColor: ammu ? colors.onPrimary : colors.bandAccent, alignItems: 'center', justifyContent: 'center' }}>{initials ? <Text style={{ color: ammu ? colors.onPrimary : colors.bandAccent, fontSize: 22 }}>{initials}</Text> : null}</View>
               <View style={{ flex: 1, gap: 4 }}><Text ref={title} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ color: colors.onPrimary, fontSize: 23, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' }) }}>{fullName || 'Your account'}</Text>
               <Text style={{ color: colors.onPrimary, fontSize: 14 }}>{user?.phone || 'Phone not added'}</Text></View>
             </View>
@@ -77,9 +77,9 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
             </View>
             {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
             <CustomerHistory market={market} go={navigate} onReorder={onReorder} drawer />
-            <MarketButton label={busy ? 'Logging out…' : 'Log out'} variant="secondary" disabled={busy} onPress={() => void logout()} />
             <MarketButton label="Browse menu" variant="secondary" onPress={() => navigate('/')} />
-            <View style={{ alignItems: 'center', gap: 8, paddingTop: 8 }}><BrandLogo height={52} /><MarketText variant="muted">{name} app</MarketText></View>
+            <MarketButton label={busy ? 'Logging out…' : 'Log out'} variant="secondary" disabled={busy} onPress={() => void logout()} />
+            <View testID="account-brand-footer" style={{ alignItems: 'center', gap: 8, paddingTop: 8 }}><BrandLogo height={52} /><MarketText variant="muted">{name} app</MarketText></View>
           </View>
         </ScrollView>
       </Animated.View>

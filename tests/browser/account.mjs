@@ -307,15 +307,6 @@ const assertDrawerTargets = async page => {
   }));
   assert.deepEqual(tooSmall, [], 'drawer controls meet the 44px target');
 };
-const scrollDrawer = async (page, bottom) => {
-  await page.getByRole('button', { name: 'Browse menu', exact: true }).evaluate((node, bottom) => {
-    let parent = node.parentElement;
-    while (parent && (!/(auto|scroll)/.test(getComputedStyle(parent).overflowY) || parent.scrollHeight <= parent.clientHeight)) parent = parent.parentElement;
-    if (!parent) throw new Error('Drawer scroll container not found');
-    parent.scrollTop = bottom ? parent.scrollHeight : 0;
-  }, bottom);
-  await page.waitForTimeout(100);
-};
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir('dist/browser', { recursive: true });
 try {
@@ -391,41 +382,6 @@ try {
       Storage.prototype.setItem = function(key, value) { if (key.startsWith('market:cart:') && window.__failCartWrites) throw new DOMException('Synthetic cart storage failure', 'QuotaExceededError'); return set.call(this, key, value); };
     });
     try {
-      if (process.env.DRAWER_EVIDENCE) {
-        const page = await context.newPage();
-        await page.goto(server.url, { waitUntil: 'networkidle' });
-        await page.getByRole('button', { name: 'Account', exact: true }).click();
-        await page.getByLabel('Email', { exact: true }).fill(user.email);
-        await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-        await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-        await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
-        await page.getByRole('button', { name: 'Account', exact: true }).click();
-        await page.getByText('20 orders loaded', { exact: true }).waitFor();
-        for (const width of [390, 1280]) {
-          await page.setViewportSize({ width, height: 844 }); await settledDrawer(page); await scrollDrawer(page, false);
-          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-orders-${width}.png` });
-          const initialY = await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y);
-          await scrollDrawer(page, true);
-          await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).scrollIntoViewIfNeeded();
-          assert.ok(await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y) < initialY, 'orders footer capture scrolls the drawer');
-          assert.ok(await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), 'orders footer is visible');
-          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-orders-lower-${width}.png` });
-        }
-        emptyHistory = true;
-        await page.getByRole('button', { name: 'Refresh orders', exact: true }).click();
-        await page.getByText('No orders yet', { exact: true }).waitFor();
-        for (const width of [390, 1280]) {
-          await page.setViewportSize({ width, height: 844 }); await settledDrawer(page); await scrollDrawer(page, false);
-          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-empty-${width}.png` });
-          const initialY = await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y);
-          await scrollDrawer(page, true);
-          await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).scrollIntoViewIfNeeded();
-          assert.ok(await page.getByText('Phone not added', { exact: true }).evaluate(node => node.getBoundingClientRect().y) < initialY, 'empty footer capture scrolls the drawer');
-          assert.ok(await page.getByRole('dialog').getByText(process.env.DRAWER_EVIDENCE === 'before' ? business.name : `${business.name} app`, { exact: true }).evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), 'empty footer is visible');
-          await page.screenshot({ path: `dist/browser/${process.env.DRAWER_EVIDENCE}-${slug}-empty-lower-${width}.png` });
-        }
-        assert.deepEqual(errors, []); continue;
-      }
       if (process.env.SUPPORT_ONLY === '1') {
         const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
         try { await supportScenarios({ page, context, server, slug, rows, fixture, queries }); }
@@ -448,6 +404,21 @@ try {
       await page.getByLabel('Email', { exact: true }).waitFor();
       assert.equal(new URL(page.url()).pathname, '/login');
       assert.equal(await page.getByText('Past orders', { exact: true }).count(), 0);
+      fixture.authSession = { ...session, user: { ...user, user_metadata: { full_name: 'Rohan Sawant' } } };
+      await page.getByLabel('Email', { exact: true }).fill(user.email);
+      await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
+      await page.getByRole('heading', { name: 'Rohan Sawant', exact: true }).waitFor();
+      const avatar = page.getByTestId('account-avatar');
+      assert.equal(await avatar.innerText(), 'RS', 'avatar uses the customer’s initials');
+      const avatarStyle = await avatar.evaluate(node => { const style = getComputedStyle(node); const rect = node.getBoundingClientRect(); return { width: rect.width, height: rect.height, radius: parseFloat(style.borderRadius), border: style.borderTopColor }; });
+      assert.equal(avatarStyle.width, 60); assert.equal(avatarStyle.height, 60); assert.equal(avatarStyle.radius, 30);
+      assert.equal(avatarStyle.border, brand ? 'rgb(198, 172, 112)' : 'rgb(255, 255, 255)');
+      await page.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click();
+      fixture.authSession = null;
+      await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByLabel('Email', { exact: true }).fill(user.email);
       await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -455,6 +426,21 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
       await page.getByText('20 orders loaded', { exact: true }).waitFor();
+      assert.equal(await avatar.innerText(), '', 'missing name leaves an empty ring');
+      assert.equal(await avatar.evaluate(node => getComputedStyle(node).borderTopColor), avatarStyle.border);
+      const helpStyle = await page.getByRole('dialog').getByRole('button', { name: 'Help', exact: true }).evaluate(node => { const style = getComputedStyle(node); return { radius: parseFloat(style.borderRadius), background: style.backgroundColor, border: style.borderTopColor }; });
+      assert.ok(helpStyle.radius >= 24, 'header Help is a pill');
+      assert.equal(helpStyle.background, brand ? 'rgba(0, 0, 0, 0)' : 'rgba(255, 255, 255, 0.14)');
+      if (brand) assert.equal(helpStyle.border, 'rgb(198, 172, 112)');
+      const shortcuts = await Promise.all(['Saved addresses', 'Notifications', 'Help & support'].map(label => page.getByRole('dialog').getByRole('button', { name: label, exact: true }).boundingBox()));
+      assert.ok(shortcuts.every(Boolean));
+      if (!brand) {
+        assert.ok(shortcuts.every(rect => Math.abs(rect.y - shortcuts[0].y) < 1), 'Ammu shortcuts share a row at 390px');
+        assert.ok(shortcuts[0].x + shortcuts[0].width <= shortcuts[1].x && shortcuts[1].x + shortcuts[1].width <= shortcuts[2].x, 'Ammu shortcuts sit side by side');
+      } else {
+        assert.ok(shortcuts[0].y + shortcuts[0].height <= shortcuts[1].y && shortcuts[1].y + shortcuts[1].height <= shortcuts[2].y, 'Kokani shortcuts form a vertical panel');
+      }
+      assert.equal(await page.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).evaluate(node => node.nextElementSibling?.getAttribute('data-testid')), 'account-brand-footer', 'brand footer directly follows logout');
       for (const width of [390, 1280]) {
         await page.setViewportSize({ width, height: 844 }); await settledDrawer(page);
         await assertDrawerTargets(page);
@@ -478,7 +464,7 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.waitForFunction(() => document.activeElement?.textContent === 'Your account');
       await page.keyboard.press('Shift+Tab');
-      await page.waitForFunction(() => document.activeElement?.textContent === 'Browse menu');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Log out');
       await page.keyboard.press('Tab'); await page.waitForFunction(() => document.activeElement?.textContent === '×');
       await page.keyboard.press('Escape'); await page.waitForFunction(() => document.activeElement?.textContent === 'Account');
       await page.getByRole('button', { name: 'Account', exact: true }).click();

@@ -8,7 +8,7 @@ import { callLink } from './admin-model';
 import { OrderStatusView, orderName, shortTime, type ReorderAction } from './CustomerOrderStatus';
 import { DietMark } from './DietMark';
 import { useMarketFonts, useMarketTheme } from './theme';
-import Svg, { Circle, Path } from 'react-native-svg';
+import { MarketIcon } from './MarketIcons';
 import { restorePanelFocus } from './AccessiblePanel';
 
 type Market = ReturnType<typeof useMarket>;
@@ -53,7 +53,7 @@ export function CustomerHistory({ market, go, onReorder, drawer = false }: { mar
     {market.ordersError ? <MarketStatus kind="error" title="Could not load your orders" message={market.ordersError} action={<MarketButton label="Retry orders" onPress={() => void market.refreshOrders()} />} /> : null}
     {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} onReorder={onReorder} compact={drawer} />)}
     {market.ordersReady && !market.orders.length ? drawer ? <View style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: colors.inputBorder, borderRadius: 16, padding: 24, alignItems: 'center', gap: 14, backgroundColor: colors.surface }}>
-      <View accessible={false} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}><Svg aria-hidden width={32} height={32} viewBox="0 0 32 32"><Circle cx={16} cy={16} r={8} fill="none" stroke={colors.primary} strokeWidth={2} /><Circle cx={16} cy={16} r={5} fill="none" stroke={colors.primary} strokeWidth={2} /><Path d="M4 5v8m3-8v8m-3-3h3m-1.5 3v13M27 5v21M27 5c-3 2-4 6-4 9h4" fill="none" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" /></Svg></View>
+      <View accessible={false} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}><MarketIcon name="plate" color={colors.primary} size={32} /></View>
       <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 22, textAlign: 'center', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' }) }}>No orders yet</Text>
       <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23, textAlign: 'center' }}>{`Your orders from ${name} will appear here.`}</Text>
       <MarketButton label="Browse the menu" onPress={() => go('/')} />

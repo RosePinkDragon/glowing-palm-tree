@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Path, SvgXml } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import type { BusinessSlug } from '@market/core';
 import { useBrandFonts } from './brand-fonts';
-import { brandLogos } from './brand-logos';
+import { BrandLogo } from './BrandLogo';
 import { formatBadgeCount, ownerTabAccessibilityLabel, ownerTabs, type OwnerTabId } from './owner-navigation';
 import { MarketFontsProvider, useMarketFonts, useMarketTheme } from './theme';
 
@@ -16,17 +16,6 @@ export function OwnerFrame({ children }: { children: ReactNode }) {
   const { businessId, colors } = useMarketTheme();
   const fonts = useBrandFonts(businessId);
   return <SafeAreaProvider><MarketFontsProvider value={fonts}><View style={{ flex: 1, backgroundColor: colors.background }}>{children}</View></MarketFontsProvider></SafeAreaProvider>;
-}
-
-/** The active restaurant's original logo. Pass a label when no adjacent text names the restaurant. */
-export function BrandLogo({ height, label }: { height: number; label?: string }) {
-  const { businessId } = useMarketTheme();
-  const logo = brandLogos[businessId];
-  const width = Math.round(height * logo.width / logo.height);
-  const art = <SvgXml xml={logo.xml} width={width} height={height} />;
-  return label
-    ? <View accessible accessibilityRole="image" accessibilityLabel={label} style={{ width, height }}>{art}</View>
-    : <View {...hidden} style={{ width, height }}>{art}</View>;
 }
 
 export function useOwnerHorizontalPadding() { return useWindowDimensions().width >= 760 ? 40 : 20; }
