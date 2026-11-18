@@ -99,6 +99,19 @@ create table customer_lifecycle_private.accounts (
 alter table customer_lifecycle_private.accounts enable row level security;
 revoke all on customer_lifecycle_private.accounts from public, anon, authenticated, service_role;
 
+-- Completed atomic leave receipts fence retries across explicit rejoins. No client table access.
+create table customer_lifecycle_private.leave_requests (
+  customer_id uuid not null references auth.users(id) on delete cascade,
+  request_id uuid not null,
+  business_id uuid not null references public.businesses(id),
+  generation uuid not null,
+  started_at timestamptz not null,
+  completed_at timestamptz not null,
+  primary key(customer_id,request_id)
+);
+alter table customer_lifecycle_private.leave_requests enable row level security;
+revoke all on customer_lifecycle_private.leave_requests from public,anon,authenticated,service_role;
+
 create table public.customer_businesses (
   customer_id uuid not null references auth.users(id) on delete cascade,
   business_id uuid not null references public.businesses(id),
@@ -277,7 +290,8 @@ create table public.device_tokens (
 );
 create table public.notification_outbox (
   id uuid primary key default gen_random_uuid(),
-  device_token_id uuid not null references public.device_tokens(id) on delete cascade,
+  -- Completed push audit rows may be detached by leave; pending jobs are deleted first.
+  device_token_id uuid references public.device_tokens(id) on delete cascade,
   order_id uuid not null references public.orders(id) on delete cascade,
   audience text not null check (audience in ('customer','admin')),
   attempts integer not null default 0 check (attempts between 0 and 5),
@@ -620,13 +634,20 @@ begin
      or p_token is null or length(trim(p_token)) = 0 or length(p_token) > 4096 then
     raise exception 'invalid device registration' using errcode='22023';
   end if;
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
   begin session := (auth.jwt()->>'session_id')::uuid;
   exception when others then raise exception 'invalid session' using errcode='42501'; end;
   if session is null then raise exception 'invalid session' using errcode='42501'; end if;
   perform 1 from auth.sessions where id=session and user_id=caller and (not_after is null or not_after > clock_timestamp()) for share;
   if not found then raise exception 'invalid session' using errcode='42501'; end if;
-  select id into business from public.businesses where slug=p_business_slug;
+  if p_audience='customer' then perform customer_lifecycle_private.lock_account(caller); end if;
+  select id into business from public.businesses where slug=p_business_slug for share;
   if business is null then raise exception 'invalid business' using errcode='22023'; end if;
+  if p_audience='customer' and exists(select 1 from public.customer_businesses
+      where customer_id=caller and business_id=business and state <> 'active') then
+    raise exception 'business lifecycle pending or left' using errcode='PT409',detail='BUSINESS_LIFECYCLE_PENDING';
+  end if;
   if p_audience='admin' then
     perform 1 from public.business_memberships where business_id=business and user_id=caller and role='admin' for share;
     if not found then raise exception 'admin membership required' using errcode='42501'; end if;
@@ -644,6 +665,8 @@ returns void language plpgsql security definer set search_path = '' as $$
 declare caller uuid := auth.uid(); session uuid;
 begin
   if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
   begin session := (auth.jwt()->>'session_id')::uuid;
   exception when others then raise exception 'invalid session' using errcode='42501'; end;
   if session is null then raise exception 'invalid session' using errcode='42501'; end if;
@@ -712,6 +735,73 @@ $$;
 revoke all on function customer_lifecycle_private.lock_account(uuid),
   customer_lifecycle_private.join_business(text), public.join_business(text) from public, anon, authenticated, service_role;
 grant execute on function customer_lifecycle_private.join_business(text), public.join_business(text) to authenticated;
+
+-- All destructive work and the receipt commit together. An exception rolls pending state,
+-- cleanup and receipt back. Retrying a completed ID returns its original cutoff/generation.
+create function customer_lifecycle_private.leave_business(p_business_slug text,p_request_id uuid,p_generation uuid)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare caller uuid:=auth.uid(); session uuid; business uuid; relationship public.customer_businesses%rowtype;
+  request customer_lifecycle_private.leave_requests%rowtype; cutoff timestamptz;
+begin
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
+  begin session:=(auth.jwt()->>'session_id')::uuid;
+  exception when invalid_text_representation then raise exception 'invalid session' using errcode='42501'; end;
+  if session is null then raise exception 'invalid session' using errcode='42501'; end if;
+  perform 1 from auth.sessions where id=session and user_id=caller and (not_after is null or not_after>clock_timestamp()) for share;
+  if not found then raise exception 'invalid session' using errcode='42501'; end if;
+  if p_request_id is null or p_generation is null then raise exception 'request and generation required' using errcode='22023',detail='INVALID_LEAVE_REQUEST'; end if;
+  perform customer_lifecycle_private.lock_account(caller);
+  select id into business from public.businesses where slug=p_business_slug for share;
+  if not found then raise exception 'business unavailable' using errcode='22023',detail='INVALID_BUSINESS'; end if;
+  select * into request from customer_lifecycle_private.leave_requests where customer_id=caller and request_id=p_request_id;
+  if found then
+    if request.business_id<>business or request.generation<>p_generation then
+      raise exception 'request identity conflict' using errcode='PT409',detail='LEAVE_REQUEST_CONFLICT';
+    end if;
+  else
+    select * into relationship from public.customer_businesses where customer_id=caller and business_id=business;
+    if not found or relationship.generation<>p_generation or relationship.state='left' then
+      raise exception 'relationship changed' using errcode='PT409',detail='STALE_RELATIONSHIP';
+    end if;
+    if relationship.state='leave_pending' then raise exception 'leave pending' using errcode='PT409',detail='BUSINESS_LIFECYCLE_PENDING'; end if;
+    if not exists(select 1 from public.customer_businesses where customer_id=caller and business_id<>business and state='active') then
+      raise exception 'last restaurant' using errcode='PT409',detail='LAST_BUSINESS';
+    end if;
+    if exists(select 1 from public.orders where customer_id=caller and business_id=business and status not in ('delivered','cancelled')) then
+      raise exception 'finish active orders' using errcode='PT409',detail='ACTIVE_ORDERS';
+    end if;
+    -- clock_timestamp after serialization includes final-transition feed rows committed before us.
+    cutoff:=clock_timestamp();
+    update public.customer_businesses set state='leave_pending' where customer_id=caller and business_id=business;
+    -- All token removers lock token rows before jobs (including dispatcher unregistered and
+    -- cross-user token rotation). Stable order avoids cycles when removing several tokens.
+    perform d.id from public.device_tokens d where d.user_id=caller and d.business_id=business
+      and d.audience='customer' and d.created_at<=cutoff order by d.id for update;
+    -- Preserve completed push audit, but invalidate every pending job/lease with the removed token.
+    update public.notification_outbox q set device_token_id=null from public.device_tokens d
+      where q.device_token_id=d.id and q.completed_at is not null and d.user_id=caller
+        and d.business_id=business and d.audience='customer' and d.created_at<=cutoff;
+    delete from public.notification_outbox q using public.device_tokens d
+      where q.device_token_id=d.id and q.completed_at is null and d.user_id=caller
+        and d.business_id=business and d.audience='customer' and d.created_at<=cutoff;
+    delete from public.device_tokens where user_id=caller and business_id=business and audience='customer' and created_at<=cutoff;
+    perform public.purge_customer_notifications(caller,business,cutoff);
+    -- Never delete: absence means never linked to auto-enrollment. Keep the generation tombstone.
+    update public.customer_businesses set state='left' where customer_id=caller and business_id=business;
+    insert into customer_lifecycle_private.leave_requests(customer_id,request_id,business_id,generation,started_at,completed_at)
+      values(caller,p_request_id,business,p_generation,cutoff,clock_timestamp()) returning * into request;
+  end if;
+  return jsonb_build_object('customer_id',caller,'business_id',business,'request_id',request.request_id,
+    'generation',request.generation,'started_at',request.started_at,'completed_at',request.completed_at,'state','left');
+end $$;
+create function public.leave_business(p_business_slug text,p_request_id uuid,p_generation uuid)
+returns jsonb language sql security invoker set search_path='' as $$
+  select customer_lifecycle_private.leave_business(p_business_slug,p_request_id,p_generation)
+$$;
+revoke all on function customer_lifecycle_private.leave_business(text,uuid,uuid),public.leave_business(text,uuid,uuid)
+  from public,anon,authenticated,service_role;
+grant execute on function customer_lifecycle_private.leave_business(text,uuid,uuid),public.leave_business(text,uuid,uuid) to authenticated;
 
 create function public.place_order(p_business_slug text, p_items jsonb, p_delivery jsonb, p_location jsonb, p_idempotency_key uuid, p_accepted_pricing jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -962,9 +1052,15 @@ end $$;
 
 create function public.transition_order(p_order_id uuid, p_status text, p_expected_version integer)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare o public.orders%rowtype; caller uuid := auth.uid(); actor text; step bigint;
+declare o public.orders%rowtype; caller uuid := auth.uid(); actor text; step bigint; target_customer uuid; target_business uuid;
 begin
   if caller is null then raise exception 'authentication required' using errcode='42501'; end if;
+  perform 1 from auth.users where id=caller for key share;
+  if not found then raise exception 'authentication required' using errcode='42501'; end if;
+  select customer_id,business_id into target_customer,target_business from public.orders where id=p_order_id;
+  if not found or not public.is_business_admin(target_business) then raise exception 'order unavailable' using errcode='42501'; end if;
+  perform customer_lifecycle_private.lock_account(target_customer);
+  perform 1 from public.businesses where id=target_business for share;
   select * into o from public.orders where id=p_order_id for update;
   if not found then raise exception 'order unavailable' using errcode='42501'; end if;
   -- Lock the membership so revocation and transition cannot race.
@@ -1144,6 +1240,14 @@ returns boolean language plpgsql security definer set search_path = '' as $$
 declare token_id uuid; n integer;
 begin
   if p_result is null or p_result not in ('sent','retry','unregistered','discard') then raise exception 'invalid result' using errcode='22023'; end if;
+  if p_result='unregistered' then
+    -- Never hold a job while waiting on its token: deletion cascades to every job for it.
+    select device_token_id into token_id from public.notification_outbox
+      where id=p_job_id and lease_id=p_lease_id and completed_at is null and lease_expires_at>clock_timestamp();
+    if not found or token_id is null then return false; end if;
+    perform 1 from public.device_tokens where id=token_id for update;
+    if not found then return false; end if;
+  end if;
   select device_token_id, attempts into token_id,n from public.notification_outbox
     where id=p_job_id and lease_id=p_lease_id and completed_at is null and lease_expires_at > clock_timestamp() for update;
   if not found then return false; end if;
