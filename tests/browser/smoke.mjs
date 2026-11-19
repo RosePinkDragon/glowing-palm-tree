@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
 // Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3); Kokani's a la carte list has category headings at level 3 and dishes at level 4.
@@ -93,7 +94,9 @@ const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: /^(?:Add to cart|Add one )/ }).first().waitFor(); return page; };
 const focused = (page, text) => page.waitForFunction(expected => [document.activeElement?.textContent, document.activeElement?.getAttribute('aria-label')].includes(expected), text);
 const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
-const signIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
+// Owners keep email and password until #50-C; customers use the WhatsApp-code screens (#50-B).
+const ownerSignIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
+const signIn = async page => { await otpSignIn(page, { email: user.email }); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page.getByRole('button', { name: 'Browse menu', exact: true }).click();
@@ -109,9 +112,7 @@ const prepareCart = async (page, add = true) => {
   await first.getByRole('button', { name: /^Cart \(/ }).click();
   await first.getByLabel('Name', { exact: true }).filter({ visible: true }).fill('Guest draft');
   await first.getByRole('button', { name: 'Place order', exact: true }).click();
-  await first.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email);
-  await first.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-  await first.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await otpSignIn(first, { email: user.email });
   await first.getByLabel('Name', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(new URL(first.url()).pathname, '/cart');
   assert.equal(await first.getByLabel('Name', { exact: true }).filter({ visible: true }).inputValue(), 'Guest draft');
@@ -126,9 +127,8 @@ const prepareCart = async (page, add = true) => {
   await first.getByText('Notifications are not available yet.', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(await first.evaluate(() => window.__permissionRequests || 0), 0);
   await first.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await first.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
-  assert.equal(await first.getByLabel('Password', { exact: true }).filter({ visible: true }).inputValue(), '');
-  assert.equal(await first.getByLabel('Email', { exact: true }).filter({ visible: true }).inputValue(), '');
+  await first.getByRole('button', { name: 'Get code', exact: true }).waitFor();
+  assert.equal(await first.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).inputValue(), '', 'the phone field starts empty after sign-out');
   console.log('PASS: sign-in/sign-out clears credentials in mounted account panel');
   await signIn(first); await prepareCart(first);
   const second = await open(); await prepareCart(second, false);
@@ -220,14 +220,12 @@ const prepareCart = async (page, add = true) => {
   for (let i = 0; i < 50 && !orderHeld; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(orderHeld, true);
   await account(second); await second.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await second.getByLabel('Email', { exact: true }).filter({ visible: true }).waitFor();
+  await second.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).waitFor();
   holdOrders = false; releaseOrders();
   await second.waitForTimeout(100);
   assert.equal(await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).count(), 0);
   await second.goto(customerServer.url + '/orders/' + orderId, { waitUntil: 'networkidle' });
-  await second.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email);
-  await second.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-  await second.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await otpSignIn(second, { email: user.email });
   await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(new URL(second.url()).pathname, '/orders/' + orderId);
   await second.setViewportSize({ width: 1440, height: 900 });
@@ -236,7 +234,7 @@ const prepareCart = async (page, add = true) => {
 
   const admin = await context.newPage(); admin.on('pageerror', error => errors.push(error.message));
   await admin.goto(adminServer.url, { waitUntil: 'networkidle' });
-  await signIn(admin);
+  await ownerSignIn(admin);
   await admin.getByText('Access denied', { exact: true }).filter({ visible: true }).waitFor();
   // Owner tabs exist only after the server confirms membership; sign out stays available meanwhile.
   const ownerTabs = admin.getByRole('navigation', { name: 'Owner sections' });
@@ -553,7 +551,7 @@ const prepareCart = async (page, add = true) => {
       // Cold guest restore has no auth record, while the old attempt remains.
       await page.evaluate(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('market:https')) localStorage.removeItem(key); });
       await page.goto(customer.url + '/account', { waitUntil: 'networkidle' });
-      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Get code', exact: true }).waitFor();
       await assertPrivateHidden();
       await page.goto(customer.url, { waitUntil: 'networkidle' });
       assert.ok(await page.getByRole('img', { name: 'Contains egg', exact: true }).count() > 0, 'public menu marks stay visible to guests');
@@ -562,15 +560,13 @@ const prepareCart = async (page, add = true) => {
       await signIn(page);
       await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
       await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Get code', exact: true }).waitFor();
       await assertPrivateHidden();
-      await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(otherUser.email);
-      await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await otpSignIn(page, { email: otherUser.email });
       await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
       await assertPrivateHidden();
       await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-      await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Get code', exact: true }).waitFor();
       await signIn(page);
       await page.getByText(privateLine, { exact: true }).filter({ visible: true }).waitFor();
       assert.equal(await page.getByRole('img', { name: 'Vegetarian', exact: true }).count(), 1);

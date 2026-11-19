@@ -36,6 +36,7 @@ jobs:
       - run: node tests/browser/kokani39.mjs
       - run: node tests/browser/inbox55.mjs
       - run: node tests/browser/leave52.mjs
+      - run: node tests/browser/otp50.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

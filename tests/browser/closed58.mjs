@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 
 // Real customer exports and installed SDK; synthetic HTTP/Phoenix fixtures only.
 const api = 'https://market-fixture.supabase.co';
@@ -145,7 +146,7 @@ try {
       assert.deepEqual(contents(await saved()), contents(guestCart));
       await setOpen(true); assert.equal(requests.length, 0, 'reopening never submits');
       const publicTopic = [...channels.keys()][0];
-      await button('Account').click(); await field('Email').fill(user.email); await field('Password').fill('synthetic-password'); await button('Sign in').click();
+      await button('Account').click(); await otpSignIn(page, { email: user.email });
       await button('Sign out').waitFor();
       assert.equal([...channels.keys()][0], publicTopic, 'public subscription survives sign-in');
       await cart().click(); await fillCheckout();

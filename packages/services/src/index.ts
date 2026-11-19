@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, classifyOtpFailure, retryAfterSeconds, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
@@ -163,6 +163,10 @@ export function validateRevisedPricing(value: unknown, lines: readonly CartLine[
   return { lines: q.lines.map(a => ({ menu_item_id: a.menu_item_id, quantity: a.quantity, unit_price_paise: a.unit_price_paise, line_total_paise: a.line_total_paise })), delivery_fee_paise: q.delivery_fee_paise, min_order_paise: q.min_order_paise, subtotal_paise: q.subtotal_paise, total_paise: q.total_paise };
 }
 
+/** TEMPORARY (#50-B): maps a Supabase Auth failure to the OTP error codes; the cause carries the server-stated wait, if any. */
+function otpFailure(error: { message: string; code?: string; status?: number }): ServiceError {
+  return new ServiceError(classifyOtpFailure(error), error.message, { ...error, retryAfterSeconds: retryAfterSeconds(error.message) });
+}
 function fail(error: { message: string; code?: string } | null, action: string): void {
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
 }
@@ -615,6 +619,9 @@ export function createMarketServices(options: ServiceOptions) {
   const auth = {
     async session() { const { data, error } = await requireClient().auth.getSession(); fail(error, 'Could not restore session'); return data.session; },
     async signIn(email: string, password: string) { const { data, error } = await requireClient().auth.signInWithPassword({ email, password }); fail(error, 'Could not sign in'); return data; },
+    // TEMPORARY (#50-B): thin wrappers over Supabase phone OTP with the 50-A error codes; replaced by the 50-A services functions once that PR merges. Kept together here so the swap is one block.
+    async requestCode(phone: string, captchaToken?: string) { const { error } = await requireClient().auth.signInWithOtp({ phone, options: { captchaToken } }); if (error) throw otpFailure(error); },
+    async verifyCode(phone: string, code: string) { const { data, error } = await requireClient().auth.verifyOtp({ phone, token: code, type: 'sms' }); if (error) throw otpFailure(error); return data; },
     async signUp(email: string, password: string, emailRedirectTo?: string) { const { data, error } = await requireClient().auth.signUp({ email, password, options: { emailRedirectTo } }); fail(error, 'Could not sign up'); return { ...data, confirmationRequired: !data.session }; },
     async resetPassword(email: string, redirectTo?: string) { const { error } = await requireClient().auth.resetPasswordForEmail(email, { redirectTo }); fail(error, 'Could not send password reset'); },
     async exchangeCodeForSession(code: string) { const { data, error } = await requireClient().auth.exchangeCodeForSession(code); fail(error, 'Could not complete the email link'); return data.session; },
@@ -1003,7 +1010,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

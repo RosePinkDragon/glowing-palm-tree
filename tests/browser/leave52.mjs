@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 
 // #52 customer screen slice: "Leave [restaurant]" in Account settings, in both brands. Real customer exports and the
 // installed SDK, with deterministic synthetic HTTP (the leave/join/place_order RPCs are fixtures).
@@ -173,8 +174,7 @@ try {
       await shot('signed-out');
 
       // 6. Signing in again: Leave is not offered for the left restaurant, and checkout rejoins on request.
-      await visible(page.getByLabel('Email', { exact: true })).fill('leave@example.test'); await visible(page.getByLabel('Password', { exact: true })).fill('synthetic-password');
-      await button('Sign in').click(); await signedIn();
+      await otpSignIn(page, { email: 'leave@example.test' }); await signedIn();
       await page.waitForTimeout(400);
       assert.equal(await button(`Leave ${name}`).count(), 0, 'a left restaurant offers no Leave');
       await page.goto(server.url, { waitUntil: 'networkidle' });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 
 const fixture = 'https://market-fixture.supabase.co';
 const slugs = ['ammu-sammu', 'kokani-dine-inn'];
@@ -109,9 +110,7 @@ try {
   };
   const login = async (page, index = 0) => {
     await account(page);
-    await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(users[index].email);
-    await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await otpSignIn(page, { email: users[index].email });
     await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   };
   const add = async page => { const button = page.getByRole('button', { name: 'Add to cart', exact: true }).first(); await enabled(button); await button.click(); await cartLink(page).waitFor(); };
@@ -166,7 +165,7 @@ try {
   }, `market:cart:${slugs[1]}`);
   await holder.waitForFunction(() => window.__held);
   await account(kokani); await kokani.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await kokani.getByRole('button', { name: 'Sign in', exact: true }).waitFor({ timeout: 5000 });
+  await kokani.getByRole('button', { name: 'Get code', exact: true }).waitFor({ timeout: 5000 });
   assert.equal(await cartLink(kokani).count(), 0);
   await holder.evaluate(() => window.__release());
   await assertEventually(async () => (await saved(kokani, slugs[1])).lines.length === 0);
@@ -177,12 +176,10 @@ try {
   await kokani.goto(servers[0].url, { waitUntil: 'networkidle' }); await add(kokani); await login(kokani);
   await kokani.evaluate(() => { window.__failCartWrites = true; });
   await kokani.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await kokani.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  await kokani.getByRole('button', { name: 'Get code', exact: true }).waitFor();
   assert.equal(await cartLink(kokani).count(), 0);
   // Sign in as B while cleanup still fails; A's persisted draft must stay hidden.
-  await kokani.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(users[1].email);
-  await kokani.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-  await kokani.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await otpSignIn(kokani, { email: users[1].email });
   await kokani.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   assert.equal(await cartLink(kokani).count(), 0);
   await kokani.evaluate(() => { window.__failCartWrites = false; });
@@ -277,11 +274,9 @@ try {
   assert.equal(await customer.getByRole('button', { name: 'Accept revised total and place order', exact: true }).isDisabled(), true);
   await customer.getByText('The revised subtotal is below the minimum order. Edit your cart before ordering.', { exact: true }).filter({ visible: true }).waitFor();
   await account(customer); await customer.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await customer.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  await customer.getByRole('button', { name: 'Get code', exact: true }).waitFor();
   assert.equal(await customer.getByText('Review revised order', { exact: true }).count(), 0);
-  await customer.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(users[1].email);
-  await customer.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-  await customer.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await otpSignIn(customer, { email: users[1].email });
   await customer.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   assert.equal(await customer.getByText('Review revised order', { exact: true }).count(), 0);
   assert.equal(await customer.getByText(/Unit price:|Minimum order: ₹0 →/).count(), 0);
