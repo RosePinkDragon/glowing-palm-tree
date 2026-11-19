@@ -22,7 +22,7 @@ function fixture(t) {
 test('file validation accepts every known mode and rejects invalid JSON, shapes and modes', t => {
   const { file } = fixture(t);
   for (const mode of MODES) {
-    writeFileSync(file, JSON.stringify({ mode, baseline: null }));
+    writeFileSync(file, JSON.stringify({ mode, baseline: mode === 'frozen' ? { version: '20261117000000', commit: 'c'.repeat(40) } : null }));
     assert.equal(validateMigrationPolicyFile(file).mode, mode);
   }
   for (const text of ['{"mode":"bogus"}', '{', '[]', 'null', 'true', '"frozen"', '{}', '{"mode":null}']) {
@@ -30,6 +30,17 @@ test('file validation accepts every known mode and rejects invalid JSON, shapes 
     assert.throws(() => validateMigrationPolicyFile(file), /valid JSON|known mode/);
   }
   assert.throws(() => validateMigrationPolicyFile(file + '.missing'), /readable, valid JSON/);
+});
+
+test('frozen mode requires a baseline version and commit', t => {
+  const { file } = fixture(t);
+  const good = { version: '20261117000000', commit: 'c'.repeat(40) };
+  for (const baseline of [undefined, null, [], 'x', {}, { version: good.version }, { commit: good.commit }, { ...good, version: '2026' }, { ...good, commit: 'C'.repeat(40) }, { ...good, commit: 'abc123' }]) {
+    writeFileSync(file, JSON.stringify({ mode: 'frozen', baseline }));
+    assert.throws(() => validateMigrationPolicyFile(file), /frozen mode requires baseline/);
+  }
+  writeFileSync(file, JSON.stringify({ mode: 'frozen', baseline: good }));
+  assert.deepEqual(validateMigrationPolicyFile(file).baseline, good);
 });
 
 test('the App CI checked-in-file test actually fails for an invalid proposed checkout', t => {

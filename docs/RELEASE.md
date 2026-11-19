@@ -2,7 +2,149 @@
 
 This repository does not create provider projects, configure credentials, or deploy the apps. Never commit private credentials or send them in chat. Public client configuration can be entered in Vercel's environment settings. Complete and verify the provider and launch steps below before accepting real orders.
 
-## Web: four Vercel projects
+## Web launch runbook (owner)
+
+This is the one ordered checklist for a web-only launch on your own Supabase project and Vercel. Work top to bottom; later steps depend on earlier ones. Agents never deploy, link a Supabase project or run `supabase db push`: you run the commands below from a trusted machine. Detail and rationale for each step is in the sections further down; native builds (EAS) are out of scope here. Anything marked **confirm in dashboard** is not defined by this repository.
+
+Before you start: the customer and owners' WhatsApp sign-in screens (#50 slices B and C) are on `main`; deploy from a `main` commit that includes them, because the apps cannot sign in without them.
+
+**Never run `supabase config push` for this repository.** It would push CAPTCHA off, a local hook address and fictional test OTPs (valid code `123456`) to the hosted project. Configure hosted Auth in the dashboard only.
+
+### 1. Create the Supabase project and push the database
+
+1. In the Supabase dashboard create a new, empty project. Note the project ref, the Project URL (**Connect**) and the publishable (or legacy `anon`) key (**Project Settings → API Keys**). Never use or expose the service-role key in Vercel.
+2. From a trusted machine: `supabase login`, then `supabase link --project-ref <project-ref>`. Check the printed ref is the new project and not another one (the two `dukan-dar` projects are unrelated Prisma databases and must never be linked).
+3. Run `supabase db push`. On an empty project this applies only `supabase/migrations/20261117000000_baseline.sql` (schema, no data). Do not use `supabase/seed.sql`; it is demonstration data.
+4. Create the two businesses and set kitchen points and the 12 km delivery radius with the SQL in [Supabase and launch data](#supabase-and-launch-data), step 5. `order_prefix` cannot be changed afterwards. Leave `ordering_enabled` false until the staging checks in step 9 pass, then enable ordering per business (**confirm in dashboard** or SQL editor; this is the existing owner setting).
+5. Migrations are now forward-only: see [Migration policy](#migration-policy-frozen). Any later schema change is a new timestamped file.
+
+### 2. Deploy the Edge Functions
+
+From the same linked machine:
+
+```
+supabase functions deploy request-owner-code
+supabase functions deploy send-sms-hook
+supabase functions deploy menu-photos
+```
+
+`request-owner-code` and `send-sms-hook` are required for login. `menu-photos` is called by the owners' app for dish photos (`packages/services`); run `deno install --frozen` in `supabase/functions/menu-photos` first as its README describes, or skip it and launch without photo uploads. `dispatch-notifications` is only needed for push (step 5, optional). Their `verify_jwt = false` settings come from `supabase/config.toml` and each function authenticates itself.
+
+### 3. Secrets (names only)
+
+Set from a trusted machine with `supabase secrets set --env-file <untracked file>`. Never commit the file, paste values in chat, or put them in Vercel.
+
+| Secret | Function | Required |
+| --- | --- | --- |
+| `SEND_SMS_HOOK_SECRET` | `send-sms-hook` | Yes. Value comes from step 4 (`v1,whsec_...`); set it in the same sitting as enabling the hook |
+| `MSG91_AUTH_KEY` | `send-sms-hook` | Yes |
+| `MSG91_WHATSAPP_NUMBER` | `send-sms-hook` | Yes |
+| `MSG91_TEMPLATE_NAME` | `send-sms-hook` | Yes |
+| `MSG91_TEMPLATE_NAMESPACE` | `send-sms-hook` | Yes |
+| `MSG91_TEMPLATE_LANGUAGE` | `send-sms-hook` | Optional, default `en` |
+| `TURNSTILE_SECRET_KEY` | `request-owner-code` | Yes; without it every owner code request gets a 503 |
+| `OWNER_CODE_RESPONSE_MS` | `request-owner-code` | Optional, default 2000 |
+| `OWNER_CODE_CAPTCHA` | `request-owner-code` | Never on hosted; local development only |
+| `FCM_SERVICE_ACCOUNT`, `NOTIFICATION_DISPATCH_SECRET` | `dispatch-notifications` | Only if you deploy push (step 5) |
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are read by the functions too; the platform supplies them to deployed functions (**confirm in dashboard** under Edge Functions → Secrets). The provider accounts (Meta business verification, MSG91 WhatsApp authentication template with copy-code button, Cloudflare Turnstile widget for the four production domains) take days; see [WhatsApp provider setup](#provider-setup-do-first-approvals-take-days).
+
+### 4. Hosted Auth settings (dashboard only)
+
+1. Authentication → Hooks → **Send SMS**: HTTPS, the URL of `send-sms-hook`, generate the secret and store it as `SEND_SMS_HOOK_SECRET` immediately; enable the hook in that same sitting.
+2. Authentication → Providers → **Phone**: enable; SMS OTP expiry **600** seconds, length 6, resend interval (`max_frequency`) **30** seconds. Keep the project SMS rate limit modest.
+3. Authentication → Bot and Abuse Protection: enable CAPTCHA with **Turnstile** and the secret, only together with `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in step 7.
+4. Authentication → URL Configuration: Site URL and the four exact production domain roots as Redirect URLs, no broad wildcards.
+
+### 5. Optional: push notifications
+
+Skip for a first launch if you accept no push. Otherwise follow [Firebase, analytics, and notifications](#firebase-analytics-and-notifications): deploy `dispatch-notifications`, set `FCM_SERVICE_ACCOUNT` and `NOTIFICATION_DISPATCH_SECRET`, and configure a trusted scheduler (**confirm in dashboard**; none is provided by this repository).
+
+### 6. Production owner accounts
+
+Create each owner with a phone number (Authentication → Users → Add user with the phone, confirmed; or `auth.admin.createUser({ phone: '+91XXXXXXXXXX', phone_confirm: true })` from a trusted machine), then add the membership in the SQL editor. Use the real numbers only there; never in the repository.
+
+```sql
+insert into public.business_memberships (business_id, user_id, role, display_name)
+select b.id, u.id, 'admin', 'Owner' from public.businesses b, auth.users u
+where b.slug = 'ammu-sammu' and u.phone = '<digits with country code, no plus>';
+```
+
+Repeat with `b.slug = 'kokani-dine-inn'` for the other business.
+
+### 7. Four Vercel projects
+
+Import the repository four times with the Vercel GitHub integration (no deploy token needed). Each project takes the settings below; the commands come from each app's `vercel.json`, so confirm they appear in the project and do not override them.
+
+| Vercel project | Root Directory | Build command (from `vercel.json`) | Rewrites |
+| --- | --- | --- | --- |
+| Ammu Sammu customer | `apps/ammu-sammu-customer` | `cd ../.. && npm run build:web --workspace ammu-sammu-customer` | `/cart`, `/orders`, `/orders/:id`, `/account`, `/login`, `/addresses`, `/help`, `/privacy`, `/terms` to `/index.html` |
+| Ammu Sammu admin | `apps/ammu-sammu-admin` | `cd ../.. && npm run build:web --workspace ammu-sammu-admin` | none (root page) |
+| Kokani Dine Inn customer | `apps/kokani-dine-inn-customer` | `cd ../.. && npm run build:web --workspace kokani-dine-inn-customer` | same as the Ammu customer app |
+| Kokani Dine Inn admin | `apps/kokani-dine-inn-admin` | `cd ../.. && npm run build:web --workspace kokani-dine-inn-admin` | none (root page) |
+
+For all four: Framework Preset **Other**, Node.js **24.x**, Production Branch `main`, install command `cd ../.. && npm ci`, output directory `dist/web`, and **Include source files outside of the Root Directory in the Build Step** enabled. The rewrites and the `Cache-Control: public, max-age=0, must-revalidate` header for `/firebase-messaging-worker.js` already live in the `vercel.json` files; add nothing in the dashboard.
+
+Environment variables (Production; public values only, the same for all four unless noted):
+
+| Variable | Value |
+| --- | --- |
+| `EXPO_PUBLIC_SUPABASE_URL` | Project URL from step 1 |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Publishable key from step 1 |
+| `EXPO_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. Set it in all four, or in none and keep Auth CAPTCHA off |
+| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_MEASUREMENT_ID`, `_VAPID_KEY`, `_ANALYTICS_STREAM_VERIFIED` | Optional, only with Firebase (step 5). Each app uses its own Firebase web app config; the verified flag stays `false` until Enhanced Measurement is confirmed off |
+| `EXPO_PUBLIC_WEB_BASE_PATH` | Leave blank (or `/`) |
+
+`EXPO_PUBLIC_EAS_PROJECT_ID` is not used for web. Variables are baked in at build time, so redeploy after changing any. Add each project's production domain to the Supabase redirect URLs (step 4) and to the Turnstile widget. You trigger the deploys; agents do not.
+
+### 8. Purges (retention)
+
+The baseline has exactly two purge functions, both callable only by `service_role` (and by `postgres` in the SQL editor), and nothing schedules them:
+
+- `public.purge_expired_owner_login_attempts()` removes `owner_login_attempts` rows older than 90 days.
+- `public.purge_expired_customer_notifications()` removes customer notification feed rows older than 30 days (reads already hide them).
+
+`public.purge_customer_notifications(...)` is internal to the leave-restaurant flow; do not schedule it.
+
+Optional, pg_cron (enable it in Database → Extensions or Integrations; **confirm in dashboard** that jobs run as `postgres`):
+
+```sql
+create extension if not exists pg_cron;
+select cron.schedule('purge-owner-login-attempts', '17 3 * * *', $$select public.purge_expired_owner_login_attempts()$$);
+select cron.schedule('purge-customer-notifications', '27 3 * * *', $$select public.purge_expired_customer_notifications()$$);
+```
+
+Manual fallback, run now and then (monthly is plenty) in the SQL editor:
+
+```sql
+select public.purge_expired_owner_login_attempts();
+select public.purge_expired_customer_notifications();
+```
+
+Each returns the number of rows removed. Until one of these is arranged, retention is not live.
+
+### 9. Post-deploy staging checks
+
+Do these on the deployed domains before enabling ordering for real customers. Use real numbers only on your own devices.
+
+1. Request a code as a tester from a known network, then in the SQL editor run `select ip, outcome, created_at from public.owner_login_attempts order by created_at desc limit 5;`. The `ip` must be non-null and equal the tester's real public address. If it is null, record it as a launch follow-up (the per-IP limit is not running).
+2. A customer code arrives on WhatsApp and logs in a new number.
+3. An owner's number receives a code in the owners' app; a non-owner number sees the identical screen and no message appears in the MSG91 log.
+4. A number that is not on WhatsApp gets the "could not deliver" error (customer only).
+5. CAPTCHA works: with it on, a request without a valid token is refused and a normal one succeeds.
+6. Place an order end to end on each brand (Ammu Sammu and Kokani Dine Inn): sign in, add to cart, checkout inside the delivery area, see it in that brand's admin app, move it through the order statuses. Confirm an address outside 12 km is refused.
+7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
+8. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
+
+### 10. Rollback
+
+- Web: in Vercel, promote the previous good deployment of the affected project (Deployments → previous → Promote / Instant Rollback; **confirm in dashboard**). Environment variable changes need a redeploy.
+- Stop orders without rolling anything back by setting `ordering_enabled` (and `accepting_orders`) to false for the business.
+- Database: forward-only. Never edit or reset the baseline or a database holding real data; fix problems with a new timestamped migration, applied with `supabase db push`.
+- Login: if codes fail after a settings change, check the hook secret still matches `SEND_SMS_HOOK_SECRET`, CAPTCHA and site key agree, and the Auth logs; fix the setting rather than disabling protections.
+- Secrets: rotate an exposed secret in its provider first, then re-set it with `supabase secrets set`.
+
+## Reference: web, four Vercel projects
 
 Connect the GitHub repository using the Vercel GitHub integration and import it four times, one project per row. Select a Vercel plan appropriate for the intended commercial use; review [Vercel's plan terms](https://vercel.com/pricing) before choosing. This setup uses the integration, so no `VERCEL_TOKEN` or GitHub Actions deployment secret is needed.
 
@@ -52,32 +194,35 @@ select public.set_delivery_radius('kokani-dine-inn', 12000, 'Owner decision 16 N
 
 PostGIS schema: the SQL above uses `extensions.`, which is where Supabase installs PostGIS. Check with `select extnamespace::regnamespace from pg_extension where extname = 'postgis';`. If it returns `public` (PostGIS was already installed there), change `extensions.st_setsrid` and `extensions.st_makepoint` to `public.st_setsrid` and `public.st_makepoint` (or drop the prefix). `set_delivery_radius` looks up the schema itself and needs no change. `tests/database/saved-addresses.sql` runs these same statements against both layouts. The seed (`supabase/seed.sql`) sets the same kitchen points for the demonstration rows only and creates no delivery area. `set_delivery_radius` records the source, the version (`radius-12000m`) and the verification time; it does not change `ordering_enabled`. If a kitchen point is moved later, run `set_delivery_radius` again; the area does not follow it. For a new restaurant (for example in Dapoli), insert its row, set its `kitchen_location`, then run `select public.set_delivery_radius('<slug>', <metres>, '<who decided, and when>');`. A drawn boundary can still replace a circle by setting `service_area` and those three fields directly. Confirm actual menu items and prices, delivery fees, minimum orders, and cash-on-delivery terms with the businesses. Replace demo data, review `is_demo` and `ordering_enabled`, and test the server-enforced checkout and geographic boundary before enabling real orders.
 
-## Migration policy (pre-release baseline)
+## Migration policy (frozen)
 
-Tracked by issue #131. Status: the baseline exists. `supabase/migrations/20261117000000_baseline.sql` is the single migration; it replaces the 17 development migrations (squashed in #131 slice S3, with a one-time file-cap exception recorded on the issue). It is not frozen: freezing happens at the first persistent deployment. No migration for this application has been applied to any persistent or shared database. Local disposable PostgreSQL/PostGIS runs in tests do not count.
+Tracked by issue #131; frozen for the web launch under #15. `supabase/migrations/20261117000000_baseline.sql` is the single baseline (it replaced the 17 development migrations, squashed in #131 slice S3). The policy is now **frozen**: the baseline version and the commit that fixed its content are recorded in `supabase/migration-policy.json`:
 
-The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). The trusted `Delivery policy` CI check also applies this guard, reading the policy pinned to a resolved main commit rather than using the PR's proposed policy. Unprivileged App CI separately validates that the checked-in proposed file is a JSON object with a known mode, so malformed configuration cannot poison later trusted runs. These workflow changes take effect once #143 merges into main. The explicit migration override is self-asserted by the author and requires owner review of the stated reason and deployment evidence; it never bypasses the file cap or frozen-history rule.
+```json
+{ "mode": "frozen", "baseline": { "version": "20261117000000", "commit": "b946a2db742dcc543b3ea8bbb3a2b97c1fa9fc5d" } }
+```
+
+The freeze is recorded at release cutover, before the baseline is pushed to the owner's new Supabase project (runbook step 1). Local disposable PostgreSQL/PostGIS runs in tests do not count as applying it.
+
+The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr:preflight` (author-run before publishing; the mode is read from `main`, so a PR cannot loosen its own rules). The trusted `Delivery policy` CI check also applies this guard, reading the policy pinned to a resolved main commit rather than using the PR's proposed policy. Unprivileged App CI separately validates that the checked-in proposed file is a JSON object with a known mode and, for `frozen`, a baseline with a 14-digit `version` and a 40-character lowercase `commit`, so malformed configuration cannot poison later trusted runs. The freeze takes effect for other PRs once this change merges into main.
 
 | Mode | Meaning | Guard |
 | --- | --- | --- |
 | `pre-release-open` | Squash not yet done; feature PRs may still add migration files. | Warns on added migration files. |
-| `pre-release-baseline` (current) | One baseline exists and is not yet applied anywhere persistent. Fold schema changes into it. | Fails when a PR adds a file under `supabase/migrations/`. Override with a `Migration-Policy-Override: <reason>` line in the PR body (or `MIGRATION_POLICY_OVERRIDE=<reason>` in the environment), for example when a shared database has already applied the baseline; then move to `frozen`. |
-| `frozen` | Baseline applied to a persistent or shared environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file; adding new files is allowed. No override. |
-
-In `pre-release-baseline` mode, editing or deleting existing migration files is allowed (the squash needs it). The squash PR flips `pre-release-open` to `pre-release-baseline`; the PR that records the first persistent deployment flips `pre-release-baseline` to `frozen`. Because the mode is read from `main`, a flip takes effect once that PR merges.
+| `pre-release-baseline` | One baseline exists and is not yet applied anywhere persistent. Fold schema changes into it. | Fails when a PR adds a file under `supabase/migrations/`. Override with a `Migration-Policy-Override: <reason>` line in the PR body. |
+| `frozen` (current) | Baseline applied or about to be applied to a persistent environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file, including the baseline. A new file must be named `<14-digit timestamp>_<name>.sql` (lowercase letters, digits, underscores) with a timestamp after the baseline version. No override. |
 
 Rules:
 
-- Before the first persistent deployment, schema changes are folded into the single baseline once it exists. This concerns repository migration files, not avoiding schema changes.
-- Freeze trigger: the moment the baseline is applied to any persistent or shared environment (staging included), or at release cutover, whichever is first. Set `mode` to `frozen` and record the baseline migration version and the commit SHA in `supabase/migration-policy.json` (`baseline`: `{ "version": "...", "commit": "..." }`) in the same PR. Today the file reads `{ "mode": "pre-release-baseline", "baseline": null }`; the freeze PR changes it to, for example, `{ "mode": "frozen", "baseline": { "version": "20261117000000", "commit": "<sha of the commit that applied it>" } }`. Nothing is deployed yet, so the mode stays `pre-release-baseline` until then.
-- Never rewrite, reorder or delete migration history that any shared or persistent database has applied, and never reset a database holding real data to comply with this policy. If anything has been applied, stop rewriting and append forward-only migrations.
+- Never edit the baseline. Change the schema only by adding a new timestamped migration, then apply it with `supabase db push` from a trusted machine.
+- Never rewrite, reorder or delete applied migration history, and never reset a database holding real data to comply with this policy.
 - The two `dukan-dar` Supabase projects are separate Prisma-managed databases. Never link, push to or otherwise change them. Verify the intended project ref and its migration history are new and empty before any database write.
+- `supabase config push` is never used (see the runbook).
 
-Release-readiness gate before switching to forward-only:
+Release-readiness gate after the push (runbook steps 1 and 9):
 
-1. Deploy the single baseline to the new, empty Supabase project (step 2 above).
-2. Verify seed and reference data, security (RLS, tenant isolation, grants, Supabase advisers), roles and memberships, the `menu-images` storage bucket, Realtime publications, and the critical flows (checkout, order transitions, notifications).
-3. Record the baseline version and commit, set `mode` to `frozen`.
+1. Verify seed and reference data, security (RLS, tenant isolation, grants, Supabase advisers), roles and memberships, the `menu-images` storage bucket, Realtime publications, and the critical flows (checkout, order transitions, notifications).
+2. If the baseline push must be abandoned on a project that has received no real data, discard the project and create a new one; do not edit the baseline.
 
 ## Customer notification feed (#55 backend)
 
@@ -227,8 +372,7 @@ answers normally), so the owners' screen (50-C) must enforce its own 30-second c
 `public.owner_login_attempts` records phone, restaurant, app, IP address and outcome (`non_owner`, `rate_limited`, `sent_owner`,
 `provider_failed`), never a code or token. RLS is on with no policy and no client grant; only developers using the service role or the SQL editor
 can read it. It is not in Realtime. Entries older than 90 days are removed by `select public.purge_expired_owner_login_attempts();`,
-executable only by `service_role`. **There is no pg_cron installation or schedule in this change**: a separately authorized operator
-must arrange regular invocation (daily is enough) and verify it before claiming the 90-day retention is live.
+executable only by `service_role`. **There is no pg_cron installation or schedule in the repository**: the owner arranges regular invocation (daily is enough; runbook step 8 has an optional snippet and a manual fallback) and verifies it before claiming the 90-day retention is live.
 
 Known limit: Supabase Auth's own `signInWithOtp` is public, so someone could request a customer-flow code for an owner's number
 directly. It is bounded by CAPTCHA, the 30-second resend interval and the project SMS limit, and it never grants access

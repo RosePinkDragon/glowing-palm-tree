@@ -86,7 +86,7 @@ export function preflight(args, { cwd = process.cwd(), execute: command = execut
     const own = pulls.find(pr => pr.head.ref === branch && pr.head.repo.full_name.toLowerCase() === repository.toLowerCase());
     const override = (process.env.MIGRATION_POLICY_OVERRIDE ?? '').trim() || parseOverride(own?.body);
     const verdict = checkMigrationPolicy({
-      mode: basePolicy.mode, override,
+      mode: basePolicy.mode, override, baselineVersion: basePolicy.baseline?.version,
       files: files.map(file => ({ status: file.status, path: file.filename, previous: file.previous_filename })),
     });
     if (verdict.errors.length) throw new Error(verdict.errors.join('\n'));

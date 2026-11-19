@@ -1,4 +1,7 @@
 {
-  "mode": "pre-release-baseline",
-  "baseline": null
+  "mode": "frozen",
+  "baseline": {
+    "version": "20261117000000",
+    "commit": "b946a2db742dcc543b3ea8bbb3a2b97c1fa9fc5d"
+  }
 }
