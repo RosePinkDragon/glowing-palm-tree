@@ -181,7 +181,6 @@ const otpMessages: Record<OtpErrorCode, string> = {
   GENERIC: 'Something went wrong. Please try again.',
 };
 export class OtpError extends ServiceError {
-  declare readonly code: OtpErrorCode;
   constructor(code: OtpErrorCode, cause?: unknown, retryAfterSeconds?: number) {
     super(code, otpMessages[code], retryAfterSeconds === undefined ? cause : { retryAfterSeconds, error: cause });
     this.name = 'OtpError';
