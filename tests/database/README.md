@@ -21,3 +21,11 @@ observes real PostgreSQL lock waits in both rename/transition orderings, then
 checks persisted step names. It also races membership revocation and session
 expiry against a waiting rename. Both suites run in the final-schema pass for
 both PostGIS layouts; they do not contact a remote project.
+
+`owner-login.sql` covers the owner code request log and `claim_owner_code_attempt` (#50): no client grants, RLS without policy,
+outside Realtime, no column that could hold a code or token, ownership by admin membership and full phone number (the restaurant,
+unknown or missing slug, plus-sign handling), input validation, every rate limit and its sliding window (per phone 15 minutes and
+day, per IP, null addresses, per restaurant sends), the log growth cap, provider-failure marking, restaurant deletion, and the trusted
+90-day purge. The races in `run.sh` fire simultaneous claims from real sessions (eight for one number, fourteen for one address,
+six owners against the restaurant cap) and require exactly the permitted number to pass, then hold one claim open and observe a
+second blocked behind it. No pg_cron or remote project is involved.
