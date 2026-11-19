@@ -71,6 +71,10 @@ jobs:
           deno-version: v2.x
       - name: Typecheck and test dispatcher
         run: deno test supabase/functions/dispatch-notifications/dispatch_test.ts && deno check supabase/functions/dispatch-notifications/index.ts
+      - name: Typecheck and test owner code request and Send SMS hook
+        run: |
+          deno test supabase/functions/request-owner-code/handler_test.ts supabase/functions/send-sms-hook/hook_test.ts
+          deno check supabase/functions/request-owner-code/index.ts supabase/functions/send-sms-hook/index.ts
       - name: Typecheck and test dish photo validation and lifecycle
         working-directory: supabase/functions/menu-photos
         run: deno test --frozen --allow-read photos_test.ts && deno check --frozen index.ts

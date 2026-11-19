@@ -47,6 +47,9 @@ revoke all on schema customer_lifecycle_private from public, anon, authenticated
 grant usage on schema customer_lifecycle_private to authenticated;
 
 create type public.diet_classification as enum ('veg', 'non_veg', 'egg');
+-- Owner code request log (#50). sent_owner means a code was authorised for an admin member of the
+-- restaurant (provider_failed if the send then failed); non_owner means nothing was sent.
+create type public.owner_login_outcome as enum ('non_owner', 'rate_limited', 'sent_owner', 'provider_failed');
 
 -- 2. Tables and constraints --------------------------------------------------------------------
 create table public.businesses (
@@ -326,6 +329,20 @@ create table public.customer_notifications (
   constraint customer_notification_event_unique unique (user_id, order_id, event_status)
 );
 
+-- Security log of owner code requests (#50), for developers only: RLS is on, there is no policy and
+-- no client grant, and the table is outside Realtime. It never holds a code, token or message body.
+-- Rows are written only by claim_owner_code_attempt and kept 90 days (purge_expired_owner_login_attempts).
+-- A deleted restaurant leaves its rows with business_id NULL; an unknown slug is logged with NULL too.
+create table public.owner_login_attempts (
+  id uuid primary key default gen_random_uuid(),
+  phone text not null check (phone ~ '^\+[1-9][0-9]{6,14}$'),
+  business_id uuid references public.businesses(id) on delete set null,
+  app text not null check (app ~ '^[a-z0-9]+(-[a-z0-9]+)*$' and char_length(app) <= 64),
+  ip inet,
+  outcome public.owner_login_outcome not null,
+  created_at timestamptz not null default clock_timestamp()
+);
+
 -- 3. Indexes -----------------------------------------------------------------------------------
 create index memberships_user_idx on public.business_memberships(user_id, business_id);
 create index menu_items_business_idx on public.menu_items(business_id);
@@ -342,6 +359,11 @@ create index customer_notifications_page on public.customer_notifications(user_i
 create index customer_notifications_expiry on public.customer_notifications(created_at);
 create index menu_photo_cleanup_due on public.menu_photo_jobs(business_id, due_at)
 where state in ('pending','cleanup','cleaning');
+create index owner_login_attempts_phone on public.owner_login_attempts(phone, created_at desc);
+create index owner_login_attempts_ip on public.owner_login_attempts(ip, created_at desc);
+create index owner_login_attempts_business_sends on public.owner_login_attempts(business_id, created_at desc)
+where outcome in ('sent_owner', 'provider_failed');
+create index owner_login_attempts_expiry on public.owner_login_attempts(created_at);
 
 -- 4. Row-level security: enabled on every table; policies are in section 7 -----------------------
 alter table public.businesses enable row level security;
@@ -360,6 +382,7 @@ alter table public.device_tokens enable row level security;
 alter table public.notification_outbox enable row level security;
 alter table public.customer_notifications enable row level security;
 alter table public.menu_photo_jobs enable row level security;
+alter table public.owner_login_attempts enable row level security;
 
 -- 5. Functions ---------------------------------------------------------------------------------
 -- Definer functions expose only boolean membership/visibility, never membership rows.
@@ -1390,6 +1413,100 @@ begin
     using b.id, p_radius_m::double precision, trim(p_source), 'radius-' || p_radius_m || 'm';
 end $$;
 
+-- Owner code requests (#50). Called only by the request-owner-code Edge Function (service role).
+-- One call decides three things atomically: is this phone an admin member of the restaurant, may this
+-- request proceed under the rate limits, and the log row. Limits count admitted requests (every
+-- outcome except rate_limited), owners and non-owners alike, so a flood cannot extend its own lockout:
+--   per phone: 3 per 15 minutes and 10 per 24 hours   per IP address: 10 per hour
+--   per restaurant: 30 sends (sent_owner or provider_failed) per hour, a cap on WhatsApp cost
+-- The caller must send a code only when is_owner and allowed are both true, and must answer every other
+-- case exactly as it answers that one. attempt_id is NULL only when a rate_limited row was not logged
+-- because that IP already has 50 such rows in the hour (bounds log growth under a flood).
+-- Concurrency: advisory transaction locks serialise requests per IP, phone and restaurant, always taken
+-- in that order, so concurrent calls cannot both pass a limit. No row locks are taken on users, sessions,
+-- accounts or businesses (the log insert's foreign key takes only a KEY SHARE on the restaurant row),
+-- so the customer lifecycle lock order (users, sessions, accounts, business, advisory, rows) is unaffected.
+-- Supabase Auth stores phone numbers without the leading plus sign.
+create function public.claim_owner_code_attempt(p_phone text, p_business_slug text, p_ip text, p_app text)
+returns table (attempt_id uuid, is_owner boolean, allowed boolean)
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_business uuid;
+  v_ip inet;
+  v_owner boolean := false;
+  v_limited boolean;
+  v_outcome public.owner_login_outcome;
+  v_id uuid;
+  v_now timestamptz;
+begin
+  if p_phone is null or p_phone !~ '^\+[1-9][0-9]{6,14}$' then
+    raise exception 'normalised E.164 phone required' using errcode = '22023';
+  end if;
+  if p_app is null or p_app !~ '^[a-z0-9]+(-[a-z0-9]+)*$' or char_length(p_app) > 64 then
+    raise exception 'app label required' using errcode = '22023';
+  end if;
+  begin
+    v_ip := host(nullif(btrim(p_ip), '')::inet)::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+  select b.id into v_business from public.businesses b where b.slug = p_business_slug;
+  if v_business is not null then
+    select exists (
+      select 1 from public.business_memberships m join auth.users u on u.id = m.user_id
+      where m.business_id = v_business and m.role = 'admin' and u.phone is not null
+        and ltrim(u.phone, '+') = substr(p_phone, 2)
+    ) into v_owner;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('owner-login:ip:' || coalesce(host(v_ip), 'none'), 0));
+  perform pg_advisory_xact_lock(hashtextextended('owner-login:phone:' || p_phone, 0));
+  if v_business is not null then
+    perform pg_advisory_xact_lock(hashtextextended('owner-login:business:' || v_business::text, 0));
+  end if;
+
+  -- Each statement below sees rows committed by callers that held these locks before this one.
+  v_now := clock_timestamp();
+  v_limited :=
+    (select count(*) from public.owner_login_attempts a where a.phone = p_phone and a.outcome <> 'rate_limited'
+       and a.created_at > v_now - interval '15 minutes') >= 3
+    or (select count(*) from public.owner_login_attempts a where a.phone = p_phone and a.outcome <> 'rate_limited'
+       and a.created_at > v_now - interval '24 hours') >= 10
+    or (select count(*) from public.owner_login_attempts a where a.outcome <> 'rate_limited'
+       and a.created_at > v_now - interval '1 hour' and (a.ip = v_ip or (v_ip is null and a.ip is null))) >= 10
+    or (v_business is not null and (select count(*) from public.owner_login_attempts a where a.business_id = v_business
+       and a.outcome in ('sent_owner', 'provider_failed') and a.created_at > v_now - interval '1 hour') >= 30);
+  v_outcome := case when v_limited then 'rate_limited' when v_owner then 'sent_owner' else 'non_owner' end;
+
+  if v_outcome = 'rate_limited' and (select count(*) from public.owner_login_attempts a where a.outcome = 'rate_limited'
+       and a.created_at > v_now - interval '1 hour' and (a.ip = v_ip or (v_ip is null and a.ip is null))) >= 50 then
+    v_id := null;
+  else
+    insert into public.owner_login_attempts (phone, business_id, app, ip, outcome, created_at)
+    values (p_phone, v_business, p_app, v_ip, v_outcome, v_now) returning id into v_id;
+  end if;
+  return query select v_id, v_owner, not v_limited;
+end $$;
+
+-- The Edge Function calls this when the provider refuses an authorised send. The attempt still counts
+-- against the limits (the provider may have sent it).
+create function public.mark_owner_code_failed(p_attempt_id uuid) returns boolean
+language plpgsql security definer set search_path = '' as $$
+begin
+  update public.owner_login_attempts set outcome = 'provider_failed' where id = p_attempt_id and outcome = 'sent_owner';
+  return found;
+end $$;
+
+-- Trusted callers only. No scheduler/pg_cron is installed or configured by this baseline.
+create function public.purge_expired_owner_login_attempts()
+returns integer language plpgsql security definer set search_path = '' as $$
+declare removed integer;
+begin
+  delete from public.owner_login_attempts where created_at < now() - interval '90 days';
+  get diagnostics removed = row_count;
+  return removed;
+end $$;
+
 -- 6. Triggers ----------------------------------------------------------------------------------
 create trigger menu_business_immutable before update on public.menu_items
 for each row execute function public.prevent_menu_business_change();
@@ -1459,6 +1576,9 @@ revoke all on public.customer_addresses, public.order_status_actors, public.orde
   public.checkout_pricing_rejections, public.notification_outbox, public.menu_photo_jobs,
   public.customer_notifications from public, anon, authenticated;
 grant select, update(read_at) on public.customer_notifications to authenticated;
+-- The owner login log is developer-readable only; rows are written by the definer function above.
+revoke all on public.owner_login_attempts from public, anon, authenticated, service_role;
+grant select on public.owner_login_attempts to service_role;
 grant select on public.businesses, public.menu_categories, public.menu_items to anon, authenticated;
 grant select on public.business_memberships, public.orders, public.order_items, public.device_tokens,
   public.accepting_orders_changes to authenticated;
@@ -1537,6 +1657,11 @@ grant execute on function
   public.attach_menu_photo(uuid,text,uuid), public.remove_menu_photo(uuid,text,uuid,text),
   public.claim_menu_photo_cleanup(uuid,text), public.finish_menu_photo_cleanup(uuid,text,uuid,uuid)
   to service_role;
+-- Owner login: trusted server code only (the request-owner-code Edge Function and a scheduled purge).
+revoke all on function public.claim_owner_code_attempt(text,text,text,text), public.mark_owner_code_failed(uuid),
+  public.purge_expired_owner_login_attempts() from public, anon, authenticated, service_role;
+grant execute on function public.claim_owner_code_attempt(text,text,text,text), public.mark_owner_code_failed(uuid),
+  public.purge_expired_owner_login_attempts() to service_role;
 
 -- 9. Realtime publication ----------------------------------------------------------------------
 -- Add only when Supabase's publication exists; publication does not bypass RLS. Customers, including

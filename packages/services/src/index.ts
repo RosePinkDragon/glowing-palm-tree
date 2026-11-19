@@ -167,6 +167,41 @@ function fail(error: { message: string; code?: string } | null, action: string):
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
 }
 
+/**
+ * Phone-code login errors (#50). `code` is exactly one of these five, the wording is fixed here (server text is never
+ * shown), and a wait stated by the server is `error.cause.retryAfterSeconds`. A failed CAPTCHA, a malformed number and
+ * every unclassified failure are GENERIC; the screens validate the number and render the CAPTCHA before calling.
+ */
+export type OtpErrorCode = 'WRONG_OR_EXPIRED_CODE' | 'RESEND_COOLDOWN' | 'NOT_ON_WHATSAPP' | 'RATE_LIMITED' | 'GENERIC';
+const otpMessages: Record<OtpErrorCode, string> = {
+  WRONG_OR_EXPIRED_CODE: 'That code is wrong or has expired. Check it, or ask for a new code.',
+  RESEND_COOLDOWN: 'Please wait a moment before asking for another code.',
+  NOT_ON_WHATSAPP: 'We could not deliver the code on WhatsApp. Check the number.',
+  RATE_LIMITED: 'Too many attempts. Please try again later.',
+  GENERIC: 'Something went wrong. Please try again.',
+};
+export class OtpError extends ServiceError {
+  declare readonly code: OtpErrorCode;
+  constructor(code: OtpErrorCode, cause?: unknown, retryAfterSeconds?: number) {
+    super(code, otpMessages[code], retryAfterSeconds === undefined ? cause : { retryAfterSeconds, error: cause });
+    this.name = 'OtpError';
+  }
+}
+/**
+ * Maps a Supabase Auth failure. NOT_ON_WHATSAPP comes from the Send SMS hook (message NOT_ON_WHATSAPP,
+ * supabase/functions/send-sms-hook) and so exists only for the customer request; the owners' request never sees it.
+ */
+function otpFailure(error: unknown, flow: 'request' | 'verify'): OtpError {
+  const e = (error && typeof error === 'object' ? error : {}) as { status?: unknown; code?: unknown; message?: unknown };
+  const status = typeof e.status === 'number' ? e.status : 0, code = typeof e.code === 'string' ? e.code : '', message = typeof e.message === 'string' ? e.message : '';
+  if (flow === 'request' && message.includes('NOT_ON_WHATSAPP')) return new OtpError('NOT_ON_WHATSAPP', error);
+  const cooldown = /only request this after (\d{1,5}) seconds?/i.exec(message);
+  if (code === 'over_sms_send_rate_limit' && cooldown) return new OtpError('RESEND_COOLDOWN', error, Number(cooldown[1]));
+  if (code === 'over_sms_send_rate_limit' || code === 'over_request_rate_limit' || status === 429 || message.includes('RATE_LIMITED')) return new OtpError('RATE_LIMITED', error);
+  if (flow === 'verify' && (code === 'otp_expired' || [400, 401, 403, 422].includes(status))) return new OtpError('WRONG_OR_EXPIRED_CODE', error);
+  return new OtpError('GENERIC', error);
+}
+
 const orderIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validOrderCursor(value: unknown): value is OrderCursor {
   if (!value || typeof value !== 'object') return false;
@@ -620,6 +655,49 @@ export function createMarketServices(options: ServiceOptions) {
     async exchangeCodeForSession(code: string) { const { data, error } = await requireClient().auth.exchangeCodeForSession(code); fail(error, 'Could not complete the email link'); return data.session; },
     async setSession(accessToken: string, refreshToken: string) { const { data, error } = await requireClient().auth.setSession({ access_token: accessToken, refresh_token: refreshToken }); fail(error, 'Could not complete the email link'); return data.session; },
     async updatePassword(password: string) { const { data, error } = await requireClient().auth.updateUser({ password }); fail(error, 'Could not update password'); return data.user; },
+    // Phone-code login (#50). Customers ask Supabase Auth directly; the Send SMS hook delivers the code on WhatsApp
+    // whatever channel is named, so none is. Owners never call Auth to request a code (see requestOwnerCode).
+    async requestCode(phone: string, captchaToken?: string) {
+      if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Owners request their code with requestOwnerCode.');
+      const db = requireClient(); const e164 = settingsPhone(phone, true); if (!e164) throw new OtpError('GENERIC');
+      const { error } = await db.auth.signInWithOtp({ phone: e164, options: { shouldCreateUser: true, ...(captchaToken ? { captchaToken } : {}) } });
+      if (error) throw otpFailure(error, 'request');
+    },
+    // The server answers the same whether or not a code was sent (request-owner-code), so this resolves for every
+    // number that passes the CAPTCHA, and the screen must look the same afterwards. It never reports NOT_ON_WHATSAPP.
+    async requestOwnerCode(phone: string, captchaToken?: string) {
+      if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Customers request their code with requestCode.');
+      requireClient(); const e164 = settingsPhone(phone, true); if (!e164) throw new OtpError('GENERIC');
+      let res: Response;
+      try {
+        res = await fetch(`${url!.replace(/\/+$/, '')}/functions/v1/request-owner-code`, {
+          method: 'POST', headers: { apikey: key!, ...(key!.startsWith('eyJ') ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: e164, slug, ...(captchaToken ? { captchaToken } : {}) }),
+        });
+      } catch (cause) { throw new OtpError('GENERIC', cause); }
+      let body: { ok?: unknown; error?: unknown } | null = null;
+      try { body = await res.json(); } catch { /* handled by status */ }
+      if (res.ok && body?.ok === true) return;
+      throw new OtpError(res.status === 429 ? 'RATE_LIMITED' : 'GENERIC');
+    },
+    // A new number creates a customer account here with no sign-up step. In the owners' app a session only counts
+    // if this account is an admin member of this restaurant; anyone else fails exactly like a wrong code.
+    async verifyCode(phone: string, code: string) {
+      const db = requireClient(); const e164 = settingsPhone(phone, true); if (!e164) throw new OtpError('GENERIC');
+      const token = typeof code === 'string' ? code.trim() : '';
+      if (!/^[0-9]{6}$/.test(token)) throw new OtpError('WRONG_OR_EXPIRED_CODE');
+      const { data, error } = await db.auth.verifyOtp({ phone: e164, token, type: 'sms' });
+      if (error) throw otpFailure(error, 'verify');
+      if (audience === 'admin') {
+        let owner: boolean | undefined;
+        try { owner = await isAdmin(); } catch { owner = undefined; }
+        if (!owner) {
+          clearSubscriptions(); await db.auth.signOut({ scope: 'local' }).catch(() => undefined);
+          throw new OtpError(owner === undefined ? 'GENERIC' : 'WRONG_OR_EXPIRED_CODE');
+        }
+      }
+      return data;
+    },
     async signOut() { const db = requireClient(); clearSubscriptions(); const { error } = await db.auth.signOut({ scope: 'local' }); fail(error, 'Could not sign out'); },
     onChange(callback: Parameters<SupabaseClient['auth']['onAuthStateChange']>[0]) { const { data } = requireClient().auth.onAuthStateChange(callback); return () => data.subscription.unsubscribe(); },
   };
