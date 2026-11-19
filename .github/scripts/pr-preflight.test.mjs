@@ -205,6 +205,16 @@ test('migration policy: open mode warns; frozen on main rejects edits', t => {
   g.commit(['supabase/migrations/20260101000000_base.sql']);
   assert.throws(() => g.run(), /frozen/);
 });
+test('migration policy: frozen on main allows a timestamped new migration and rejects an unnamed one', t => {
+  const ok = fixture(t);
+  withPolicy(ok, 'frozen');
+  ok.commit(['supabase/migrations/20270101000000_new.sql']);
+  assert.equal(ok.run().warnings.length, 0);
+  const bad = fixture(t);
+  withPolicy(bad, 'frozen');
+  bad.commit(['supabase/migrations/new.sql']);
+  assert.throws(() => bad.run(), /timestamp/);
+});
 test('migration policy: head cannot loosen main (flip mode, delete, malformed, null)', t => {
   const flip = fixture(t);
   withPolicy(flip, 'frozen');

@@ -41,7 +41,7 @@ export async function evaluateTrustedMigrations({ repository, request, files, bo
   const policy = await readMainMigrationPolicy({ repository, request });
   if (policy === null) return { errors: [], warnings: [] };
   const changes = migrationChanges(files);
-  const verdict = checkMigrationPolicy({ mode: policy.mode, files: changes, override: parseOverride(body) });
+  const verdict = checkMigrationPolicy({ mode: policy.mode, files: changes, override: parseOverride(body), baselineVersion: policy.baseline?.version });
   if (changes.some(file => (file.path === POLICY_FILE && file.status === 'D') ||
       (file.previous === POLICY_FILE && file.path !== POLICY_FILE))) verdict.errors.push(`${POLICY_FILE} must remain present; restore it before merging.`);
   return verdict;

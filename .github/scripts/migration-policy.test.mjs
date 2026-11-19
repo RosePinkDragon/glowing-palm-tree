@@ -28,6 +28,22 @@ test('frozen rejects modify, delete and rename of migrations but allows adds', (
   const renamed = { status: 'R', previous: m('20261112000001_checkout'), path: m('20270101000001_checkout') };
   assert.equal(checkMigrationPolicy({ mode: 'frozen', files: [renamed] }).errors.length, 1);
 });
+test('frozen requires timestamped names that sort after the baseline', () => {
+  const named = path => [{ status: 'A', path: `supabase/migrations/${path}` }];
+  const baselineVersion = '20261117000000';
+  assert.deepEqual(checkMigrationPolicy({ mode: 'frozen', files: named('20261118090000_add_x.sql'), baselineVersion }).errors, []);
+  for (const bad of ['new.sql', '2026_new.sql', '20261118090000_Upper.sql', '20261118090000_x.txt', '20261118090000.sql']) {
+    assert.equal(checkMigrationPolicy({ mode: 'frozen', files: named(bad), baselineVersion }).errors.length, 1, bad);
+  }
+  assert.equal(checkMigrationPolicy({ mode: 'frozen', files: named('20261117000000_dup.sql'), baselineVersion }).errors.length, 1);
+  assert.equal(checkMigrationPolicy({ mode: 'frozen', files: named('20261101000000_old.sql'), baselineVersion }).errors.length, 1);
+});
+test('frozen forbids editing, deleting or renaming the recorded baseline file', () => {
+  const baseline = 'supabase/migrations/20261117000000_baseline.sql';
+  for (const file of [{ status: 'M', path: baseline }, { status: 'D', path: baseline }, { status: 'R', previous: baseline, path: 'supabase/migrations/20261118000000_baseline.sql' }]) {
+    assert.equal(checkMigrationPolicy({ mode: 'frozen', files: [file], baselineVersion: '20261117000000' }).errors.length, 1);
+  }
+});
 test('frozen cannot be overridden', () => {
   assert.equal(checkMigrationPolicy({ mode: 'frozen', files: [edit], override: 'because' }).errors.length, 1);
 });

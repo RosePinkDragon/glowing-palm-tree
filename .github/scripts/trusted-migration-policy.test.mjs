@@ -48,9 +48,10 @@ test('existing explicit migration override works for baseline additions but cann
     { filename: migration('baseline'), status: 'modified' },
     { filename: migration('baseline'), status: 'removed' },
     { filename: 'elsewhere.sql', previous_filename: migration('baseline'), status: 'renamed' },
-    { filename: migration('new'), previous_filename: migration('baseline'), status: 'renamed' },
+    { filename: migration('20270101000000_new'), previous_filename: migration('baseline'), status: 'renamed' },
   ]) assert.equal((await fixture('frozen').run([change], override)).errors.length, 1);
-  assert.deepEqual((await fixture('frozen').run([{ filename: migration('new'), status: 'added' }])).errors, []);
+  assert.deepEqual((await fixture('frozen').run([{ filename: migration('20270101000000_new'), status: 'added' }])).errors, []);
+  assert.equal((await fixture('frozen').run([{ filename: migration('new'), status: 'added' }])).errors.length, 1);
 });
 
 test('open mode warnings and non-migration changes preserve the existing policy semantics', async () => {
@@ -114,4 +115,13 @@ test('privileged workflow checks out main without persisted credentials, never t
   assert.match(workflow, /ref: main\n/);
   assert.match(workflow, /persist-credentials: false/);
   assert.doesNotMatch(workflow, /pull_request\.head|pull_request\.merge_commit|npm (?:ci|install)/);
+});
+
+test('frozen policy from main requires new migrations to sort after the recorded baseline', async () => {
+  const json = JSON.stringify({ mode: 'frozen', baseline: { version: '20261117000000', commit: 'b'.repeat(40) } });
+  const add = name => [{ filename: migration(name), status: 'added' }];
+  assert.deepEqual((await fixture('frozen', { json }).run(add('20261118000000_next'))).errors, []);
+  assert.equal((await fixture('frozen', { json }).run(add('20261116000000_older'))).errors.length, 1);
+  assert.equal((await fixture('frozen', { json }).run(add('20261117000000_same'))).errors.length, 1);
+  assert.equal((await fixture('frozen', { json }).run([{ filename: migration('20261117000000_baseline'), status: 'modified' }])).errors.length, 1);
 });
