@@ -98,6 +98,7 @@ function PhoneLogin({ market }: { market: Market }) {
     return () => clearInterval(tick);
   }, [cooldown]);
   const waitingForCaptcha = useCaptcha && !captcha && !captchaFailed;
+  const blocked = busy || remaining > 0 || waitingForCaptcha || captchaFailed; // one guard for the buttons and for Enter
   const send = async (target: string, moveOn: boolean) => {
     if (working.current) return; working.current = true; setBusy(true); setErrorCode(null); setFieldError('');
     const started = market.identity.current;
@@ -116,7 +117,7 @@ function PhoneLogin({ market }: { market: Market }) {
     } finally { working.current = false; if (alive.current) { setBusy(false); if (useCaptcha) { setCaptcha(''); setCaptchaReset(n => n + 1); } } }
   };
   const getCode = () => {
-    if (busy || remaining > 0 || waitingForCaptcha || captchaFailed) return; // Enter must respect the same guards as the disabled button
+    if (blocked) return;
     const target = normalizeIndianMobile(field); const problem = phoneFieldError(field);
     if (!target || problem) { setFieldError(problem); return; }
     void send(target, true);
@@ -154,7 +155,7 @@ function PhoneLogin({ market }: { market: Market }) {
       {errorBox}
       {useCaptcha ? <Captcha onToken={token => { setCaptcha(token); if (token) setCaptchaFailed(false); }} onFailed={() => setCaptchaFailed(true)} resetKey={captchaReset} /> : null}
       {useCaptcha && (waitingForCaptcha || captchaFailed) ? <MarketText variant="muted">{captchaFailed ? 'The security check could not load. Check your connection, reload the page and try again.' : 'Checking that you are not a robot…'}</MarketText> : null}
-      <MarketButton label={busy ? 'Sending…' : remaining > 0 ? `Get code in ${formatCountdown(remaining)}` : 'Get code'} disabled={busy || remaining > 0 || waitingForCaptcha || captchaFailed} onPress={getCode} />
+      <MarketButton label={busy ? 'Sending…' : remaining > 0 ? `Get code in ${formatCountdown(remaining)}` : 'Get code'} disabled={blocked} onPress={getCode} />
       <View style={{ backgroundColor: colors.tint, borderRadius: 14, padding: 14 }}><Text style={{ color: colors.ink, fontSize: 14, lineHeight: 21 }}>New here? Your number creates your account; there&apos;s no password to remember.</Text></View>
     </> : <>
       <MarketText variant="heading">Enter the code</MarketText>
@@ -170,7 +171,7 @@ function PhoneLogin({ market }: { market: Market }) {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6 }}>
         <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23 }}>Didn&apos;t get it?</Text>
         {resendWait ? <Text style={{ color: colors.ink, fontSize: 15, lineHeight: 23 }}>You can resend in <Text style={bold}>{formatCountdown(remaining)}</Text></Text>
-          : <Pressable accessibilityRole="button" disabled={busy || waitingForCaptcha} accessibilityState={{ disabled: busy || waitingForCaptcha }} onPress={() => void send(phone, false)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.primary, fontSize: 15, textDecorationLine: 'underline', opacity: busy || waitingForCaptcha ? 0.5 : 1, ...bold }}>Send a new code</Text></Pressable>}
+          : <Pressable accessibilityRole="button" disabled={blocked} accessibilityState={{ disabled: blocked }} onPress={() => void send(phone, false)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.primary, fontSize: 15, textDecorationLine: 'underline', opacity: blocked ? 0.5 : 1, ...bold }}>Send a new code</Text></Pressable>}
       </View>
       {useCaptcha ? <Captcha onToken={token => { setCaptcha(token); if (token) setCaptchaFailed(false); }} onFailed={() => setCaptchaFailed(true)} resetKey={captchaReset} /> : null}
       {useCaptcha && captchaFailed ? <MarketText variant="muted">The security check could not load. Reload the page and try again.</MarketText> : null}
