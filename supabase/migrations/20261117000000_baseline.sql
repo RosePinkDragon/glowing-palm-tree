@@ -1417,13 +1417,14 @@ end $$;
 -- One call decides three things atomically: is this phone an admin member of the restaurant, may this
 -- request proceed under the rate limits, and the log row. Limits count admitted requests (every
 -- outcome except rate_limited), owners and non-owners alike, so a flood cannot extend its own lockout:
---   per phone: 3 per 15 minutes and 10 per 24 hours   per IP address: 10 per hour
+--   per phone: 3 per 15 minutes and 10 per 24 hours   per IP address: 10 per hour (skipped when no trusted
+--   address is supplied: the ip is then stored NULL and only the other limits apply)
 --   per restaurant: 30 sends (sent_owner or provider_failed) per hour, a cap on WhatsApp cost
 -- The caller must send a code only when is_owner and allowed are both true, and must answer every other
 -- case exactly as it answers that one. attempt_id is NULL only when a rate_limited row was not logged
--- because that IP already has 50 such rows in the hour (bounds log growth under a flood).
+-- because that IP (or, with no address, that phone) already has 50 such rows in the hour (bounds log growth under a flood).
 -- Concurrency: advisory transaction locks serialise requests per IP, phone and restaurant, always taken
--- in that order, so concurrent calls cannot both pass a limit. No row locks are taken on users, sessions,
+-- in that order (the IP lock only with an address), so concurrent calls cannot both pass a limit. No row locks are taken on users, sessions,
 -- accounts or businesses (the log insert's foreign key takes only a KEY SHARE on the restaurant row),
 -- so the customer lifecycle lock order (users, sessions, accounts, business, advisory, rows) is unaffected.
 -- Supabase Auth stores phone numbers without the leading plus sign.
@@ -1459,7 +1460,9 @@ begin
     ) into v_owner;
   end if;
 
-  perform pg_advisory_xact_lock(hashtextextended('owner-login:ip:' || coalesce(host(v_ip), 'none'), 0));
+  if v_ip is not null then
+    perform pg_advisory_xact_lock(hashtextextended('owner-login:ip:' || host(v_ip), 0));
+  end if;
   perform pg_advisory_xact_lock(hashtextextended('owner-login:phone:' || p_phone, 0));
   if v_business is not null then
     perform pg_advisory_xact_lock(hashtextextended('owner-login:business:' || v_business::text, 0));
@@ -1472,14 +1475,14 @@ begin
        and a.created_at > v_now - interval '15 minutes') >= 3
     or (select count(*) from public.owner_login_attempts a where a.phone = p_phone and a.outcome <> 'rate_limited'
        and a.created_at > v_now - interval '24 hours') >= 10
-    or (select count(*) from public.owner_login_attempts a where a.outcome <> 'rate_limited'
-       and a.created_at > v_now - interval '1 hour' and (a.ip = v_ip or (v_ip is null and a.ip is null))) >= 10
+    or (v_ip is not null and (select count(*) from public.owner_login_attempts a where a.outcome <> 'rate_limited'
+       and a.created_at > v_now - interval '1 hour' and a.ip = v_ip) >= 10)
     or (v_business is not null and (select count(*) from public.owner_login_attempts a where a.business_id = v_business
        and a.outcome in ('sent_owner', 'provider_failed') and a.created_at > v_now - interval '1 hour') >= 30);
   v_outcome := case when v_limited then 'rate_limited' when v_owner then 'sent_owner' else 'non_owner' end;
 
   if v_outcome = 'rate_limited' and (select count(*) from public.owner_login_attempts a where a.outcome = 'rate_limited'
-       and a.created_at > v_now - interval '1 hour' and (a.ip = v_ip or (v_ip is null and a.ip is null))) >= 50 then
+       and a.created_at > v_now - interval '1 hour' and (case when v_ip is not null then a.ip = v_ip else a.phone = p_phone end)) >= 50 then
     v_id := null;
   else
     insert into public.owner_login_attempts (phone, business_id, app, ip, outcome, created_at)

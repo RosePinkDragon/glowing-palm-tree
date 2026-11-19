@@ -39,14 +39,14 @@ export function normalisePhone(value: unknown): string | null {
   return match ? `+91${match[1]}` : null;
 }
 
-/** The caller's address as seen by Cloudflare in front of Supabase; null when no header carries one. */
+/**
+ * The caller's address as Cloudflare saw it. Only `cf-connecting-ip` is trusted: Cloudflare overwrites any value the caller
+ * sends, whereas x-real-ip and the left end of x-forwarded-for can be forged. No trusted address means null, and the per-IP
+ * limit is then skipped (the phone, restaurant and CAPTCHA limits still apply).
+ */
 export function clientIp(headers: Headers): string | null {
-  const candidates = [headers.get('cf-connecting-ip'), headers.get('x-real-ip'), headers.get('x-forwarded-for')?.split(',')[0]];
-  for (const candidate of candidates) {
-    const value = candidate?.trim();
-    if (value && value.length <= 45 && /^[0-9a-fA-F:.]+$/.test(value)) return value;
-  }
-  return null;
+  const value = headers.get('cf-connecting-ip')?.trim();
+  return value && value.length <= 45 && /^[0-9a-fA-F:.]+$/.test(value) ? value : null;
 }
 
 /** Cloudflare Turnstile server-side check. Any failure, including network errors, rejects the token. */
@@ -63,6 +63,19 @@ export function turnstileVerifier(secret: string, fetcher: typeof fetch = fetch)
       return false;
     }
   };
+}
+
+/** Thrown by the verifier when neither a Turnstile secret nor the explicit local opt-out is configured. */
+export class CaptchaNotConfigured extends Error {}
+
+/**
+ * CAPTCHA fails closed: the Turnstile secret is required, and the only way to run without it is the explicit local opt-out
+ * OWNER_CODE_CAPTCHA=off. With neither, every request is refused by the handler with a 503 instead of silently skipping the check.
+ */
+export function captchaVerifier(env: { secret?: string; optOut?: string }, fetcher: typeof fetch = fetch): Ports['verifyCaptcha'] {
+  if (env.secret) return turnstileVerifier(env.secret, fetcher);
+  if (env.optOut === 'off') return async () => true;
+  return async () => { throw new CaptchaNotConfigured(); };
 }
 
 export async function handle(request: Request, ports: Ports, config: Config): Promise<Response> {
@@ -84,7 +97,14 @@ export async function handle(request: Request, ports: Ports, config: Config): Pr
   if (typeof slug !== 'string' || slug.length > 50 || !SLUG.test(slug)) return json(400, { ok: false, error: 'invalid_request' });
   const ip = clientIp(request.headers);
   const token = typeof body.captchaToken === 'string' ? body.captchaToken : undefined;
-  if (!await ports.verifyCaptcha(token, ip)) return json(400, { ok: false, error: 'captcha_failed' });
+  let captcha: boolean;
+  try {
+    captcha = await ports.verifyCaptcha(token, ip);
+  } catch {
+    console.error('owner code request: CAPTCHA is not configured');
+    return json(503, { ok: false, error: 'unavailable' });
+  }
+  if (!captcha) return json(400, { ok: false, error: 'captcha_failed' });
 
   // From here on every path ends in the same response, released at the same moment. The work (claim, and a
   // send for an authorised owner only) races a fixed delay; the response always waits out the delay, and work

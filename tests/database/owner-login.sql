@@ -114,7 +114,7 @@ reset role;
 delete from public.owner_login_attempts;
 set local role service_role;
 
--- Per IP: ten admitted per hour across different numbers; another address and the null bucket are separate.
+-- Per IP: ten admitted per hour across different numbers; another address is separate, and with no trusted address the limit is skipped.
 do $$ declare r record; begin
  for i in 1..10 loop
   select * into r from public.claim_owner_code_attempt('+9198765002'||lpad(i::text,2,'0'),'ammu-sammu','192.0.2.50','ammu-sammu-admin');
@@ -124,12 +124,16 @@ do $$ declare r record; begin
  perform public.test_assert(not r.allowed,'eleventh request from one address refused');
  select * into r from public.claim_owner_code_attempt('+919876500298','ammu-sammu','192.0.2.51','ammu-sammu-admin');
  perform public.test_assert(r.allowed,'another address unaffected');
- for i in 1..10 loop
-  select * into r from public.claim_owner_code_attempt('+9198765003'||lpad(i::text,2,'0'),'ammu-sammu',null,'ammu-sammu-admin');
-  perform public.test_assert(r.allowed,'unknown-address request '||i||' allowed');
+ -- No trusted address (null or malformed): stored as NULL and never limited per address, only by phone, restaurant and CAPTCHA.
+ for i in 1..14 loop
+  select * into r from public.claim_owner_code_attempt('+9198765003'||lpad(i::text,2,'0'),'ammu-sammu',case when i%2=0 then null else 'garbage' end,'ammu-sammu-admin');
+  perform public.test_assert(r.allowed,'request '||i||' without an address allowed');
  end loop;
- select * into r from public.claim_owner_code_attempt('+919876500399','ammu-sammu','garbage','ammu-sammu-admin');
- perform public.test_assert(not r.allowed,'unknown addresses share one bucket');
+ perform public.test_assert((select count(*)=14 and bool_and(ip is null) from public.owner_login_attempts where phone like '+9198765003%'),'addressless requests stored with a null ip');
+ select * into r from public.claim_owner_code_attempt('+919876500301','ammu-sammu',null,'ammu-sammu-admin');
+ perform public.test_assert(r.allowed,'one request is still within the phone limit');
+ for i in 1..2 loop select * into r from public.claim_owner_code_attempt('+919876500301','ammu-sammu',null,'ammu-sammu-admin'); end loop;
+ perform public.test_assert(not r.allowed,'the phone limit still applies without an address');
 end $$;
 reset role;
 delete from public.owner_login_attempts;
@@ -162,6 +166,20 @@ do $$ declare r record; begin
  select * into r from public.claim_owner_code_attempt('+919876500777','ammu-sammu','192.0.2.70','ammu-sammu-admin');
  perform public.test_assert(not r.allowed and r.attempt_id is null,'refusal beyond the log cap is answered but not stored');
  perform public.test_assert((select count(*)=50 from public.owner_login_attempts where outcome='rate_limited'),'log growth bounded');
+end $$;
+reset role;
+delete from public.owner_login_attempts;
+-- With no address the cap is per phone.
+insert into public.owner_login_attempts(phone,business_id,app,ip,outcome)
+ select '+919876500888',null,'ammu-sammu-admin',null,'rate_limited' from generate_series(1,50);
+insert into public.owner_login_attempts(phone,business_id,app,ip,outcome)
+ select '+919876500888',null,'ammu-sammu-admin',null,'non_owner' from generate_series(1,10);
+set local role service_role;
+do $$ declare r record; begin
+ select * into r from public.claim_owner_code_attempt('+919876500888','ammu-sammu',null,'ammu-sammu-admin');
+ perform public.test_assert(not r.allowed and r.attempt_id is null,'addressless refusal beyond the phone log cap is not stored');
+ select * into r from public.claim_owner_code_attempt('+919876500889','ammu-sammu',null,'ammu-sammu-admin');
+ perform public.test_assert(r.allowed and r.attempt_id is not null,'another phone with no address is still logged');
 end $$;
 reset role;
 delete from public.owner_login_attempts;

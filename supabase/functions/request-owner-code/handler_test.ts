@@ -1,4 +1,4 @@
-import { clientIp, handle, normalisePhone, turnstileVerifier, type Claim, type Ports } from './handler.ts';
+import { captchaVerifier, clientIp, handle, normalisePhone, turnstileVerifier, type Claim, type Ports } from './handler.ts';
 
 function assert(value: unknown, reason: string): asserts value { if (!value) throw new Error(reason); }
 const config = { responseMs: 2000 };
@@ -153,12 +153,42 @@ Deno.test('numbers are normalised to +91 and anything else is refused', () => {
   }
 });
 
-Deno.test('caller address comes from Cloudflare first, ignores junk, and may be absent', () => {
-  assert(clientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.1.1.1' })) === '203.0.113.7', 'cf header');
-  assert(clientIp(new Headers({ 'x-forwarded-for': '198.51.100.1, 10.0.0.1' })) === '198.51.100.1', 'forwarded header');
+Deno.test('only Cloudflare\'s address header is trusted; forgeable headers and junk give no address', () => {
+  assert(clientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.1.1.1', 'x-real-ip': '2.2.2.2' })) === '203.0.113.7', 'cf header');
   assert(clientIp(new Headers({ 'cf-connecting-ip': '2001:db8::1' })) === '2001:db8::1', 'ipv6');
+  assert(clientIp(new Headers({ 'x-forwarded-for': '198.51.100.1, 10.0.0.1' })) === null, 'x-forwarded-for trusted');
+  assert(clientIp(new Headers({ 'x-real-ip': '198.51.100.1' })) === null, 'x-real-ip trusted');
   assert(clientIp(new Headers({ 'cf-connecting-ip': "1.1.1.1'; drop table" })) === null, 'junk accepted');
   assert(clientIp(new Headers()) === null, 'absent header');
+});
+
+Deno.test('without a trusted address the claim gets none, so the database skips the per-IP limit', async () => {
+  const { ports, claims } = fixture({ attemptId: 'a', isOwner: true, allowed: true });
+  await handle(request(valid, { 'x-forwarded-for': '198.51.100.1', 'x-real-ip': '198.51.100.2' }), ports, config);
+  assert(claims[0].ip === null, 'a forgeable header reached the claim');
+});
+
+Deno.test('CAPTCHA fails closed: no secret and no explicit opt-out refuses every request before any attempt is recorded', async () => {
+  const quiet = console.error; const logs: string[] = []; console.error = (...a: unknown[]) => { logs.push(a.join(' ')); };
+  try {
+    for (const env of [{}, { secret: '' }, { optOut: '' }, { optOut: 'false' }, { optOut: 'OFF' }, { optOut: 'on' }]) {
+      const { ports, calls } = fixture({ attemptId: 'a', isOwner: true, allowed: true }, { verifyCaptcha: captchaVerifier(env) });
+      const response = await handle(request(valid), ports, config);
+      assert(response.status === 503 && (await response.json()).error === 'unavailable', `not refused for ${JSON.stringify(env)}`);
+      assert(!calls.includes('claim') && !calls.includes('send'), 'work happened without a CAPTCHA decision');
+    }
+  } finally { console.error = quiet; }
+  assert(logs.length === 6 && logs.every((line) => line === 'owner code request: CAPTCHA is not configured'), `logs: ${logs.join('|')}`);
+});
+
+Deno.test('CAPTCHA wiring: the secret verifies with Turnstile, and only the explicit opt-out skips it', async () => {
+  const asked: string[] = [];
+  const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => { asked.push(String(init?.body)); return Response.json({ success: false }); }) as typeof fetch;
+  const withSecret = fixture({ attemptId: 'a', isOwner: true, allowed: true }, { verifyCaptcha: captchaVerifier({ secret: 's', optOut: 'off' }, fetcher) });
+  const refused = await handle(request(valid), withSecret.ports, config);
+  assert(refused.status === 400 && (await refused.json()).error === 'captcha_failed' && asked.length === 1 && !withSecret.calls.includes('claim'), 'secret did not take precedence over the opt-out');
+  const optedOut = fixture({ attemptId: 'a', isOwner: false, allowed: true }, { verifyCaptcha: captchaVerifier({ optOut: 'off' }, fetcher) });
+  assert((await handle(request(valid), optedOut.ports, config)).status === 200 && optedOut.calls.includes('claim') && asked.length === 1, 'explicit opt-out did not skip the check');
 });
 
 Deno.test('Turnstile verification sends the secret, token and address, and fails closed', async () => {

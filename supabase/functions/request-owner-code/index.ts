@@ -1,10 +1,12 @@
-import { handle, turnstileVerifier, type Claim, type Ports } from './handler.ts';
+import { captchaVerifier, handle, type Claim, type Ports } from './handler.ts';
 
 declare const EdgeRuntime: { waitUntil(work: Promise<unknown>): void } | undefined;
 
 const supabase = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const turnstileSecret = Deno.env.get('TURNSTILE_SECRET_KEY') ?? '';
+// Local development only: OWNER_CODE_CAPTCHA=off in the untracked local env file. Never set it on a hosted project.
+const captchaOptOut = Deno.env.get('OWNER_CODE_CAPTCHA') ?? '';
 const configuredDelay = Number(Deno.env.get('OWNER_CODE_RESPONSE_MS') ?? '2000');
 // Long enough to hide the cost of a send, short enough to wait for. Bounded so a typo cannot stall logins.
 const responseMs = Number.isFinite(configuredDelay) ? Math.min(Math.max(configuredDelay, 500), 8000) : 2000;
@@ -15,8 +17,8 @@ async function timedFetch(url: string, init: RequestInit): Promise<Response> {
 const headers = { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'content-type': 'application/json' };
 
 const ports: Ports = {
-  // Without a secret (local development only) the check is skipped; production sets it, see docs/RELEASE.md.
-  verifyCaptcha: turnstileSecret ? turnstileVerifier(turnstileSecret) : async () => true,
+  // Fails closed without TURNSTILE_SECRET_KEY unless OWNER_CODE_CAPTCHA=off; see docs/RELEASE.md.
+  verifyCaptcha: captchaVerifier({ secret: turnstileSecret, optOut: captchaOptOut }),
   claim: async ({ phone, slug, ip, app }): Promise<Claim> => {
     if (!supabase || !serviceKey) throw new Error('not configured');
     const res = await timedFetch(`${supabase}/rest/v1/rpc/claim_owner_code_attempt`, {

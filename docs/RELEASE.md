@@ -126,7 +126,8 @@ stay in `services.auth` until the screens switch.
 the code and posts it to the `send-sms-hook` Edge Function, which verifies the signed request and sends the template
 through MSG91. Owners never call Auth for a code: the owners' app calls `request-owner-code`, which checks the number
 against `business_memberships` for that restaurant and asks Auth to send a code (without creating a user) only for an admin
-member. Every other request is logged and answered identically. A verified code only matters to an owner if the account
+member. Every other request to that endpoint is logged and answered identically (the endpoint's own response; see the cooldown
+limit under Rate limits below for what Auth's resend timer can still reveal). A verified code only matters to an owner if the account
 is an admin member: access still comes from `business_memberships`, checked on the server.
 
 ### Provider setup (do first; approvals take days)
@@ -156,7 +157,8 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 | `MSG91_TEMPLATE_NAME` | `send-sms-hook` | Approved template name |
 | `MSG91_TEMPLATE_NAMESPACE` | `send-sms-hook` | Template namespace shown by MSG91/Meta |
 | `MSG91_TEMPLATE_LANGUAGE` | `send-sms-hook` | Optional template language code, default `en` |
-| `TURNSTILE_SECRET_KEY` | `request-owner-code` | Turnstile secret. **Set it in production, together with the site key**: without it the function skips the CAPTCHA check (local development only) |
+| `TURNSTILE_SECRET_KEY` | `request-owner-code` | Turnstile secret. **Required in production, together with the site key.** The function fails closed: without it every request gets a 503 and a fixed log line |
+| `OWNER_CODE_CAPTCHA` | `request-owner-code` | Local development only: `off` skips the CAPTCHA check when no secret is set. Put it only in the untracked local env file passed to `supabase functions serve`; never set it on a hosted project |
 | `OWNER_CODE_RESPONSE_MS` | `request-owner-code` | Optional fixed response time, default 2000, kept between 500 and 8000 |
 
 ### Enable it (hosted project)
@@ -164,7 +166,8 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 1. Deploy: `supabase functions deploy send-sms-hook` and `supabase functions deploy request-owner-code` (both have JWT verification
    off in `supabase/config.toml`; each authenticates itself).
 2. Authentication → **Hooks** → Send SMS: HTTPS, the URL of `send-sms-hook`, generate the secret, and store it as `SEND_SMS_HOOK_SECRET`.
-   Auth signs every call (Standard Webhooks) and the function rejects anything unsigned or older than five minutes.
+   **Enable the hook and store the secret in the same sitting**: a hook that is enabled before the function has its secret (or a secret
+   that no longer matches) makes every code request fail. Auth signs every call (Standard Webhooks) and the function rejects anything unsigned or older than five minutes.
 3. Authentication → Providers → **Phone**: enable it. No SMS provider is needed with the hook. Set **SMS OTP expiry to 600**
    seconds (10 minutes; the default is far longer), length 6, and the resend interval (minimum time between codes, `max_frequency`) to **30 seconds**, the cooldown the screens show by default. Leave the project SMS rate
    limit modest (`auth.rate_limit.sms_sent`); it also caps WhatsApp spend on the customer path.
@@ -172,12 +175,16 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, see provider setup step 4). The customer screens send a token with each code request. Auth skips its own CAPTCHA check for the service-role call that `request-owner-code`
    makes, because that function has already verified the token itself.
 5. `supabase/config.toml` carries the same settings for the local stack (OTP expiry 600, resend interval 30 seconds, hook, CAPTCHA
-   off by default with Cloudflare's test keys documented in the file, two fictional test numbers that skip the hook and accept `123456`). **Do not run `supabase config push` while `[auth.sms.test_otp]` is
-   present**: it would make those codes valid on the hosted project. Configure hosted projects in the dashboard.
+   off by default with Cloudflare's test keys documented in the file, two fictional test numbers that skip the hook and accept `123456`). **Never run `supabase config push` for this repository**: it would push
+   CAPTCHA off, the local hook address and the fictional test OTPs (making those codes valid on the hosted project). Configure hosted
+   Auth in the dashboard only. For local functions, put `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
 6. Verify on staging before launch: a customer code arrives and logs in a new number; a number that is not on WhatsApp gets the
    "could not deliver" error (customer only); an owner's number receives a code from the owners' app; a non-owner's number
    gets the identical screen and **no message appears in the MSG91 log**; response times look alike. If owners never receive a
-   code, check the Auth logs for a CAPTCHA refusal of the service-role call.
+   code, check the Auth logs for a CAPTCHA refusal of the service-role call. Also request a code as a tester from a known
+   network and check that `select ip, outcome, created_at from public.owner_login_attempts order by created_at desc limit 5;` shows an
+   `ip` that is non-null and equals the tester's real public address. If it is null, the per-IP limit is not running (only
+   Cloudflare's `cf-connecting-ip` is trusted): record it as a launch follow-up rather than relying on that limit.
 
 ### Production owners
 
@@ -199,9 +206,23 @@ An owner who already has a customer account on the same number is the same user;
 advisory locks in the order IP, phone, restaurant (it takes no row locks on users, sessions, accounts or businesses, so the
 lifecycle lock order above is unaffected). Limits count admitted requests, owners and non-owners alike: 3 per phone per 15 minutes
 and 10 per day, 10 per IP address per hour, and 30 sends per restaurant per hour to cap cost. Refused requests are logged but never
-extend a lockout. A determined attacker with working CAPTCHA tokens can still lock one number out for a while; the per-IP limit makes
-that need several addresses. The client address is Cloudflare's `cf-connecting-ip`; the per-phone and per-restaurant limits hold
-even if an address is spoofed.
+extend a lockout. The only trusted client address is Cloudflare's `cf-connecting-ip`; `x-real-ip` and `x-forwarded-for` are ignored
+because a caller can forge them. When no trusted address is present the row's `ip` is NULL and the per-IP limit is skipped (the phone,
+restaurant and CAPTCHA limits still apply); verify this on staging as described above.
+
+**Accepted risk: lockout.** A sustained attacker with working CAPTCHA tokens can keep an owner's number refused for *new* sign-ins
+for up to a day or more, because the per-phone daily quota refills only as the attacker's own admitted attempts age out. Owners who
+are already signed in keep working. Accepted for launch; a follow-up should add a recovery path (for example a trusted override).
+
+**Accepted risk: cooldown oracle.** The identical response is a property of the `request-owner-code` endpoint only. Supabase Auth keeps a
+per-user resend timestamp that the endpoint cannot hide: a caller with two CAPTCHA solves can ask the owners' endpoint for a number and
+then immediately make the public customer-flow request to Auth for the same number; Auth answers with its "request again after N
+seconds" refusal only if a code was just sent, which happens only for an owner. That tells an owner's number apart, and it also
+sends a WhatsApp message to the owner (and the customer-flow request itself sends one to any stranger's number, at our cost).
+Accepted for launch; the CAPTCHA, the limits above and the project SMS limit are the only mitigations.
+
+**Owner resend cooldown.** An owner who asks again inside Auth's 30-second resend interval is consumed silently (the endpoint still
+answers normally), so the owners' screen (50-C) must enforce its own 30-second cooldown between requests.
 
 `public.owner_login_attempts` records phone, restaurant, app, IP address and outcome (`non_owner`, `rate_limited`, `sent_owner`,
 `provider_failed`), never a code or token. RLS is on with no policy and no client grant; only developers using the service role or the SQL editor

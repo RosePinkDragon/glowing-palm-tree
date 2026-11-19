@@ -103,5 +103,6 @@ is included. Keep #53 open for its remaining screen and native-device acceptance
 Auth states is `error.cause.retryAfterSeconds`), `NOT_ON_WHATSAPP` (customers only), `RATE_LIMITED` and `GENERIC` (which also covers a
 failed CAPTCHA and a malformed number). The owner request
 resolves identically for owners and non-owners and cannot report delivery. In the owners' app `verifyCode` keeps a session only for an
-admin member of that restaurant; any other number fails as `WRONG_OR_EXPIRED_CODE`. The email and password functions remain until the
-screens switch.
+admin member of that restaurant; any other number fails as `WRONG_OR_EXPIRED_CODE`. An owner who requests again within 30 seconds is consumed silently by the server, so the owners' screen must enforce its own 30 s cooldown.
+The owners' `verifyCode` verifies on a throwaway client and moves the session to the real client only for an admin member, so a
+non-owner never reaches its storage or auth events. The email and password functions remain until the screens switch.

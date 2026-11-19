@@ -8,7 +8,7 @@ const url = 'https://example.test';
 const config = { url, anonKey: 'sb_publishable_test' };
 const businessId = '10000000-0000-4000-8000-000000000001';
 const userId = '57000000-0000-4000-8000-000000000001';
-const accessToken = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: userId, role: 'authenticated', session_id: userId, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+const accessToken = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: userId, role: 'authenticated', session_id: userId, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.${Buffer.from('signature').toString('base64url')}`;
 const sessionBody = { access_token: accessToken, refresh_token: 'refresh', expires_in: 3600, token_type: 'bearer', user: { id: userId, aud: 'authenticated', phone: '919876543210' } };
 type Seen = { path: string; method: string; body: any; headers: Headers };
 const code = (expected: OtpErrorCode) => (error: unknown) => error instanceof OtpError && error.code === expected && error instanceof ServiceError && allowed.has(error.code);
@@ -184,4 +184,61 @@ test('demo mode refuses every code operation without a request', async () => {
       assert.equal(seen.length, 0);
     });
   } finally { service.dispose(); owner.dispose(); }
+});
+
+test('owners app: a non-owner\'s code never touches the real client\'s storage or auth events; an owner\'s session does arrive', async () => {
+  for (const member of [false, true]) {
+    const writes: string[] = [], store = new Map<string, string>();
+    const storage = { getItem: (name: string) => store.get(name) ?? null, setItem: (name: string, value: string) => { writes.push(`set:${name}`); store.set(name, value); }, removeItem: (name: string) => { writes.push(`remove:${name}`); store.delete(name); } };
+    const service = createMarketServices({ businessSlug: 'ammu-sammu', audience: 'admin', config, storage });
+    const events: string[] = [];
+    try {
+      await withFetch((request) => {
+        if (request.path === '/auth/v1/verify') return Response.json(sessionBody);
+        if (request.path === '/auth/v1/user') return Response.json({ id: userId, aud: 'authenticated', phone: '919876543210' });
+        if (request.path === '/rest/v1/businesses') return Response.json({ id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+        if (request.path === '/rest/v1/business_memberships') {
+          // The membership check carries the verified session's token, not the real client's.
+          assert.equal(request.headers.get('authorization'), `Bearer ${accessToken}`);
+          return Response.json(member ? [{ role: 'admin' }] : []);
+        }
+        if (request.path === '/auth/v1/logout') return new Response(null, { status: 204 });
+        return new Response('unexpected', { status: 500 });
+      }, async () => {
+        const stop = service.auth.onChange((event) => { events.push(event); });
+        await new Promise((resolve) => setTimeout(resolve, 20)); // let the initial-session event settle
+        const settledEvents = events.length, settledWrites = writes.length;
+        if (member) {
+          assert.equal((await service.auth.verifyCode('9876543210', '123456')).session?.access_token, accessToken);
+          assert.ok(events.slice(settledEvents).includes('SIGNED_IN'), 'owner sign-in event missing');
+          assert.ok(writes.slice(settledWrites).some((write) => write.startsWith('set:')) && store.size > 0, 'owner session not stored');
+        } else {
+          await assert.rejects(service.auth.verifyCode('9876543210', '123456'), code('WRONG_OR_EXPIRED_CODE'));
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          assert.deepEqual(events.slice(settledEvents), [], `real client saw auth events: ${events.slice(settledEvents)}`);
+          assert.deepEqual(writes.slice(settledWrites), [], `real client storage written: ${writes.slice(settledWrites)}`);
+          assert.equal(store.size, 0, 'non-owner session stored');
+          assert.equal(await service.auth.session(), null);
+        }
+        stop();
+      });
+    } finally { service.dispose(); }
+  }
+});
+
+test('owners app: the throwaway client is the only one that sees the code, then only an owner moves to the real client', async () => {
+  const service = make('admin');
+  try {
+    await withFetch((request) => {
+      if (request.path === '/auth/v1/verify') return Response.json(sessionBody);
+      if (request.path === '/rest/v1/businesses') return Response.json({ id: businessId, slug: 'ammu-sammu', name: 'Ammu Sammu', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+      if (request.path === '/rest/v1/business_memberships') return Response.json([]);
+      if (request.path === '/auth/v1/logout') return new Response(null, { status: 204 });
+      return new Response('unexpected', { status: 500 });
+    }, async (seen) => {
+      await assert.rejects(service.auth.verifyCode('9876543210', '123456'), code('WRONG_OR_EXPIRED_CODE'));
+      assert.equal(seen.filter((request) => request.path === '/auth/v1/verify').length, 1);
+      assert.ok(!seen.some((request) => request.path === '/auth/v1/user' || request.path === '/auth/v1/token'), 'the real client was handed the non-owner session');
+    });
+  } finally { service.dispose(); }
 });

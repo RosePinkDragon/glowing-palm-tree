@@ -664,6 +664,8 @@ export function createMarketServices(options: ServiceOptions) {
     },
     // The server answers the same whether or not a code was sent (request-owner-code), so this resolves for every
     // number that passes the CAPTCHA, and the screen must look the same afterwards. It never reports NOT_ON_WHATSAPP.
+    // An owner who asks again inside Auth's resend interval (30 s) is consumed silently, so the owners' screen must enforce
+    // its own 30 s cooldown between requests.
     async requestOwnerCode(phone: string, captchaToken?: string) {
       if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Customers request their code with requestCode.');
       requireClient(); const e164 = settingsPhone(phone, true); if (!e164) throw new OtpError('GENERIC');
@@ -679,23 +681,44 @@ export function createMarketServices(options: ServiceOptions) {
       if (res.ok && body?.ok === true) return;
       throw new OtpError(res.status === 429 ? 'RATE_LIMITED' : 'GENERIC');
     },
-    // A new number creates a customer account here with no sign-up step. In the owners' app a session only counts
-    // if this account is an admin member of this restaurant; anyone else fails exactly like a wrong code.
+    // A new number creates a customer account here with no sign-up step. In the owners' app the code is verified on a
+    // throwaway client (no persistence, no refresh, in-memory storage) and its session reaches the real client only if the
+    // account is an admin member of this restaurant, so anyone else fails exactly like a wrong code and never touches the
+    // real client's storage or auth events.
     async verifyCode(phone: string, code: string) {
       const db = requireClient(); const e164 = settingsPhone(phone, true); if (!e164) throw new OtpError('GENERIC');
       const token = typeof code === 'string' ? code.trim() : '';
       if (!/^[0-9]{6}$/.test(token)) throw new OtpError('WRONG_OR_EXPIRED_CODE');
-      const { data, error } = await db.auth.verifyOtp({ phone: e164, token, type: 'sms' });
-      if (error) throw otpFailure(error, 'verify');
-      if (audience === 'admin') {
-        let owner: boolean | undefined;
-        try { owner = await isAdmin(); } catch { owner = undefined; }
-        if (!owner) {
-          clearSubscriptions(); await db.auth.signOut({ scope: 'local' }).catch(() => undefined);
-          throw new OtpError(owner === undefined ? 'GENERIC' : 'WRONG_OR_EXPIRED_CODE');
-        }
+      if (audience !== 'admin') {
+        const { data, error } = await db.auth.verifyOtp({ phone: e164, token, type: 'sms' });
+        if (error) throw otpFailure(error, 'verify');
+        return data;
       }
-      return data;
+      const memory = new Map<string, string>();
+      const probe = createClient(url!, key!, { auth: {
+        storage: { getItem: (name) => memory.get(name) ?? null, setItem: (name, value) => { memory.set(name, value); }, removeItem: (name) => { memory.delete(name); } },
+        storageKey: `${sessionStorageKey(url!, slug, audience)}:verify`, persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+      let admitted = false;
+      try {
+        const { data, error } = await probe.auth.verifyOtp({ phone: e164, token, type: 'sms' });
+        if (error) throw otpFailure(error, 'verify');
+        const accessToken = data.session?.access_token, refreshToken = data.session?.refresh_token, userId = data.user?.id;
+        if (!accessToken || !refreshToken || !userId) throw new OtpError('GENERIC');
+        let owner: boolean;
+        try {
+          const business = await getBusiness();
+          const { data: member, error: memberError } = await probe.from('business_memberships').select('role').eq('business_id', business.id).eq('user_id', userId).eq('role', 'admin').maybeSingle();
+          fail(memberError, 'Could not verify admin membership'); owner = !!member;
+        } catch (cause) { throw new OtpError('GENERIC', cause); }
+        if (!owner) throw new OtpError('WRONG_OR_EXPIRED_CODE');
+        const { data: pinned, error: pinError } = await db.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (pinError || !pinned.session) throw otpFailure(pinError, 'verify');
+        admitted = true;
+        return pinned;
+      } finally {
+        // Revoke a non-owner's server session; an owner's lives on in the real client.
+        if (!admitted) await probe.auth.signOut({ scope: 'local' }).catch(() => undefined);
+      }
     },
     async signOut() { const db = requireClient(); clearSubscriptions(); const { error } = await db.auth.signOut({ scope: 'local' }); fail(error, 'Could not sign out'); },
     onChange(callback: Parameters<SupabaseClient['auth']['onAuthStateChange']>[0]) { const { data } = requireClient().auth.onAuthStateChange(callback); return () => data.subscription.unsubscribe(); },
