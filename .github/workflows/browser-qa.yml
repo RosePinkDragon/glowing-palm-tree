@@ -10,9 +10,9 @@ concurrency:
 permissions:
   contents: read
 jobs:
-  browser:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     env:
       EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
@@ -23,22 +23,76 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - run: npm run build:web --workspace ammu-sammu-customer
       - run: npm run build:web --workspace kokani-dine-inn-customer
       - run: npm run build:web --workspace ammu-sammu-admin
       - run: npm run build:web --workspace kokani-dine-inn-admin
-      - run: npm run test:browser
-      - run: node tests/browser/cart.mjs
-      - run: node tests/browser/photos.mjs
-      - run: node tests/browser/brand39.mjs
-      - run: node tests/browser/menu39.mjs
-      - run: node tests/browser/kokani39.mjs
-      - run: node tests/browser/inbox55.mjs
-      - run: node tests/browser/leave52.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-builds
+          path: apps/*/dist/web
+          if-no-files-found: error
+          retention-days: 1
+  suites:
+    name: suites (${{ matrix.shard }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
+      options: --ipc=host
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: smoke
+            commands: npm run test:browser
+          - shard: cart-photos
+            commands: |
+              node tests/browser/cart.mjs
+              node tests/browser/photos.mjs
+          - shard: brand-menu-kokani-checkout
+            commands: |
+              node tests/browser/brand39.mjs
+              node tests/browser/menu39.mjs
+              node tests/browser/kokani39.mjs
+              node tests/browser/checkout48.mjs
+          - shard: inbox-leave
+            commands: |
+              node tests/browser/inbox55.mjs
+              node tests/browser/leave52.mjs
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-builds
+          path: apps
+      - name: Run ${{ matrix.shard }} suites
+        run: ${{ matrix.commands }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: browser-evidence
+          name: browser-evidence-${{ matrix.shard }}
           path: dist/browser
           if-no-files-found: ignore
+  browser:
+    name: browser
+    needs: [suites]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to succeed
+        env:
+          RESULT: ${{ needs.suites.result }}
+        run: |
+          echo "suites: $RESULT"
+          test "$RESULT" = success
