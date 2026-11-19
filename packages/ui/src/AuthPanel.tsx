@@ -120,7 +120,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
   const status = <View role="status" accessibilityLiveRegion="polite" style={hiddenText}><Text>{announce}</Text></View>;
   const resendWait = remaining > 0;
   const linkStyle = { color: colors.primary, fontSize: 14, lineHeight: 21, textDecorationLine: 'underline' as const, ...bold };
-  const legalLink = (label: string, path: '/terms' | '/privacy') => <Pressable accessibilityRole="link" accessibilityLabel={label} onPress={() => onLegal?.(path)} style={{ minHeight: 44, justifyContent: 'center' }}><Text accessible={false} style={linkStyle}>{label}</Text></Pressable>;
+  const legalLink = (label: string, path: '/terms' | '/privacy') => <Pressable accessibilityRole="link" accessibilityLabel={label} onPress={() => onLegal?.(path)} onKeyDown={(e: { key?: string; preventDefault?: () => void }) => { if (e.key === 'Enter') { e.preventDefault?.(); onLegal?.(path); } }} style={{ minHeight: 44, justifyContent: 'center' }}><Text accessible={false} style={linkStyle}>{label}</Text></Pressable>;
   const plain = { color: colors.muted, fontSize: 14, lineHeight: 21 };
   // The owners' apps have no terms or privacy pages yet, so there the same line is plain text rather than dead links.
   const legal = <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 4 }}>

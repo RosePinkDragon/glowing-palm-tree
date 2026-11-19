@@ -72,7 +72,6 @@ try {
       for (const label of ['Email', 'Password']) assert.equal(await page.getByLabel(label).count(), 0, `no ${label} field`);
       assert.equal(await page.getByRole('button', { name: /Create an account|Forgot password/ }).count(), 0, 'no email sign-up or reset');
       assert.equal(await page.getByText('New here?', { exact: false }).count(), 0, 'owners do not create accounts here');
-      await page.getByText('By continuing you agree to Terms and Privacy policy', { exact: false }).first().waitFor().catch(() => undefined);
       const line = await page.getByText('By continuing you agree to', { exact: true }).locator('xpath=..').innerText();
       assert.equal(line.replace(/\s+/g, ' ').trim(), 'By continuing you agree to Terms and Privacy policy');
       assert.equal(await page.getByRole('link', { name: /^(Terms|Privacy policy)$/ }).count(), 0, 'the owners\' apps have no terms or privacy pages, so no dead links');
@@ -89,8 +88,8 @@ try {
       assert.equal(fixture.verify.length, 0);
       await page.getByText(neutral('+91 98765 43210'), { exact: true }).waitFor();
       const owner = await cardText(page);
-      await page.getByRole('button', { name: /^Change number/ }).click(); await f.phone.fill('9123456780'); await f.get.click().catch(() => undefined);
-      assert.equal(await f.get.isDisabled().catch(() => false), false, 'a different number is not held by the first number\'s cooldown');
+      await page.getByRole('button', { name: /^Change number/ }).click(); await f.phone.fill('9123456780');
+      assert.equal(await f.get.isDisabled(), false, 'a different number is not held by the first number\'s cooldown');
       await f.get.click(); await f.code.waitFor();
       await page.getByText(neutral('+91 91234 56780'), { exact: true }).waitFor();
       assert.equal(await cardText(page), owner, 'the screen for a number that is not an owner is identical to the owner\'s');
@@ -111,8 +110,7 @@ try {
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '6-digit code', 'focus returns to the code field');
       assert.equal(await page.getByRole('button', { name: 'Sign out', exact: true }).count(), 0, 'never signed in');
       // A valid code for a number that is not an owner here: the code check passes but membership fails, and the screen says the same thing.
-      fixture.verifyReply = null; await page.getByRole('button', { name: /^Change number/ }).click(); await f.phone.fill('9123456780'); await f.get.click().catch(() => undefined);
-      const retry = page.getByRole('button', { name: /^Get code/ }); if (await retry.isEnabled()) await retry.click(); await f.code.waitFor();
+      fixture.verifyReply = null; await page.getByRole('button', { name: /^Change number/ }).click(); await f.phone.fill('9123456780'); await f.get.click(); await f.code.waitFor();
       await f.code.fill('123456'); await f.verify.click();
       await f.alert.getByText(wrong, { exact: true }).waitFor();
       assert.equal(fixture.verify.at(-1).phone, strangerPhone); assert.ok(fixture.logouts >= 1, 'the non-owner\'s throwaway session is revoked');
@@ -132,8 +130,8 @@ try {
       await page.getByRole('button', { name: /^Get code in 0:/ }).waitFor();
       assert.equal(await page.getByRole('button', { name: /^Get code in/ }).isDisabled(), true, 'the same number cannot be requested again early from the phone screen either');
       await f.phone.press('Enter'); assert.equal(fixture.requests.length, 1, 'Enter cannot bypass the cooldown');
-      await f.phone.fill('9876543210'); await f.get.click({ force: true }).catch(() => undefined); assert.equal(fixture.requests.length, 1);
-      await f.get.waitFor(); await page.clock.fastForward(20_000);
+      assert.equal(fixture.requests.length, 1);
+      await page.clock.fastForward(20_000);
       await f.get.click(); await f.code.waitFor(); assert.equal(fixture.requests.length, 2, 'a new request is allowed after 30 s');
       await page.clock.fastForward(31_000);
       const resend = page.getByRole('button', { name: 'Send a new code', exact: true }); await resend.waitFor();
