@@ -72,6 +72,17 @@ try {
       await f.phone.fill('12345'); await f.get.click(); await page.getByText(/valid 10-digit mobile number/).waitFor();
       assert.equal(fixture.otp.length, 0, 'an invalid number never reaches the server');
       await f.phone.fill('+91 98765 43210'); assert.equal(await f.phone.inputValue(), '9876543210', 'pasted +91 numbers are trimmed to ten digits');
+      // #50-C: the design's notice under the phone field, with working links to the existing /terms and /privacy pages.
+      const notice = await page.getByText('By continuing you agree to', { exact: true }).locator('xpath=..').innerText();
+      assert.equal(notice.replace(/\s+/g, ' ').trim(), 'By continuing you agree to Terms and Privacy policy');
+      for (const [name, path] of [['Terms', '/terms'], ['Privacy policy', '/privacy']]) {
+        const link = page.getByRole('link', { name, exact: true }); assert.equal(await link.count(), 1, `${name} is a link`);
+        await link.focus(); assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), name, `${name} is focusable`);
+        assert.ok((await link.boundingBox()).height >= 44, `${name} target is at least 44px tall`);
+        await link.press('Enter'); await page.waitForFunction(p => location.pathname === p, path);
+        await page.getByText(name === 'Terms' ? 'Draft terms' : 'Draft privacy policy', { exact: true }).first().waitFor();
+        await page.goBack(); await f.phone.waitFor();
+      }
       await shot('1-phone-390');
       const box = await f.get.boundingBox(); assert.ok(box.height >= 44, 'Get code target is at least 44px');
     });

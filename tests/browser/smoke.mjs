@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
-import { otpSignIn } from './otp-login.mjs';
+import { otpSignIn, ownerOtpSignIn } from './otp-login.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
 // Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3); Kokani's a la carte list has category headings at level 3 and dishes at level 4.
@@ -32,7 +32,7 @@ if (categoriesOnly) savedOrder = { order_number: 'AMS-2026110001', id: orderId, 
 let failOrders = false;
 let holdOrders = false, orderHeld = false, releaseOrders;
 let heldOrderResponses = [];
-let adminAllowed = false, failMembership = false;
+let adminAllowed = false, failMembership = false, admitVerification = false;
 let failSave = true, failDelete = true;
 let menuItems = [item];
 let failCatalog = false;
@@ -73,6 +73,7 @@ await context.route(origin + '/**', async route => {
     if (req.method() === 'PATCH') { const values = req.postDataJSON(); mutations.push(values); menuItems = menuItems.map(row => row.id.endsWith('002') ? { ...row, ...values } : row); return json(menuItems.find(row => row.id.endsWith('002'))); }
     if (req.method() === 'DELETE') { if (failDelete) { failDelete = false; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture delete failure' }) }); } menuItems = menuItems.filter(row => !row.id.endsWith('002')); return json({ id: '20000000-0000-4000-8000-000000000002' }); }
   }
+  if (url.pathname === '/rest/v1/business_memberships') { if (admitVerification) { admitVerification = false; return json({ role: 'admin' }); } } // the owner code check (#50-C) admits once; later reads follow adminAllowed
   if (url.pathname === '/rest/v1/business_memberships') return failMembership ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture membership failure' }) }) : json(adminAllowed ? { role: 'admin', display_name: 'Suresh Pawar' } : null);
   if (url.pathname === '/rest/v1/rpc/daily_summary') return json({ date: '2026-11-13', collected_paise: 426000, delivered_count: 11, outstanding_paise: 221000, outstanding_count: 6, placed_count: 14, cancelled_count: 1, top_dishes: [{ name: 'Veg thali', quantity: 12 }] });
   if (url.pathname === '/rest/v1/rpc/list_addresses') return json([{ id: '48200000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 17.719, longitude: 73.397, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 }]);
@@ -94,8 +95,8 @@ const errors = [];
 const open = async () => { const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message)); await page.goto(customerServer.url, { waitUntil: 'networkidle' }); await page.getByRole('button', { name: /^(?:Add to cart|Add one )/ }).first().waitFor(); return page; };
 const focused = (page, text) => page.waitForFunction(expected => [document.activeElement?.textContent, document.activeElement?.getAttribute('aria-label')].includes(expected), text);
 const account = async page => { await page.getByRole('button', { name: 'Account', exact: true }).click(); const settings = page.getByRole('button', { name: 'Account settings', exact: true }); if (await settings.count()) await settings.click();  };
-// Owners keep email and password until #50-C; customers use the WhatsApp-code screens (#50-B).
-const ownerSignIn = async page => { await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
+// Customers and owners sign in with the WhatsApp-code screens (#50-B, #50-C). The owners' code check admits this fixture user once so that the later access-denied states still come from the server's membership answer.
+const ownerSignIn = async page => { admitVerification = true; await ownerOtpSignIn(page, { email: user.email }); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const signIn = async page => { await otpSignIn(page, { email: user.email }); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor(); };
 const prepareCart = async (page, add = true) => {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
@@ -351,10 +352,10 @@ const prepareCart = async (page, add = true) => {
   await admin.getByRole('button', { name: 'Done', exact: true }).waitFor();
   await ownerTab('Settings').click();
   await admin.getByRole('button', { name: 'Log out', exact: true }).click();
-  await admin.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  await admin.getByRole('button', { name: 'Get code', exact: true }).waitFor();
   assert.equal(await ownerTabs.count(), 0, 'signing out removes owner tabs');
   await admin.getByText("This app is for Ammu Sammu's owners. Customers order from the Ammu Sammu app.", { exact: true }).filter({ visible: true }).waitFor();
-  assert.equal(await admin.getByLabel('Password', { exact: true }).filter({ visible: true }).inputValue(), '');
+  assert.equal(await admin.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).inputValue(), '', 'the previous number is not kept after sign-out');
   console.log('PASS: owner tabs appear only after server access; denied/error states hide them; tab switching and sign-out');
   assert.deepEqual(errors, []);
   assert.deepEqual(externalRequests, []);
@@ -722,7 +723,7 @@ const prepareCart = async (page, add = true) => {
       await adminPage.setViewportSize({ width: 390, height: 844 });
       await ownerSections.getByRole('button', { name: 'Settings', exact: true }).click();
       await adminPage.getByRole('button', { name: 'Log out', exact: true }).click();
-      await adminPage.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+      await adminPage.getByRole('button', { name: 'Get code', exact: true }).waitFor();
       assert.equal(await ownerSections.count(), 0, 'signed-out owners see no tabs');
       await adminPage.getByRole('heading', { name: `${ownerName} kitchen`, exact: true }).waitFor();
       await adminPage.getByText(`This app is for ${ownerName}'s owners. Customers order from the ${ownerName} app.`, { exact: true }).filter({ visible: true }).waitFor();

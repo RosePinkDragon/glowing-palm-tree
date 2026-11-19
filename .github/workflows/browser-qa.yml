@@ -62,6 +62,7 @@ jobs:
               node tests/browser/inbox55.mjs
               node tests/browser/leave52.mjs
               node tests/browser/otp50.mjs
+              node tests/browser/owner-otp50.mjs
     env:
       EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only

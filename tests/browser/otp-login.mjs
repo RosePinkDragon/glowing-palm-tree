@@ -21,3 +21,26 @@ export async function otpSignIn(page, { email, phone = fixturePhone, code = fixt
   await page.getByLabel('6-digit code', { exact: true }).filter({ visible: true }).fill(code);
   await page.getByRole('button', { name: 'Verify and continue', exact: true }).click();
 }
+
+// Owners' apps (#50-C): the code is requested from the request-owner-code function (always { ok: true }) and verified through
+// /auth/v1/verify on a throwaway client, which then checks business_memberships. The same fixture token handler answers it.
+const installedOwner = new WeakSet();
+export const ownerRequests = new WeakMap();
+const mapOwnerRoutes = async page => {
+  if (installedOwner.has(page)) return; installedOwner.add(page);
+  let email = 'owner@example.test'; const requests = [];
+  page.__otpEmail = value => { email = value; }; ownerRequests.set(page, requests);
+  await page.route(url => url.pathname === '/functions/v1/request-owner-code', route => { requests.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
+  await page.route(url => url.pathname === '/auth/v1/verify', route => {
+    const url = new URL(route.request().url());
+    return route.fallback({ url: `${url.origin}/auth/v1/token?grant_type=password`, postData: JSON.stringify({ email, password: 'fixture' }), headers: { ...route.request().headers(), 'content-type': 'application/json' } });
+  });
+};
+/** Signs the fixture owner in through the owners' phone and code screens. The page's membership mock must answer the verification check (see each fixture). */
+export async function ownerOtpSignIn(page, { email, phone = fixturePhone, code = fixtureCode } = {}) {
+  await mapOwnerRoutes(page); if (email) page.__otpEmail(email);
+  await page.getByLabel('Mobile number', { exact: true }).filter({ visible: true }).fill(phone);
+  await page.getByRole('button', { name: 'Get code', exact: true }).click();
+  await page.getByLabel('6-digit code', { exact: true }).filter({ visible: true }).fill(code);
+  await page.getByRole('button', { name: 'Verify and continue', exact: true }).click();
+}
