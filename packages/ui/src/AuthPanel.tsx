@@ -67,7 +67,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
   const [announce, setAnnounce] = useState('');
   const [captcha, setCaptcha] = useState(''); const [captchaFailed, setCaptchaFailed] = useState(false); const [captchaReset, setCaptchaReset] = useState(0);
   const useCaptcha = Platform.OS === 'web' && turnstileSiteKey !== '';
-  const codeInput = useRef<ComponentRef<typeof TextInput>>(null); const alive = useRef(true); const working = useRef(false);
+  const codeInput = useRef<ComponentRef<typeof TextInput>>(null); const alive = useRef(true); const working = useRef(false); const verifyRun = useRef(0);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { setStage('phone'); setField(''); setFieldError(''); setPhone(''); setCode(''); setErrorCode(null); setCooldown(null); setAnnounce(''); }, [market.identityVersion]);
   useEffect(() => { if (stage === 'code') { const t = setTimeout(() => codeInput.current?.focus(), 50); return () => clearTimeout(t); } }, [stage]);
@@ -75,7 +75,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
   const remaining = cooldownRemaining(activeUntil, now);
   useEffect(() => {
     if (!cooldown || cooldownRemaining(cooldown.until, Date.now()) === 0) return;
-    const tick = setInterval(() => { const t = Date.now(); setNow(t); if (cooldownRemaining(cooldown.until, t) === 0) { clearInterval(tick); setAnnounce('You can send a new code now.'); } }, 500);
+    const tick = setInterval(() => { const t = Date.now(); setNow(t); if (cooldownRemaining(cooldown.until, t) === 0) { clearInterval(tick); setAnnounce('You can send a new code now.'); setErrorCode(current => current === 'RESEND_COOLDOWN' ? null : current); } }, 500);
     return () => clearInterval(tick);
   }, [cooldown]);
   const waitingForCaptcha = useCaptcha && !captcha && !captchaFailed;
@@ -92,10 +92,13 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
       const failure = e instanceof ServiceError ? e : null; let next: OtpErrorCode = failure && isOtpErrorCode(failure.code) ? failure.code : 'GENERIC';
       if (owner && next === 'NOT_ON_WHATSAPP') next = 'GENERIC'; // never tell anyone whether a number is an owner's
       if (next === 'RESEND_COOLDOWN') { const wait = (failure?.cause as { retryAfterSeconds?: number | null } | undefined)?.retryAfterSeconds; const t = Date.now(); setNow(t); setCooldown({ phone: target, until: cooldownDeadline(t, wait ?? RESEND_COOLDOWN_SECONDS) }); }
+      // A code was sent recently (for example before a reload): go to the code screen for this number, with the countdown, as after a successful request.
+      if (next === 'RESEND_COOLDOWN' && moveOn) { setPhone(target); setCode(''); setStage('code'); }
       setErrorCode(next);
     } finally { working.current = false; if (alive.current) { setBusy(false); if (useCaptcha) { setCaptcha(''); setCaptchaReset(n => n + 1); } } }
   };
   const getCode = () => {
+    if (busy || remaining > 0 || waitingForCaptcha || captchaFailed) return; // Enter must respect the same guards as the disabled button
     const target = normalizeIndianMobile(field); const problem = phoneFieldError(field);
     if (!target || problem) { setFieldError(problem); return; }
     void send(target, true);
@@ -103,14 +106,14 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
   const verify = async () => {
     if (working.current) return;
     if (!isCompleteCode(code)) { setErrorCode('WRONG_OR_EXPIRED_CODE'); codeInput.current?.focus(); return; }
-    working.current = true; setBusy(true); setErrorCode(null); const started = market.identity.current;
+    working.current = true; setBusy(true); setErrorCode(null); const started = market.identity.current; const run = verifyRun.current;
     try { await services.auth.verifyCode(phone, code); }
     catch (e) {
-      if (!alive.current || !sameIdentity(started, market.identity.current)) return;
+      if (!alive.current || !sameIdentity(started, market.identity.current) || run !== verifyRun.current) return; // the user already moved on (Change number)
       setErrorCode(e instanceof ServiceError && isOtpErrorCode(e.code) ? e.code : 'GENERIC'); setCode(''); codeInput.current?.focus();
     } finally { working.current = false; if (alive.current) setBusy(false); }
   };
-  const changeNumber = () => { setStage('phone'); setCode(''); setErrorCode(null); setFieldError(''); setField(phoneFieldValue(phone)); };
+  const changeNumber = () => { verifyRun.current++; setStage('phone'); setCode(''); setErrorCode(null); setFieldError(''); setField(phoneFieldValue(phone)); };
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const error = errorCode && errorCode !== 'RESEND_COOLDOWN' ? otpErrorCopy[errorCode] : errorCode ? `${otpErrorCopy.RESEND_COOLDOWN}${remaining > 0 ? ` You can try again in ${formatCountdown(remaining)}.` : ''}` : '';
   const errorBox = <View role="alert" accessibilityLiveRegion="polite" style={{ minHeight: error ? undefined : 0 }}>{error ? <Text style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{error}</Text> : null}</View>;
