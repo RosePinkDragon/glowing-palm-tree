@@ -130,6 +130,26 @@ try {
       assert.equal(fixture.otp.at(-1).phone, '+919123456780');
     });
 
+    await run('Enter respects the cooldown (no extra request)', async ({ page, f, fixture }) => {
+      await toCode({ page, f, fixture });
+      await page.getByRole('button', { name: /^Change number/ }).click();
+      await page.getByRole('button', { name: /^Get code in 0:/ }).waitFor();
+      await f.phone.press('Enter'); await f.phone.press('Enter'); await page.waitForTimeout(300);
+      assert.equal(fixture.otp.length, 1, 'Enter during the cooldown sends nothing');
+      assert.equal(await f.code.count(), 0, 'and stays on the number screen');
+    });
+
+    await run('a cooldown on the first request lands on the code screen and can verify', async ({ page, f, fixture }) => {
+      fixture.otpReply = gotrue(429, 'over_sms_send_rate_limit', 'For security purposes, you can only request this after 20 seconds.');
+      await page.goto(server.url + '/login', { waitUntil: 'networkidle' });
+      await f.phone.fill('9876543210'); await f.get.click(); await f.code.waitFor();
+      await page.getByText('+91 98765 43210', { exact: true }).waitFor();
+      await f.alert.getByText(/Please wait a moment before asking for another code/).waitFor();
+      await page.getByText(/You can resend in 0:(?:1\d|20)/).waitFor();
+      await f.code.fill('123456'); await f.verify.click();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+    });
+
     for (const [name, reply, expected] of [
       ['NOT_ON_WHATSAPP', gotrue(422, 'hook_failure', 'NOT_ON_WHATSAPP'), 'We couldn\'t deliver the code on WhatsApp. Check the number.'],
       ['RATE_LIMITED', gotrue(429, 'over_sms_send_rate_limit', 'SMS rate limit exceeded'), 'Too many attempts. Please wait a few minutes and try again.'],
@@ -144,13 +164,14 @@ try {
       if (name === 'NOT_ON_WHATSAPP') await shot('5-not-on-whatsapp-390');
     });
 
-    await run('server-stated wait (RESEND_COOLDOWN) disables Get code with a countdown', async ({ page, f, fixture }) => {
+    await run('server-stated wait (RESEND_COOLDOWN) shows the countdown and Change number keeps Get code disabled for that number', async ({ page, f, fixture }) => {
       fixture.otpReply = gotrue(429, 'over_sms_send_rate_limit', 'For security purposes, you can only request this after 45 seconds.');
       await page.goto(server.url + '/login', { waitUntil: 'networkidle' });
-      await f.phone.fill('9876543210'); await f.get.click();
-      await f.alert.getByText(/Please wait a moment before asking for another code/).waitFor();
-      await page.getByRole('button', { name: /^Get code in 0:4/ }).waitFor();
-      assert.equal(await page.getByRole('button', { name: /^Get code in/ }).isDisabled(), true);
+      await f.phone.fill('9876543210'); await f.get.click(); await f.code.waitFor();
+      await page.getByText(/You can resend in 0:4/).waitFor();
+      await page.getByRole('button', { name: /^Change number/ }).click();
+      assert.equal(await page.getByRole('button', { name: /^Get code in 0:4/ }).isDisabled(), true);
+      assert.equal(await f.alert.count(), 0, 'changing the number clears the error');
     });
 
     await run('protected routes redirect to the phone screen and return after sign-in', async ({ page, f, fixture }) => {
