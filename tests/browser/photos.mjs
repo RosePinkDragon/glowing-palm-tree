@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 import { assertDishSheet } from './dish-sheet.mjs';
 
 // Optional focused reuse: --brand=kokani-dine-inn --owners-only
@@ -167,8 +168,7 @@ try {
         await open('No photo dish');
         const account = await context.newPage(); account.on('pageerror', e => errors.push(e.message));
         await account.goto(customer.url + '/login', { waitUntil: 'networkidle' });
-        await account.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await account.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-        await account.getByRole('button', { name: 'Sign in', exact: true }).click(); await account.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+        await otpSignIn(account, { email: user.email }); await account.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
         await eventually(async () => !(await page.getByRole('dialog').count()));
         assert.deepEqual((await saved()).lines.map(line => line.quantity), [10, 1]); await account.close();
         console.log(`PASS ${slug} customer: lazy optimized photos/alt/fallback, metadata/details/focus, quantity totals/latest cart limit, failed-write recovery, unavailable state, persisted cart, checkout lock and identity change`);

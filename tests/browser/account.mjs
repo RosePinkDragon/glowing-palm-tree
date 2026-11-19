@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { otpSignIn } from './otp-login.mjs';
 
 // Actual exports → installed SDK → deterministic scoped HTTP fixture → drawer/detail.
 const api = 'https://market-fixture.supabase.co';
@@ -21,8 +22,7 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   const login = async () => {
     await page.goto(server.url + '/help', { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).click();
-    await page.getByLabel('Email', { exact: true }).fill(fixture.authSession?.user.email ?? user.email); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await otpSignIn(page, { email: fixture.authSession?.user.email ?? user.email });
     await page.getByRole('button', { name: 'Refresh active orders', exact: true }).waitFor();
   };
   assert.equal((await page.goto(server.url + '/help', { waitUntil: 'networkidle' })).status(), 200);
@@ -194,8 +194,7 @@ async function reorderScenarios({ page, context, server, slug, item, rows, fixtu
   };
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Account', exact: true }).click();
-  await page.getByLabel('Email', { exact: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
+  await otpSignIn(page, { email: user.email }); await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Meals', exact: true }).click();
   await page.getByRole('button', { name: 'Account', exact: true }).click(); await settledDrawer(page);
@@ -448,11 +447,9 @@ try {
         const layoutPage = await layoutContext.newPage(); layoutPage.on('pageerror', error => errors.push(error.message));
         await layoutPage.goto(server.url, { waitUntil: 'networkidle' });
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
-        await layoutPage.getByLabel('Email', { exact: true }).waitFor();
+        await layoutPage.getByLabel('Mobile number', { exact: true }).waitFor();
         fixture.authSession = { ...session, user: { ...user, user_metadata: { full_name: 'Rohan Sawant' } } };
-        await layoutPage.getByLabel('Email', { exact: true }).fill(user.email);
-        await layoutPage.getByLabel('Password', { exact: true }).fill('synthetic-password');
-        await layoutPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await otpSignIn(layoutPage, { email: user.email });
         await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByRole('heading', { name: 'Rohan Sawant', exact: true }).waitFor();
@@ -465,9 +462,7 @@ try {
         await layoutPage.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click();
         fixture.authSession = null;
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
-        await layoutPage.getByLabel('Email', { exact: true }).fill(user.email);
-        await layoutPage.getByLabel('Password', { exact: true }).fill('synthetic-password');
-        await layoutPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+        await otpSignIn(layoutPage, { email: user.email });
         await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByText('Phone not added', { exact: true }).waitFor();
@@ -514,12 +509,10 @@ try {
       const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
       await page.goto(server.url, { waitUntil: 'networkidle' });
       await page.getByRole('button', { name: 'Account', exact: true }).click();
-      await page.getByLabel('Email', { exact: true }).waitFor();
+      await page.getByLabel('Mobile number', { exact: true }).waitFor();
       assert.equal(new URL(page.url()).pathname, '/login');
       assert.equal(await page.getByText('Past orders', { exact: true }).count(), 0);
-      await page.getByLabel('Email', { exact: true }).fill(user.email);
-      await page.getByLabel('Password', { exact: true }).fill('synthetic-password');
-      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await otpSignIn(page, { email: user.email });
       await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
@@ -604,7 +597,7 @@ try {
       assert.equal(await page.getByText('Phone not added', { exact: true }).count(), 0);
       assert.equal(await page.getByText('1 × History meal 25 · ₹100', { exact: true }).filter({ visible: true }).count(), 0);
       await page.getByRole('button', { name: 'Account', exact: true }).click();
-      await page.getByLabel('Email', { exact: true }).waitFor();
+      await page.getByLabel('Mobile number', { exact: true }).waitFor();
       assert.deepEqual(errors, []);
       console.log(`PASS: ${slug} guest login, scoped paged drawer, retry, old detail, focus, placeholders and logout isolation`);
       await supportScenarios({ page, context, server, slug, rows, fixture, queries });

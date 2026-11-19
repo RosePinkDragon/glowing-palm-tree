@@ -35,3 +35,4 @@ export const businesses: Record<BusinessSlug, { name: string; locale: string; cu
   'ammu-sammu': { name: 'Ammu Sammu', locale: 'en-IN', currency: 'INR' },
   'kokani-dine-inn': { name: 'Kokani Dine Inn', locale: 'en-IN', currency: 'INR' },
 };
+export * from './otp.ts';
