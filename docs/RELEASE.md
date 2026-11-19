@@ -25,10 +25,10 @@ From the same linked machine:
 ```
 supabase functions deploy request-owner-code
 supabase functions deploy send-sms-hook
-supabase functions deploy menu-photos
+supabase functions deploy menu-photos --use-docker
 ```
 
-All three functions are required for the web launch. `request-owner-code` and `send-sms-hook` are required for login. `menu-photos` is required because owners use it to upload dish photos (`packages/services`); run `deno install --frozen` in `supabase/functions/menu-photos` first as its README describes, then deploy it. `dispatch-notifications` is not part of the web launch (step 5). Their `verify_jwt = false` settings come from `supabase/config.toml` and each function authenticates itself.
+All three functions are required for the web launch. `request-owner-code` and `send-sms-hook` are required for login. `menu-photos` is required because owners use it to upload dish photos (`packages/services`); run `deno install --frozen` in `supabase/functions/menu-photos` first as its README describes, then deploy it with Docker bundling: Docker must be running, because API-only bundling drops the static `magick.wasm` (`static_files` in `supabase/config.toml`) and the function would fail. The flag is `--use-docker` (check `supabase functions deploy --help` for the Docker bundling flag on your CLI version). `dispatch-notifications` is not part of the web launch (step 5). Their `verify_jwt = false` settings come from `supabase/config.toml` and each function authenticates itself.
 
 ### 3. Secrets (names only)
 
@@ -135,7 +135,8 @@ Do these on the deployed domains before enabling ordering for real customers. Us
 5. CAPTCHA works: with it on, a request without a valid token is refused and a normal one succeeds.
 6. Place an order end to end on each brand (Ammu Sammu and Kokani Dine Inn): sign in, add to cart, checkout inside the delivery area, see it in that brand's admin app, move it through the order statuses. Confirm an address outside 12 km is refused.
 7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
-8. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
+8. For each brand, an owner uploads a dish photo in the owners' app and it appears on the customer menu.
+9. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
 
 ### 10. Rollback
 
