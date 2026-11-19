@@ -34,6 +34,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   suites:
+    name: suites (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -43,16 +44,16 @@ jobs:
         include:
           - shard: smoke
             commands: npm run test:browser
-          - shard: cart-photos-checkout
+          - shard: cart-photos
             commands: |
               node tests/browser/cart.mjs
               node tests/browser/photos.mjs
-              node tests/browser/checkout48.mjs
-          - shard: brand-menu-kokani
+          - shard: brand-menu-kokani-checkout
             commands: |
               node tests/browser/brand39.mjs
               node tests/browser/menu39.mjs
               node tests/browser/kokani39.mjs
+              node tests/browser/checkout48.mjs
           - shard: inbox-leave
             commands: |
               node tests/browser/inbox55.mjs
