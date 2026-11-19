@@ -1,44 +1,23 @@
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
-import { RESEND_COOLDOWN_SECONDS, codeFieldValue, cooldownDeadline, cooldownRemaining, formatCountdown, formatPhone, isCompleteCode, isOtpErrorCode, normalizeIndianMobile, otpErrorCopy, phoneFieldError, phoneFieldValue, type OtpErrorCode } from '@market/core';
+import { RESEND_COOLDOWN_SECONDS, codeFieldValue, cooldownDeadline, cooldownRemaining, formatAccountPhone, formatCountdown, formatPhone, isCompleteCode, isOtpErrorCode, normalizeIndianMobile, otpErrorCopy, phoneFieldError, phoneFieldValue, type OtpErrorCode } from '@market/core';
 import { ServiceError } from '@market/services';
-import * as Linking from 'expo-linking';
 import { MarketButton, MarketCard, MarketField, MarketText } from './components';
 import { messageOf, useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { sameIdentity } from './checkout-state';
-import { webRedirectUrl } from './auth-callback';
 
 type Market = ReturnType<typeof useMarket>;
-export function AuthPanel({ market, accountActions }: { market: Market; accountActions?: ReactNode }) {
+/** `onLegal` opens the terms or privacy page; apps without those pages (the owners' apps) omit it and the notice stays plain text. */
+export function AuthPanel({ market, accountActions, onLegal }: { market: Market; accountActions?: ReactNode; onLegal?: (path: '/terms' | '/privacy') => void }) {
   const { colors } = useMarketTheme();
-  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [failed, setFailed] = useState(false);
-  useEffect(() => { setEmail(''); setPassword(''); setMessage(''); }, [market.identityVersion]);
-  const submit = async () => {
-    const started = market.identity.current; const submittedPassword = password; const submittedEmail = email.trim();
-    setPassword(''); setBusy(true); setMessage(''); setFailed(false);
-    try {
-      const redirect = Platform.OS === 'web' && typeof window !== 'undefined' ? webRedirectUrl(window.location.href) : Linking.createURL('/');
-      if (market.recovery) { await market.services.auth.updatePassword(submittedPassword); if (sameIdentity(started, market.identity.current)) { market.setRecovery(false); setMessage('Password updated.'); } }
-      else if (mode === 'reset') { await market.services.auth.resetPassword(submittedEmail, redirect); if (sameIdentity(started, market.identity.current)) setMessage('If the account exists, a reset link has been sent.'); }
-      else if (mode === 'signup') { const result = await market.services.auth.signUp(submittedEmail, submittedPassword, redirect); if (sameIdentity(started, market.identity.current)) setMessage(result.confirmationRequired ? 'Check your email to confirm your account.' : 'Your account is ready.'); }
-      else await market.services.auth.signIn(submittedEmail, submittedPassword);
-    } catch (e) { if (sameIdentity(started, market.identity.current)) { setFailed(true); setMessage(messageOf(e)); } } finally { setBusy(false); }
-  };
+  const [message, setMessage] = useState(''); const [failed, setFailed] = useState(false);
+  useEffect(() => { setMessage(''); }, [market.identityVersion]);
   const feedback = message ? <Text accessibilityRole={failed ? 'alert' : undefined} accessibilityLiveRegion="polite" role={failed ? 'alert' : 'status'} style={{ color: failed ? colors.danger : colors.ink, fontSize: 15, lineHeight: 23 }}>{message}</Text> : null;
   if (market.services.mode === 'demo') return <MarketCard><MarketText variant="heading">Account unavailable</MarketText><MarketText>Accounts and ordering are not available in this sample menu.</MarketText></MarketCard>;
-  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{accountActions}{feedback}</MarketCard>;
-  // Customers log in with a WhatsApp code (#50); owners stay on email and password until 50-C.
-  if (market.services.audience === 'customer') return <PhoneLogin market={market} />;
-  return <MarketCard><MarketText variant="heading">{market.recovery ? 'Set a new password' : mode === 'signup' ? 'Create an account' : mode === 'reset' ? 'Reset password' : 'Sign in'}</MarketText>
-    {!market.recovery ? <MarketField label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" /> : null}
-    {mode !== 'reset' || market.recovery ? <MarketField label="Password" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" /> : null}
-    {feedback}
-    <MarketButton label={busy ? 'Please wait…' : market.recovery ? 'Update password' : mode === 'signup' ? 'Create account' : mode === 'reset' ? 'Send reset link' : 'Sign in'} disabled={busy} onPress={() => void submit()} />
-    {!market.recovery ? <View style={{ gap: 8 }}><MarketButton variant="secondary" label={mode === 'signup' ? 'Already have an account? Sign in' : 'Create an account'} onPress={() => { setMode(mode === 'signup' ? 'signin' : 'signup'); setPassword(''); setMessage(''); }} /><MarketButton variant="secondary" label={mode === 'reset' ? 'Back to sign in' : 'Forgot password?'} onPress={() => { setMode(mode === 'reset' ? 'signin' : 'reset'); setPassword(''); setMessage(''); }} /></View> : null}
-  </MarketCard>;
+  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? formatAccountPhone(market.session.user.phone) ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{accountActions}{feedback}</MarketCard>;
+  // Everyone signs in with a WhatsApp code (#50): customers (a new number creates the account) and owners (50-C, no email form).
+  return <PhoneLogin market={market} onLegal={onLegal} />;
 }
 
 /** The web CAPTCHA widget is only rendered when EXPO_PUBLIC_TURNSTILE_SITE_KEY is set at build time (public, never a secret); without it the screens skip CAPTCHA entirely and Supabase must have CAPTCHA protection off. Native builds never show it (#50 is web-first). */
@@ -75,9 +54,11 @@ function Captcha({ onToken, onFailed, resetKey }: { onToken: (token: string) => 
 
 const hiddenText = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 } as const;
 type Stage = 'phone' | 'code';
-/** Customers sign in with a phone number and a one-time code sent on WhatsApp; a new number creates the account (#50). */
-function PhoneLogin({ market }: { market: Market }) {
+/** Customers and owners sign in with a phone number and a one-time code sent on WhatsApp; for customers a new number creates the account (#50). */
+function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/terms' | '/privacy') => void }) {
   const { colors } = useMarketTheme(); const fonts = useMarketFonts(); const { services } = market;
+  // Owners use the same screens with a server that answers identically for owners and everyone else, so nothing here may reveal which a number is.
+  const owner = services.audience === 'admin';
   const [stage, setStage] = useState<Stage>('phone');
   const [field, setField] = useState(''); const [fieldError, setFieldError] = useState('');
   const [phone, setPhone] = useState(''); const [code, setCode] = useState('');
@@ -103,13 +84,14 @@ function PhoneLogin({ market }: { market: Market }) {
     if (working.current) return; working.current = true; setBusy(true); setErrorCode(null); setFieldError('');
     const started = market.identity.current;
     try {
-      await services.auth.requestCode(target, useCaptcha ? captcha : undefined);
+      if (owner) await services.auth.requestOwnerCode(target, useCaptcha ? captcha : undefined); else await services.auth.requestCode(target, useCaptcha ? captcha : undefined);
       if (!alive.current || !sameIdentity(started, market.identity.current)) return;
-      const t = Date.now(); setNow(t); setCooldown({ phone: target, until: cooldownDeadline(t) }); setAnnounce(`Code sent on WhatsApp. You can ask for another in ${RESEND_COOLDOWN_SECONDS} seconds.`);
+      const t = Date.now(); setNow(t); setCooldown({ phone: target, until: cooldownDeadline(t) }); setAnnounce(owner ? `If this number belongs to a restaurant owner, a code is on its way on WhatsApp. You can ask for another in ${RESEND_COOLDOWN_SECONDS} seconds.` : `Code sent on WhatsApp. You can ask for another in ${RESEND_COOLDOWN_SECONDS} seconds.`);
       setPhone(target); setCode(''); if (moveOn) setStage('code');
     } catch (e) {
       if (!alive.current || !sameIdentity(started, market.identity.current)) return;
-      const failure = e instanceof ServiceError ? e : null; const next: OtpErrorCode = failure && isOtpErrorCode(failure.code) ? failure.code : 'GENERIC';
+      const failure = e instanceof ServiceError ? e : null; let next: OtpErrorCode = failure && isOtpErrorCode(failure.code) ? failure.code : 'GENERIC';
+      if (owner && next === 'NOT_ON_WHATSAPP') next = 'GENERIC'; // never tell anyone whether a number is an owner's
       if (next === 'RESEND_COOLDOWN') { const wait = (failure?.cause as { retryAfterSeconds?: number | null } | undefined)?.retryAfterSeconds; const t = Date.now(); setNow(t); setCooldown({ phone: target, until: cooldownDeadline(t, wait ?? RESEND_COOLDOWN_SECONDS) }); }
       // A code was sent recently (for example before a reload): go to the code screen for this number, with the countdown, as after a successful request.
       if (next === 'RESEND_COOLDOWN' && moveOn) { setPhone(target); setCode(''); setStage('code'); }
@@ -138,28 +120,36 @@ function PhoneLogin({ market }: { market: Market }) {
   const errorBox = <View role="alert" accessibilityLiveRegion="polite" style={{ minHeight: error ? undefined : 0 }}>{error ? <Text style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{error}</Text> : null}</View>;
   const status = <View role="status" accessibilityLiveRegion="polite" style={hiddenText}><Text>{announce}</Text></View>;
   const resendWait = remaining > 0;
+  const linkStyle = { color: colors.primary, fontSize: 14, lineHeight: 21, textDecorationLine: 'underline' as const, ...bold };
+  const legalLink = (label: string, path: '/terms' | '/privacy') => <Pressable accessibilityRole="link" accessibilityLabel={label} onPress={() => onLegal?.(path)} onKeyDown={(e: { key?: string; preventDefault?: () => void }) => { if (e.key === 'Enter') { e.preventDefault?.(); onLegal?.(path); } }} style={{ minHeight: 44, justifyContent: 'center' }}><Text accessible={false} style={linkStyle}>{label}</Text></Pressable>;
+  const plain = { color: colors.muted, fontSize: 14, lineHeight: 21 };
+  // The owners' apps have no terms or privacy pages yet, so there the same line is plain text rather than dead links.
+  const legal = <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 4 }}>
+    <Text style={plain}>By continuing you agree to</Text>{onLegal ? legalLink('Terms', '/terms') : <Text style={plain}>Terms</Text>}<Text style={plain}>and</Text>{onLegal ? legalLink('Privacy policy', '/privacy') : <Text style={plain}>Privacy policy</Text>}
+  </View>;
   return <MarketCard>
     {stage === 'phone' ? <>
-      <MarketText variant="heading">Log in or sign up</MarketText>
-      <MarketText variant="muted">We&apos;ll send a one-time code to this number on WhatsApp.</MarketText>
+      <MarketText variant="heading">{owner ? 'Sign in' : 'Log in or sign up'}</MarketText>
+      <MarketText variant="muted">{owner ? 'Enter the WhatsApp number of your owner account. We\'ll send a one-time code to it.' : 'We\'ll send a one-time code to this number on WhatsApp.'}</MarketText>
       <View style={{ gap: 8 }}>
         <Text nativeID="otp-phone-label" style={{ color: colors.ink, fontSize: 15, ...bold }}>Mobile number</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <View accessible={false} style={{ minHeight: 48, minWidth: 56, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, backgroundColor: colors.tint, paddingHorizontal: 12 }}><Text style={{ color: colors.ink, fontSize: 16, ...bold }}>+91</Text></View>
           <TextInput accessibilityLabel="Mobile number" aria-labelledby="otp-phone-label" aria-describedby="otp-phone-error" value={field} onChangeText={value => { setField(phoneFieldValue(value)); setFieldError(''); setErrorCode(null); }} onSubmitEditing={getCode}
             placeholder="10-digit number" placeholderTextColor={colors.muted} keyboardType="phone-pad" inputMode="tel" autoComplete="tel-national" textContentType="telephoneNumber" maxLength={20} editable={!busy} returnKeyType="go"
-            style={{ flex: 1, minHeight: 48, borderWidth: 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 18, letterSpacing: 1 }} />
+            style={{ flex: 1, minWidth: 0, minHeight: 48, borderWidth: 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 18, letterSpacing: 1 }} />
         </View>
         <View nativeID="otp-phone-error" role="alert" accessibilityLiveRegion="polite">{fieldError ? <Text style={{ color: colors.danger, fontSize: 14, lineHeight: 21 }}>{fieldError}</Text> : null}</View>
       </View>
       {errorBox}
+      {legal}
       {useCaptcha ? <Captcha onToken={token => { setCaptcha(token); if (token) setCaptchaFailed(false); }} onFailed={() => setCaptchaFailed(true)} resetKey={captchaReset} /> : null}
       {useCaptcha && (waitingForCaptcha || captchaFailed) ? <MarketText variant="muted">{captchaFailed ? 'The security check could not load. Check your connection, reload the page and try again.' : 'Checking that you are not a robot…'}</MarketText> : null}
       <MarketButton label={busy ? 'Sending…' : remaining > 0 ? `Get code in ${formatCountdown(remaining)}` : 'Get code'} disabled={blocked} onPress={getCode} />
-      <View style={{ backgroundColor: colors.tint, borderRadius: 14, padding: 14 }}><Text style={{ color: colors.ink, fontSize: 14, lineHeight: 21 }}>New here? Your number creates your account; there&apos;s no password to remember.</Text></View>
+      {owner ? null : <View style={{ backgroundColor: colors.tint, borderRadius: 14, padding: 14 }}><Text style={{ color: colors.ink, fontSize: 14, lineHeight: 21 }}>New here? Your number creates your account; there&apos;s no password to remember.</Text></View>}
     </> : <>
       <MarketText variant="heading">Enter the code</MarketText>
-      <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23 }}>We sent a 6-digit code on WhatsApp to <Text style={{ color: colors.ink, ...bold }}>{formatPhone(phone)}</Text>.</Text>
+      <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23 }}>{owner ? 'If this number belongs to a restaurant owner, we\'ve sent a code on WhatsApp to ' : 'We sent a 6-digit code on WhatsApp to '}<Text style={{ color: colors.ink, ...bold }}>{formatPhone(phone)}</Text>.</Text>
       <Pressable accessibilityRole="button" accessibilityLabel={`Change number, currently ${formatPhone(phone)}`} onPress={changeNumber} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}><Text style={{ color: colors.primary, fontSize: 15, textDecorationLine: 'underline', ...bold }}>Change number</Text></Pressable>
       <View style={{ gap: 8 }}>
         <Text nativeID="otp-code-label" style={{ color: colors.ink, fontSize: 15, ...bold }}>6-digit code</Text>

@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { ownerOtpSignIn } from './otp-login.mjs';
 
 // Installed SDK and real owner/customer exports, with synthetic HTTP/Phoenix only.
 const api = 'https://market-fixture.supabase.co';
 const visible = locator => locator.filter({ visible: true });
+let admitVerification = null; // user id the owner code check admits once (#50-C); later reads follow real membership
 const users = ['owner-a', 'owner-b', 'other-owner', 'customer'].map((name, index) => ({ id: `58500000-0000-4000-8000-00000000000${index + 1}`, email: `${name}@example.test`, aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {}, identities: [], created_at: '2026-01-01T00:00:00Z' }));
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const session = user => ({ access_token: `${part({ alg: 'HS256' })}.${part({ sub: user.id, aud: 'authenticated', role: 'authenticated', session_id: user.id, exp: Math.floor(Date.now() / 1000) + 3600 })}.fixture`, refresh_token: user.id, expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user });
@@ -62,7 +64,7 @@ try {
           if (failReads === context) return json({ message: 'Synthetic restaurant-status refresh failure' }, 503);
           await json(snapshot); held?.done.resolve(); return;
         }
-        if (url.pathname === '/rest/v1/business_memberships') return json([users[0].id, users[1].id].includes(who) ? { role: 'admin' } : null);
+        if (url.pathname === '/rest/v1/business_memberships') { if (admitVerification === who) { admitVerification = null; return json({ role: 'admin' }); } return json([users[0].id, users[1].id].includes(who) ? { role: 'admin' } : null); } // the owner code check (#50-C) admits once
         if (url.pathname === '/rest/v1/menu_items') return json([item]);
         if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
         if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? order : [order]);
@@ -159,9 +161,8 @@ try {
       console.log(`PASS: ${slug} disconnect/retry uses reads only, setup remains developer-controlled, and customer/other-business owners never receive the switch`);
 
       const late = { arrived: deferred(), release: deferred() }; writeGate = late; await control(first.page).click(); await late.arrived.promise;
-      await button(first.page, 'Settings').click(); await button(first.page, 'Log out').click(); await button(first.page, 'Sign in').waitFor(); assert.equal(await control(first.page).count(), 0);
-      await visible(first.page.getByLabel('Email', { exact: true })).fill(users[3].email); await visible(first.page.getByLabel('Password', { exact: true })).fill('synthetic-password');
-      await button(first.page, 'Sign in').click(); await text(first.page, 'Access denied').waitFor(); late.release.resolve();
+      await button(first.page, 'Settings').click(); await button(first.page, 'Log out').click(); await button(first.page, 'Get code').waitFor(); assert.equal(await control(first.page).count(), 0);
+      admitVerification = users[3].id; await ownerOtpSignIn(first.page, { email: users[3].email }); await text(first.page, 'Access denied').waitFor(); late.release.resolve();
       await status(second.page, true); assert.equal(await control(first.page).count(), 0); await text(first.page, 'Access denied').waitFor();
       assert.equal(await text(first.page, 'Restaurant status updated.').count(), 0, 'old owner completion cannot appear in the next identity');
       assert.deepEqual(errors, []);

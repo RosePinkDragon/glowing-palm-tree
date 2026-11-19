@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { ownerOtpSignIn } from './otp-login.mjs';
 
 // Owners' Menu and Edit dish (#102): search, availability switch, move/drag
 // reordering with stale-order recovery, categories and the dish editor.
@@ -100,8 +101,7 @@ try {
       const cpuRate = Number(process.env.OWNER_MENU_CPU_RATE ?? 1);
       if (cpuRate !== 1) await (await context.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
       await page.goto(owner.url, { waitUntil: 'networkidle' });
-      await page.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await page.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await ownerOtpSignIn(page, { email: user.email });
       await page.getByRole('navigation', { name: 'Owner sections' }).getByRole('button', { name: 'Menu', exact: true }).click();
       const button = name => page.getByRole('button', { name, exact: true });
       const toggle = name => page.getByRole('switch', { name: `Available: ${name}`, exact: true });

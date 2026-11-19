@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
-import { otpSignIn } from './otp-login.mjs';
+import { otpSignIn, ownerOtpSignIn } from './otp-login.mjs';
 import { assertDishSheet } from './dish-sheet.mjs';
 
 // Optional focused reuse: --brand=kokani-dine-inn --owners-only
@@ -178,8 +178,7 @@ try {
       if (!customersOnly) {
       const admin = await context.newPage(); admin.on('pageerror', e => errors.push(e.message));
       await admin.goto(owner.url, { waitUntil: 'networkidle' });
-      await admin.getByLabel('Email', { exact: true }).filter({ visible: true }).fill(user.email); await admin.getByLabel('Password', { exact: true }).filter({ visible: true }).fill('synthetic-password');
-      await admin.getByRole('button', { name: 'Sign in', exact: true }).click(); await admin.getByRole('navigation', { name: 'Owner sections' }).getByRole('button', { name: 'Menu', exact: true }).click();
+      await ownerOtpSignIn(admin, { email: user.email }); await admin.getByRole('navigation', { name: 'Owner sections' }).getByRole('button', { name: 'Menu', exact: true }).click();
       // Photos are managed from the Edit dish screen (#102); the photo editor opens above it.
       await admin.getByRole('button', { name: 'Edit Photo dish', exact: true }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Edit dish');
       const openPhoto = async () => { await admin.getByRole('dialog').last().getByRole('button', { name: /^(Add|Change) photo$/ }).click(); await admin.waitForFunction(() => document.activeElement?.textContent === 'Photo for Photo dish'); };
