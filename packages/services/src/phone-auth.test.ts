@@ -205,7 +205,7 @@ test('owners app: a non-owner\'s code never touches the real client\'s storage o
         if (request.path === '/auth/v1/logout') return new Response(null, { status: 204 });
         return new Response('unexpected', { status: 500 });
       }, async () => {
-        const stop = service.auth.onChange((event) => { events.push(event); });
+        const stop = service.auth.onChange(async (event) => { events.push(event); });
         await new Promise((resolve) => setTimeout(resolve, 20)); // let the initial-session event settle
         const settledEvents = events.length, settledWrites = writes.length;
         if (member) {
