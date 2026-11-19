@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
-import { RESEND_COOLDOWN_SECONDS, codeFieldValue, cooldownDeadline, cooldownRemaining, formatCountdown, formatPhone, isCompleteCode, isOtpErrorCode, normalizeIndianMobile, otpErrorCopy, phoneFieldError, phoneFieldValue, type OtpErrorCode } from '@market/core';
+import { RESEND_COOLDOWN_SECONDS, codeFieldValue, cooldownDeadline, cooldownRemaining, formatAccountPhone, formatCountdown, formatPhone, isCompleteCode, isOtpErrorCode, normalizeIndianMobile, otpErrorCopy, phoneFieldError, phoneFieldValue, type OtpErrorCode } from '@market/core';
 import { ServiceError } from '@market/services';
 import { MarketButton, MarketCard, MarketField, MarketText } from './components';
 import { messageOf, useMarket } from './useMarket';
@@ -15,7 +15,7 @@ export function AuthPanel({ market, accountActions, onLegal }: { market: Market;
   useEffect(() => { setMessage(''); }, [market.identityVersion]);
   const feedback = message ? <Text accessibilityRole={failed ? 'alert' : undefined} accessibilityLiveRegion="polite" role={failed ? 'alert' : 'status'} style={{ color: failed ? colors.danger : colors.ink, fontSize: 15, lineHeight: 23 }}>{message}</Text> : null;
   if (market.services.mode === 'demo') return <MarketCard><MarketText variant="heading">Account unavailable</MarketText><MarketText>Accounts and ordering are not available in this sample menu.</MarketText></MarketCard>;
-  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{accountActions}{feedback}</MarketCard>;
+  if (market.session && !market.recovery) return <MarketCard><MarketText variant="heading">Your account</MarketText><MarketText>{market.session.user.email ?? formatAccountPhone(market.session.user.phone) ?? 'Signed in'}</MarketText>{!market.services.persistenceAvailable() ? <MarketText variant="muted">This session is stored only for this visit because device storage is unavailable.</MarketText> : null}<NotificationPreferences settings={market.preferences} /><MarketButton label="Sign out" variant="secondary" disabled={market.preferences.busy} onPress={() => { void market.preferences.signOut().catch(e => { setFailed(true); setMessage(messageOf(e)); }); }} />{accountActions}{feedback}</MarketCard>;
   // Everyone signs in with a WhatsApp code (#50): customers (a new number creates the account) and owners (50-C, no email form).
   return <PhoneLogin market={market} onLegal={onLegal} />;
 }

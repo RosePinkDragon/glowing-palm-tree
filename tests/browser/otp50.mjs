@@ -108,6 +108,7 @@ try {
       fixture.verifyReply = null; await f.code.fill('123456'); await f.code.press('Enter');
       await page.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
       assert.equal(new URL(page.url()).pathname, '/account', 'signing in lands on the requested page');
+      await page.getByText('+91 98765 43210', { exact: true }).waitFor(); // the account card shows the formatted phone when there is no email
     });
 
     await run('invalid-token wording and expiry share one clear error', async ({ page, f, fixture }) => {

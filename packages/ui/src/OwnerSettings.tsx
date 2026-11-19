@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
+import { formatAccountPhone } from '@market/core';
 import { MarketIcon } from './MarketIcons';
 import { MarketSwitch } from './MarketSwitch';
 import { MarketGroup, MarketRow } from './MarketList';
@@ -102,7 +103,7 @@ export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Ma
     <Text style={{ ...muted, textAlign: 'center' }}>{`${name} owners' app`}</Text>
   </View>;
 
-  const contact = session.user.phone ? `+${session.user.phone}` : session.user.email ?? 'Signed in';
+  const contact = formatAccountPhone(session.user.phone) ?? session.user.email ?? 'Signed in';
   const displayName = ownerName ?? contact;
   const loadingName = ownerName === undefined;
   const switchRow = (title: string, detail: string, value: boolean, onChange: (next: boolean) => void) =>

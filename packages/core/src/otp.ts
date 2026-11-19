@@ -31,6 +31,8 @@ export function formatPhone(e164: string): string {
   const match = /^\+91(\d{5})(\d{5})$/.exec(e164);
   return match ? `+91 ${match[1]} ${match[2]}` : e164;
 }
+/** A session user's phone (Supabase stores it without the +, "919876543210") for display: "+91 98765 43210", or null when there is none. */
+export const formatAccountPhone = (phone: string | null | undefined): string | null => phone ? formatPhone(phone.startsWith('+') ? phone : `+${phone}`) : null;
 /** Digits only, at most six, so pasting "482 916" or "482-916" works. */
 export function codeFieldValue(input: string): string { return input.replace(/\D/g, '').slice(0, OTP_LENGTH); }
 export const isCompleteCode = (code: string) => code.length === OTP_LENGTH;

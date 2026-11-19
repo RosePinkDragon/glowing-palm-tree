@@ -159,7 +159,9 @@ try {
       assert.deepEqual(fixture.verify.at(-1), { ...fixture.verify.at(-1), phone: ownerPhone, token: '123456', type: 'sms' });
       assert.equal(await page.getByRole('button', { name: 'Get code' }).count(), 0, 'the sign-in screen is gone');
       await page.reload({ waitUntil: 'networkidle' }); await tabs.waitFor();
-      await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('button', { name: 'Log out', exact: true }).click();
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await page.getByText('+91 98765 43210', { exact: true }).first().waitFor(); // a phone-only owner is shown by formatted number, not a raw +91 string
+      await page.getByRole('button', { name: 'Log out', exact: true }).click();
       await page.getByRole('button', { name: 'Get code', exact: true }).waitFor();
       assert.equal(await f.phone.inputValue(), '', 'the number is not kept after logging out');
     });
