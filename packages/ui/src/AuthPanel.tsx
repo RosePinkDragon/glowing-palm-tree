@@ -136,7 +136,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
           <View accessible={false} style={{ minHeight: 48, minWidth: 56, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 12, backgroundColor: colors.tint, paddingHorizontal: 12 }}><Text style={{ color: colors.ink, fontSize: 16, ...bold }}>+91</Text></View>
           <TextInput accessibilityLabel="Mobile number" aria-labelledby="otp-phone-label" aria-describedby="otp-phone-error" value={field} onChangeText={value => { setField(phoneFieldValue(value)); setFieldError(''); setErrorCode(null); }} onSubmitEditing={getCode}
             placeholder="10-digit number" placeholderTextColor={colors.muted} keyboardType="phone-pad" inputMode="tel" autoComplete="tel-national" textContentType="telephoneNumber" maxLength={20} editable={!busy} returnKeyType="go"
-            style={{ flex: 1, minHeight: 48, borderWidth: 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 18, letterSpacing: 1 }} />
+            style={{ flex: 1, minWidth: 0, minHeight: 48, borderWidth: 1, borderColor: fieldError ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 18, letterSpacing: 1 }} />
         </View>
         <View nativeID="otp-phone-error" role="alert" accessibilityLiveRegion="polite">{fieldError ? <Text style={{ color: colors.danger, fontSize: 14, lineHeight: 21 }}>{fieldError}</Text> : null}</View>
       </View>
