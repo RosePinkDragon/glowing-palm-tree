@@ -6,3 +6,51 @@ verify_jwt = false
 verify_jwt = false
 # Run `deno install --frozen` in the function directory before CLI bundling.
 static_files = ["./functions/menu-photos/node_modules/@imagemagick/magick-wasm/dist/x86/magick.wasm"]
+
+# Edge Functions for WhatsApp one-time-code login (#50). Both are public endpoints that authenticate themselves
+# (a signed hook request; CAPTCHA, rate limits and the owner check), so the gateway JWT check is off.
+[functions.request-owner-code]
+verify_jwt = false
+
+[functions.send-sms-hook]
+verify_jwt = false
+
+# Phone login by one-time code (#50). Codes are sent by the send_sms hook below, as a WhatsApp authentication
+# template through MSG91, so no SMS provider is configured here. Needs a Supabase CLI that knows
+# `otp_expiry` under [auth.sms] (3.x). Hosted projects: set the same values in the dashboard, see docs/RELEASE.md.
+[auth.sms]
+enabled = true
+enable_confirmations = false
+template = "Your code is {{ .Code }}"
+# Minimum time before another code can be requested for the same number (the apps show this as a cooldown).
+max_frequency = "30s"
+otp_length = 6
+# 10 minutes. Supabase's own default is much longer.
+otp_expiry = 600
+
+# Local development and browser fixtures only: these numbers skip the hook and always accept 123456, so no
+# WhatsApp message is sent. Fictional numbers; NEVER run `supabase config push` with this table present, because
+# it would make the same codes valid on the hosted project. Keys are the number with country code, without +.
+[auth.sms.test_otp]
+919999900001 = "123456"
+919999900002 = "123456"
+
+# CAPTCHA is OFF for local development, because the apps send a Turnstile token only when EXPO_PUBLIC_TURNSTILE_SITE_KEY
+# is set, and a request without one would be refused. To exercise it locally, set that variable to Cloudflare's always-pass
+# test site key (1x00000000000000000000AA), set `enabled = true` here and put
+#   SUPABASE_AUTH_CAPTCHA_SECRET=1x0000000000000000000000000000000AA
+# in supabase/.env.local (git-ignored). Production: enable it in the dashboard with the real secret (docs/RELEASE.md),
+# never in this file. The owner flow is verified by request-owner-code itself, with TURNSTILE_SECRET_KEY.
+[auth.captcha]
+enabled = false
+provider = "turnstile"
+secret = "env(SUPABASE_AUTH_CAPTCHA_SECRET)"
+
+# Auth sends every code here. Hosted projects: the dashboard generates the secret ("v1,whsec_...") and the same value
+# is the SEND_SMS_HOOK_SECRET function secret. Local development: put SUPABASE_AUTH_HOOK_SEND_SMS_SECRET=v1,whsec_<base64>
+# in supabase/.env.local, and pass the same value as SEND_SMS_HOOK_SECRET to
+# `supabase functions serve --env-file`. The hook is not used for the numbers in test_otp.
+[auth.hook.send_sms]
+enabled = true
+uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"
+secrets = "env(SUPABASE_AUTH_HOOK_SEND_SMS_SECRET)"

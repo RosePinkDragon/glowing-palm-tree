@@ -112,6 +112,128 @@ No remote Supabase project is linked or changed by these repository changes.
 3. For web push, find or generate the public Web Push certificate key pair in Firebase Console → Project settings → Cloud Messaging → Web Push certificates and set its public key as `EXPO_PUBLIC_FIREBASE_VAPID_KEY`. Configure Firebase Cloud Messaging for the project. Verify permission, token registration, and delivery on each deployed origin.
 4. Deploy `dispatch-notifications` with the Supabase CLI from a trusted machine after linking the correct project: `supabase functions deploy dispatch-notifications`. In Firebase Console → Project settings → Service accounts, choose **Generate new private key** on a trusted machine. Upload the resulting JSON as the Supabase Edge Function secret `FCM_SERVICE_ACCOUNT` (it contains `project_id`, `client_email`, and `private_key`), and store a strong `NOTIFICATION_DISPATCH_SECRET` of at least 32 characters in Supabase Edge Function secrets. The function also uses Supabase's server-side `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Keep these private values out of chat, GitHub, and Vercel frontend variables. Configure a trusted scheduler to POST to the deployed function URL with `Authorization: Bearer <NOTIFICATION_DISPATCH_SECRET>`; the function checks that secret and has JWT verification disabled specifically for this endpoint. Verify scheduling and delivery without exposing the secret. See [function notes](../supabase/functions/dispatch-notifications/README.md).
 
+## WhatsApp one-time-code login (#50, backend)
+
+Customers and owners sign in with a mobile number and a 6-digit code sent as a WhatsApp authentication message.
+This section covers the backend and provider setup; the customer and owner screens ship separately (#50 slices B and C),
+and Android autofill follows with the first native build. Nothing here creates a provider account or deploys anything.
+
+**Existing email accounts start fresh.** The email-and-password accounts made before launch are pre-release fixtures, so
+there is no migration. Production owners are created with their phone number at deploy (see below). The email functions
+stay in `services.auth` until the screens switch.
+
+**How it fits together.** Customers call Supabase Auth (`signInWithOtp`, then `verifyOtp` with type `sms`). Auth generates
+the code and posts it to the `send-sms-hook` Edge Function, which verifies the signed request and sends the template
+through MSG91. Owners never call Auth for a code: the owners' app calls `request-owner-code`, which checks the number
+against `business_memberships` for that restaurant and asks Auth to send a code (without creating a user) only for an admin
+member. Every other request to that endpoint is logged and answered identically (the endpoint's own response; see the cooldown
+limit under Rate limits below for what Auth's resend timer can still reveal). A verified code only matters to an owner if the account
+is an admin member: access still comes from `business_memberships`, checked on the server.
+
+### Provider setup (do first; approvals take days)
+
+1. Meta Business verification for the Indian business, and a WhatsApp Business number registered to that business, so codes
+   to Indian numbers are billed at the domestic authentication rate.
+2. In MSG91, connect the WhatsApp Business account and note the integrated WhatsApp number.
+3. Create an **authentication** template in Meta (through MSG91) with the code in the body and the **copy code** button, so iOS and
+   web users get one-tap copy. For Android one-tap autofill the template also needs the app's package name and signature hash;
+   add them when the native build exists (a template edit is re-reviewed by Meta). Write down the exact template name,
+   namespace and language code once approved. The function sends the code to the body variable and the button.
+4. Cloudflare Turnstile: create a widget for the four production domains. The **site key** is public: set it as
+   `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in all four Vercel projects and redeploy (the screens, slices B and C, send a token as `captchaToken`
+   only when this variable is set). The **secret key** goes in both places below. The two sides must agree: with the site key set,
+   enable CAPTCHA in Auth and set `TURNSTILE_SECRET_KEY`; with no site key the screens send no token, so CAPTCHA must stay off in
+   Auth (as it is in the local `supabase/config.toml`) or every code request is refused.
+
+### Secrets (names only; never in git, chat or a Vercel frontend variable)
+
+Set these as Supabase Edge Function secrets from a trusted machine (`supabase secrets set --env-file <untracked file>`):
+
+| Secret | Used by | Value |
+| --- | --- | --- |
+| `SEND_SMS_HOOK_SECRET` | `send-sms-hook` | The hook secret the dashboard generates (`v1,whsec_...`) |
+| `MSG91_AUTH_KEY` | `send-sms-hook` | MSG91 auth key |
+| `MSG91_WHATSAPP_NUMBER` | `send-sms-hook` | The integrated WhatsApp number, digits with country code |
+| `MSG91_TEMPLATE_NAME` | `send-sms-hook` | Approved template name |
+| `MSG91_TEMPLATE_NAMESPACE` | `send-sms-hook` | Template namespace shown by MSG91/Meta |
+| `MSG91_TEMPLATE_LANGUAGE` | `send-sms-hook` | Optional template language code, default `en` |
+| `TURNSTILE_SECRET_KEY` | `request-owner-code` | Turnstile secret. **Required in production, together with the site key.** The function fails closed: without it every request gets a 503 and a fixed log line |
+| `OWNER_CODE_CAPTCHA` | `request-owner-code` | Local development only: `off` skips the CAPTCHA check when no secret is set. Put it only in the untracked local env file passed to `supabase functions serve`; never set it on a hosted project |
+| `OWNER_CODE_RESPONSE_MS` | `request-owner-code` | Optional fixed response time, default 2000, kept between 500 and 8000 |
+
+### Enable it (hosted project)
+
+1. Deploy: `supabase functions deploy send-sms-hook` and `supabase functions deploy request-owner-code` (both have JWT verification
+   off in `supabase/config.toml`; each authenticates itself).
+2. Authentication → **Hooks** → Send SMS: HTTPS, the URL of `send-sms-hook`, generate the secret, and store it as `SEND_SMS_HOOK_SECRET`.
+   **Enable the hook and store the secret in the same sitting**: a hook that is enabled before the function has its secret (or a secret
+   that no longer matches) makes every code request fail. Auth signs every call (Standard Webhooks) and the function rejects anything unsigned or older than five minutes.
+3. Authentication → Providers → **Phone**: enable it. No SMS provider is needed with the hook. Set **SMS OTP expiry to 600**
+   seconds (10 minutes; the default is far longer), length 6, and the resend interval (minimum time between codes, `max_frequency`) to **30 seconds**, the cooldown the screens show by default. Leave the project SMS rate
+   limit modest (`auth.rate_limit.sms_sent`); it also caps WhatsApp spend on the customer path.
+4. Authentication → **Bot and Abuse Protection**: enable CAPTCHA with Turnstile and the same secret (only together with
+   `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, see provider setup step 4). The customer screens send a token with each code request. Auth skips its own CAPTCHA check for the service-role call that `request-owner-code`
+   makes, because that function has already verified the token itself.
+5. `supabase/config.toml` carries the same settings for the local stack (OTP expiry 600, resend interval 30 seconds, hook, CAPTCHA
+   off by default with Cloudflare's test keys documented in the file, two fictional test numbers that skip the hook and accept `123456`). **Never run `supabase config push` for this repository**: it would push
+   CAPTCHA off, the local hook address and the fictional test OTPs (making those codes valid on the hosted project). Configure hosted
+   Auth in the dashboard only. For local functions, put `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
+6. Verify on staging before launch: a customer code arrives and logs in a new number; a number that is not on WhatsApp gets the
+   "could not deliver" error (customer only); an owner's number receives a code from the owners' app; a non-owner's number
+   gets the identical screen and **no message appears in the MSG91 log**; response times look alike. If owners never receive a
+   code, check the Auth logs for a CAPTCHA refusal of the service-role call. Also request a code as a tester from a known
+   network and check that `select ip, outcome, created_at from public.owner_login_attempts order by created_at desc limit 5;` shows an
+   `ip` that is non-null and equals the tester's real public address. If it is null, the per-IP limit is not running (only
+   Cloudflare's `cf-connecting-ip` is trusted): record it as a launch follow-up rather than relying on that limit.
+
+### Production owners
+
+Create each owner with their phone number, then add the membership. In Authentication → Users, **Add user** with the phone and
+confirm it, or call `auth.admin.createUser({ phone: '+91XXXXXXXXXX', phone_confirm: true })` from a trusted machine. Supabase stores
+the number without the plus sign. Then, from a trusted connection:
+
+```sql
+insert into public.business_memberships (business_id, user_id, role, display_name)
+select b.id, u.id, 'admin', 'Owner' from public.businesses b, auth.users u
+where b.slug = 'ammu-sammu' and u.phone = '919876543210';
+```
+
+An owner who already has a customer account on the same number is the same user; adding the membership is all that is needed.
+
+### Rate limits and the security log
+
+`public.claim_owner_code_attempt` (service role only) decides ownership, applies the limits and writes the log in one call, under
+advisory locks in the order IP, phone, restaurant (it takes no row locks on users, sessions, accounts or businesses, so the
+lifecycle lock order above is unaffected). Limits count admitted requests, owners and non-owners alike: 3 per phone per 15 minutes
+and 10 per day, 10 per IP address per hour, and 30 sends per restaurant per hour to cap cost. Refused requests are logged but never
+extend a lockout. The only trusted client address is Cloudflare's `cf-connecting-ip`; `x-real-ip` and `x-forwarded-for` are ignored
+because a caller can forge them. When no trusted address is present the row's `ip` is NULL and the per-IP limit is skipped (the phone,
+restaurant and CAPTCHA limits still apply); verify this on staging as described above.
+
+**Accepted risk: lockout.** A sustained attacker with working CAPTCHA tokens can keep an owner's number refused for *new* sign-ins
+for up to a day or more, because the per-phone daily quota refills only as the attacker's own admitted attempts age out. Owners who
+are already signed in keep working. Accepted for launch; a follow-up should add a recovery path (for example a trusted override).
+
+**Accepted risk: cooldown oracle.** The identical response is a property of the `request-owner-code` endpoint only. Supabase Auth keeps a
+per-user resend timestamp that the endpoint cannot hide: a caller with two CAPTCHA solves can ask the owners' endpoint for a number and
+then immediately make the public customer-flow request to Auth for the same number; Auth answers with its "request again after N
+seconds" refusal only if a code was just sent, which happens only for an owner. That tells an owner's number apart, and it also
+sends a WhatsApp message to the owner (and the customer-flow request itself sends one to any stranger's number, at our cost).
+Accepted for launch; the CAPTCHA, the limits above and the project SMS limit are the only mitigations.
+
+**Owner resend cooldown.** An owner who asks again inside Auth's 30-second resend interval is consumed silently (the endpoint still
+answers normally), so the owners' screen (50-C) must enforce its own 30-second cooldown between requests.
+
+`public.owner_login_attempts` records phone, restaurant, app, IP address and outcome (`non_owner`, `rate_limited`, `sent_owner`,
+`provider_failed`), never a code or token. RLS is on with no policy and no client grant; only developers using the service role or the SQL editor
+can read it. It is not in Realtime. Entries older than 90 days are removed by `select public.purge_expired_owner_login_attempts();`,
+executable only by `service_role`. **There is no pg_cron installation or schedule in this change**: a separately authorized operator
+must arrange regular invocation (daily is enough) and verify it before claiming the 90-day retention is live.
+
+Known limit: Supabase Auth's own `signInWithOtp` is public, so someone could request a customer-flow code for an owner's number
+directly. It is bounded by CAPTCHA, the 30-second resend interval and the project SMS limit, and it never grants access
+(an owner session needs an admin membership), but it is not covered by the table above.
+
 ## EAS native builds
 
 Native builds use a separate EAS project per target. The identifiers in `config/app-targets.json` are:

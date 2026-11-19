@@ -1,4 +1,4 @@
-/** WhatsApp one-time-code login (#50): phone and code rules, the resend cooldown and the error vocabulary shared by the client and its tests. */
+/** WhatsApp one-time-code login (#50): phone and code rules, the resend cooldown and the screen copy for the error codes @market/services raises (OtpError). */
 export const OTP_LENGTH = 6;
 /** How long Get code / Send a new code stays disabled after a code was sent. A server-stated wait (RESEND_COOLDOWN) overrides it. */
 export const RESEND_COOLDOWN_SECONDS = 30;
@@ -40,20 +40,6 @@ export const cooldownDeadline = (nowMs: number, seconds = RESEND_COOLDOWN_SECOND
 export const cooldownRemaining = (deadlineMs: number, nowMs: number) => Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
 export function formatCountdown(seconds: number): string { const s = Math.max(0, Math.floor(seconds)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 
-/** "...you can only request this after 45 seconds" -> 45. */
-export function retryAfterSeconds(message: string): number | null {
-  const match = /after\s+(\d+)\s*(?:second|sec|s\b)/i.exec(message);
-  return match ? Number(match[1]) : null;
-}
-/** Classifies a Supabase Auth failure (or a send-hook failure relayed by it) into the error vocabulary the screens speak. */
-export function classifyOtpFailure(failure: { status?: number; code?: string; message?: string }): OtpErrorCode {
-  const code = (failure.code ?? '').toLowerCase(), message = failure.message ?? '';
-  if (isOtpErrorCode(failure.code)) return failure.code;
-  if (/not[_ ]on[_ ]whatsapp/i.test(message) || code === 'not_on_whatsapp') return 'NOT_ON_WHATSAPP';
-  if (code === 'otp_expired' || code === 'otp_disabled' || /expired|invalid/i.test(message) && failure.status !== 429 && code !== 'captcha_failed') return 'WRONG_OR_EXPIRED_CODE';
-  if (failure.status === 429 || code.startsWith('over_') && code.endsWith('_rate_limit')) return retryAfterSeconds(message) !== null ? 'RESEND_COOLDOWN' : 'RATE_LIMITED';
-  return 'GENERIC';
-}
 export const otpErrorCopy: Record<OtpErrorCode, string> = {
   WRONG_OR_EXPIRED_CODE: 'That code didn\'t match, or it has expired. Check the latest WhatsApp message, or send a new code.',
   RESEND_COOLDOWN: 'Please wait a moment before asking for another code.',

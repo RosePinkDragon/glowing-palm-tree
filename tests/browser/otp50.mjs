@@ -131,7 +131,7 @@ try {
     });
 
     for (const [name, reply, expected] of [
-      ['NOT_ON_WHATSAPP', gotrue(500, 'hook_failure', 'NOT_ON_WHATSAPP'), 'We couldn\'t deliver the code on WhatsApp. Check the number.'],
+      ['NOT_ON_WHATSAPP', gotrue(422, 'hook_failure', 'NOT_ON_WHATSAPP'), 'We couldn\'t deliver the code on WhatsApp. Check the number.'],
       ['RATE_LIMITED', gotrue(429, 'over_sms_send_rate_limit', 'SMS rate limit exceeded'), 'Too many attempts. Please wait a few minutes and try again.'],
       ['GENERIC', gotrue(500, 'unexpected_failure', 'boom'), 'Something went wrong. Please try again.'],
     ]) await run(`request error ${name}`, async ({ page, f, fixture, shot }) => {

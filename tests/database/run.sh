@@ -22,7 +22,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
-self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business)
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
 shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
@@ -175,5 +175,76 @@ SQL
   source tests/database/owner-display-name-races.sh
   source tests/database/customer-relationships-races.sh
   source tests/database/leave-business-races.sh
+  # #50: owner code claims. Committed fixtures and real concurrent sessions: simultaneous requests cannot all
+  # pass a limit, and a request waits behind an open claim for the same phone. No remote connections.
+  ol_sql() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" "$@"; }
+  ol_sql >/dev/null <<'SQL'
+insert into auth.users(id,phone) select ('56200000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid, '9198770000'||lpad(n::text,2,'0') from generate_series(1,8) n;
+insert into public.business_memberships(business_id,user_id,role) select '10000000-0000-4000-8000-000000000001',id,'admin' from auth.users where id::text like '56200000-%';
+SQL
+  ol_tmp=$(mktemp -d /tmp/owner-login-races.XXXXXX)
+  ol_claim() { ol_sql -tA -c "set role service_role; select allowed from public.claim_owner_code_attempt('$1','ammu-sammu','$2','ammu-sammu-admin')" | tail -1; }
+  ol_allowed() { cat "$ol_tmp"/"$1".* | grep -c '^t$' || true; }
+  ol_run() { # prefix, then "phone ip" pairs run at once
+    local prefix=$1 i=0 pids=(); shift
+    while (( $# )); do i=$((i+1)); ol_claim "$1" "$2" > "$ol_tmp/$prefix.$i" & pids+=("$!"); shift 2; done
+    for pid in "${pids[@]}"; do wait "$pid" || { echo "Owner login race $prefix failed" >&2; exit 1; }; done
+  }
+  ol_count() { ol_sql -tA -c "$1"; }
+  # 1. Eight simultaneous requests for one owner's number from different addresses: exactly three pass.
+  args=(); for i in {1..8}; do args+=("+919877000001" "198.18.0.$i"); done
+  ol_run phone "${args[@]}"
+  [[ "$(ol_allowed phone)" == 3 ]] || { echo "Per-phone limit let $(ol_allowed phone) of 8 simultaneous requests through" >&2; exit 1; }
+  [[ "$(ol_count "select count(*) filter (where outcome='sent_owner') || ',' || count(*) filter (where outcome='rate_limited') from public.owner_login_attempts where phone='+919877000001'")" == 3,5 ]] || { echo 'Per-phone race log is wrong' >&2; exit 1; }
+  # 2. Fourteen numbers from one address at once: exactly ten pass.
+  args=(); for i in {1..14}; do args+=("+9198770010$(printf %02d "$i")" "198.19.0.1"); done
+  ol_run ip "${args[@]}"
+  [[ "$(ol_allowed ip)" == 10 ]] || { echo "Per-address limit let $(ol_allowed ip) of 14 simultaneous requests through" >&2; exit 1; }
+  # 3. The restaurant cap counts sends only: top the hour up to 27, then six owners at once leave room for three.
+  ol_sql >/dev/null <<'SQL'
+insert into public.owner_login_attempts(phone,business_id,app,ip,outcome)
+ select '+9198770090'||lpad(n::text,2,'0'),'10000000-0000-4000-8000-000000000001','ammu-sammu-admin',null,'sent_owner'
+ from generate_series(1,27-(select count(*) from public.owner_login_attempts where business_id='10000000-0000-4000-8000-000000000001' and outcome in ('sent_owner','provider_failed'))::integer) n;
+SQL
+  args=(); for i in {2..7}; do args+=("+9198770000$(printf %02d "$i")" "198.20.0.$i"); done
+  ol_run biz "${args[@]}"
+  [[ "$(ol_allowed biz)" == 3 ]] || { echo "Restaurant cap let $(ol_allowed biz) of 6 simultaneous owners through" >&2; exit 1; }
+  # 4. A request waits behind an open claim for the same phone (the restaurant's earlier sends are aged out first).
+  # Two admitted attempts exist, so one slot is left:
+  # the first session takes it and holds it open, and the waiting session must then be refused.
+  ol_sql >/dev/null <<'SQL'
+update public.owner_login_attempts set created_at=created_at-interval '2 hours' where business_id='10000000-0000-4000-8000-000000000001' and outcome in ('sent_owner','provider_failed');
+insert into public.owner_login_attempts(phone,business_id,app,ip,outcome)
+ select '+919877000008','10000000-0000-4000-8000-000000000001','ammu-sammu-admin','198.21.0.9','non_owner' from generate_series(1,2);
+SQL
+  ol_sql >"$ol_tmp/hold.log" 2>&1 <<'SQL' &
+begin;
+set application_name='ol-first';
+set local role service_role;
+select public.test_assert((select allowed from public.claim_owner_code_attempt('+919877000008','ammu-sammu','198.21.0.1','ammu-sammu-admin')),'first claim takes the last slot');
+select pg_sleep(3);
+commit;
+SQL
+  ol_first=$!
+  ol_wait_for() {
+    local predicate="$1" seen=false
+    for _ in {1..100}; do
+      if [[ $(ol_sql -tA -c "select count(*) from pg_stat_activity where datname=current_database() and ($predicate)") == 1 ]]; then seen=true; break; fi
+      sleep 0.05
+    done
+    if [[ "$seen" != true ]]; then echo "Owner login race never reached expected state: $predicate" >&2; exit 1; fi
+  }
+  ol_wait_for "application_name='ol-first' and wait_event='PgSleep'"
+  ol_sql >"$ol_tmp/wait.log" 2>&1 <<'SQL' &
+set application_name='ol-second';
+set role service_role;
+select public.test_assert(not (select allowed from public.claim_owner_code_attempt('+919877000008','ammu-sammu','198.21.0.2','ammu-sammu-admin')),'waiting claim sees the first and is refused');
+SQL
+  ol_second=$!
+  ol_wait_for "application_name='ol-second' and cardinality(pg_blocking_pids(pid))>0"
+  wait "$ol_first" || { cat "$ol_tmp/hold.log" >&2; exit 1; }
+  wait "$ol_second" || { cat "$ol_tmp/wait.log" >&2; exit 1; }
+  [[ "$(ol_count "select count(*) filter (where outcome='sent_owner') || ',' || count(*) filter (where outcome='rate_limited') from public.owner_login_attempts where phone='+919877000008'")" == 1,1 ]] || { echo 'Waiting claim race log is wrong' >&2; exit 1; }
+  rm -rf "$ol_tmp"
 done
-echo 'Baseline, final-schema suites and races (including restaurant settings, customer feed and owner names) passed in both PostGIS layouts.'
+echo 'Baseline, final-schema suites and races (including restaurant settings, customer feed, owner names and owner login limits) passed in both PostGIS layouts.'

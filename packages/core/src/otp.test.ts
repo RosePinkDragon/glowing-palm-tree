@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyOtpFailure, codeFieldValue, cooldownDeadline, cooldownRemaining, formatCountdown, formatPhone, normalizeIndianMobile, phoneFieldError, phoneFieldValue, retryAfterSeconds } from './otp.ts';
+import { codeFieldValue, cooldownDeadline, cooldownRemaining, formatCountdown, formatPhone, normalizeIndianMobile, phoneFieldError, phoneFieldValue, isOtpErrorCode, otpErrorCodes, otpErrorCopy } from './otp.ts';
 
 test('normalises Indian mobile numbers however they are typed or pasted', () => {
   for (const input of ['9876543210', '98765 43210', '98765-43210', '+91 98765 43210', '919876543210', '09876543210', ' +91-9876543210 ']) assert.equal(normalizeIndianMobile(input), '+919876543210', input);
@@ -27,13 +27,8 @@ test('cooldown counts down in whole seconds and never goes negative', () => {
   assert.equal(cooldownRemaining(cooldownDeadline(start, 60), start), 60);
   assert.equal(formatCountdown(24), '0:24'); assert.equal(formatCountdown(5), '0:05'); assert.equal(formatCountdown(60), '1:00'); assert.equal(formatCountdown(-3), '0:00');
 });
-test('classifies Supabase Auth failures', () => {
-  assert.equal(classifyOtpFailure({ status: 403, code: 'otp_expired', message: 'Token has expired or is invalid' }), 'WRONG_OR_EXPIRED_CODE');
-  assert.equal(classifyOtpFailure({ status: 429, code: 'over_sms_send_rate_limit', message: 'For security purposes, you can only request this after 45 seconds.' }), 'RESEND_COOLDOWN');
-  assert.equal(retryAfterSeconds('you can only request this after 45 seconds.'), 45);
-  assert.equal(classifyOtpFailure({ status: 429, code: 'over_request_rate_limit', message: 'Request rate limit reached' }), 'RATE_LIMITED');
-  assert.equal(classifyOtpFailure({ status: 500, code: 'hook_failure', message: 'NOT_ON_WHATSAPP' }), 'NOT_ON_WHATSAPP');
-  assert.equal(classifyOtpFailure({ status: 422, code: 'RATE_LIMITED' }), 'RATE_LIMITED');
-  assert.equal(classifyOtpFailure({ status: 400, code: 'captcha_failed', message: 'captcha verification process failed' }), 'GENERIC');
-  assert.equal(classifyOtpFailure({ status: 500, message: 'boom' }), 'GENERIC');
+test('every service error code has screen copy', () => {
+  for (const code of otpErrorCodes) assert.ok(otpErrorCopy[code].length > 10, code);
+  assert.equal(otpErrorCopy.NOT_ON_WHATSAPP, 'We couldn\'t deliver the code on WhatsApp. Check the number.');
+  assert.equal(isOtpErrorCode('RATE_LIMITED'), true); assert.equal(isOtpErrorCode('over_sms_send_rate_limit'), false);
 });
