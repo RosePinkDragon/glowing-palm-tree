@@ -43,6 +43,103 @@ export function createAnalytics(port: AnalyticsPort, context: AnalyticsContext) 
   };
 }
 
+/** Speed monitoring (Firebase Performance). The only custom traces; names carry no data and traces take no attributes. */
+export type TraceName = 'checkout_submit' | 'otp_request' | 'otp_verify' | 'photo_upload';
+export interface MonitoringPort {
+  /** Loads and starts the SDK. Must not be called before consent. */
+  enable(): Promise<void>;
+  /** Stops collection. */
+  disable(): Promise<void>;
+}
+type Tracer = (name: TraceName) => () => void;
+let tracer: Tracer | undefined;
+/** Installed by a monitoring adapter while it is enabled; pass undefined on withdrawal. */
+export function setTracer(next: Tracer | undefined) { tracer = next; }
+/** Runs `work` inside a named trace when speed monitoring is active; otherwise just runs it. A tracing fault never affects `work`. */
+export async function traced<T>(name: TraceName, work: () => Promise<T>): Promise<T> {
+  let stop: (() => void) | undefined;
+  try { stop = tracer?.(name); } catch { stop = undefined; }
+  try { return await work(); }
+  finally { try { stop?.(); } catch { /* ignore */ } }
+}
+
+/** Error reports (Sentry). The reporter is installed only while consent is on; reportError does nothing otherwise. */
+let reporter: ((error: unknown) => void) | undefined;
+export function setErrorReporter(next: ((error: unknown) => void) | undefined) { reporter = next; }
+export function reportError(error: unknown) { try { reporter?.(error); } catch { /* reporting must never break the screen */ } }
+
+// Redaction for anything that leaves the device in an error report or breadcrumb. Order matters: URLs first, then phones, then codes.
+const urlWithQuery = /((?:https?:\/\/)[^\s?#"'<>)]*)[?#][^\s"'<>)]*/gi;
+const emailLike = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/gi;
+const indianPhone = /(?<!\d)(?:\+\s?91[\s-]?|91[\s-]?|0)?\d{5}[\s-]?\d{5}(?!\d)/g;
+const codeLike = /(?<!\d)\d{4,8}(?!\d)/g;
+/** Removes query strings and fragments from URLs, and redacts emails, Indian phone numbers (10 digits, +91 forms) and 4 to 8 digit codes. */
+export function scrubText(value: string): string {
+  let text = value;
+  if (/^\/[^\s]*[?#]/.test(text)) text = text.replace(/[?#].*$/, '');
+  return text.replace(urlWithQuery, '$1').replace(emailLike, '[email]').replace(indianPhone, '[phone]').replace(codeLike, '[code]');
+}
+function scrubValue(value: unknown, depth: number): unknown {
+  if (typeof value === 'string') return scrubText(value);
+  if (depth > 12 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => scrubValue(item, depth + 1));
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) result[key] = scrubValue(item, depth + 1);
+  return result;
+}
+/** Minimal shape of a Sentry event/breadcrumb; the scrubber is generic so it needs no SDK types. */
+type Loose = Record<string, unknown>;
+export function scrubBreadcrumb<T extends Loose>(breadcrumb: T): T { return scrubValue(breadcrumb, 0) as T; }
+/** Drops identity and request payload fields entirely, then scrubs every remaining string. */
+export function scrubEvent<T extends Loose>(event: T): T {
+  const copy: Loose = { ...event };
+  delete copy.user; delete copy.server_name;
+  if (copy.request && typeof copy.request === 'object') {
+    const { url, method } = copy.request as Loose;
+    copy.request = { ...(typeof url === 'string' ? { url } : {}), ...(typeof method === 'string' ? { method } : {}) };
+  }
+  return scrubValue(copy, 0) as T;
+}
+
+/** Same consent rules as createAnalytics for ports that send nothing themselves. Never rejects: a monitoring fault must not block the app. */
+export function createMonitoring(ports: MonitoringPort[]) {
+  let consent = false;
+  let version = 0;
+  const queues = ports.map(() => Promise.resolve());
+  return {
+    setConsent(granted: boolean): Promise<void> {
+      consent = granted === true;
+      const current = ++version;
+      ports.forEach((port, index) => {
+        queues[index] = queues[index].then(async () => {
+          try {
+            if (consent && current === version) {
+              await port.enable();
+              if (!consent || current !== version) await port.disable();
+            } else if (!consent) await port.disable();
+          } catch { /* unconfigured or unsupported: stay off */ }
+        });
+      });
+      return Promise.all(queues).then(() => {});
+    }
+  };
+}
+
+/** Fires each event (optionally per key, such as an order id) at most once. A call that was not sent (no consent yet) may be retried. */
+export function createEventOnce(track: (name: EventName) => Promise<boolean>) {
+  const state = new Map<string, 'pending' | 'sent'>();
+  return {
+    async fire(name: EventName, key = ''): Promise<void> {
+      const id = `${name}:${key}`;
+      if (state.has(id)) return;
+      state.set(id, 'pending');
+      let sent = false;
+      try { sent = await track(name); } catch { sent = false; }
+      if (sent) state.set(id, 'sent'); else state.delete(id);
+    }
+  };
+}
+
 export type Availability = { status: 'ready' } | { status: 'unsupported' | 'unconfigured' | 'denied' | 'error'; reason: string };
 export type TokenResult = { status: 'ready'; token: string } | Exclude<Availability, { status: 'ready' }>;
 export interface MessagingPort {

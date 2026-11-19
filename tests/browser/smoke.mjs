@@ -123,6 +123,18 @@ const prepareCart = async (page, add = true) => {
   await first.getByRole('button', { name: 'Turn analytics on', exact: true }).waitFor();
   await first.getByRole('button', { name: 'Turn notifications on', exact: true }).waitFor();
   assert.deepEqual(externalRequests, []);
+  // #180: with no Firebase or Sentry configuration, even switching the consent control on loads and requests nothing from them, and the orders placed later in this suite still work (they run with the same empty configuration).
+  const monitoringRequests = () => externalRequests.filter(href => /firebase|sentry|googletagmanager|google-analytics|googleapis\.com|gstatic\.com/i.test(href));
+  assert.deepEqual(monitoringRequests(), []);
+  await first.getByRole('button', { name: 'Turn analytics on', exact: true }).click();
+  await first.getByRole('button', { name: 'Turn analytics off', exact: true }).waitFor();
+  await first.getByText('Could not update analytics. Please try again.', { exact: true }).filter({ visible: true }).waitFor();
+  assert.deepEqual(monitoringRequests(), [], 'consent on without configuration makes no Firebase, Sentry or Google request');
+  assert.deepEqual(externalRequests, []);
+  await first.getByRole('button', { name: 'Turn analytics off', exact: true }).click();
+  await first.getByText('Analytics is off.', { exact: true }).filter({ visible: true }).waitFor();
+  assert.deepEqual(monitoringRequests(), []);
+  console.log('PASS: no Firebase, Sentry or Google request without configuration, with consent off or on');
   assert.equal(await first.evaluate(() => window.__permissionRequests || 0), 0);
   await first.getByRole('button', { name: 'Turn notifications on', exact: true }).click();
   await first.getByText('Notifications are not available yet.', { exact: true }).filter({ visible: true }).waitFor();

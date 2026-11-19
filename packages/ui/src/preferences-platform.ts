@@ -1,4 +1,4 @@
-import { createWebAnalytics, createWebMessaging } from '@market/notifications/web';
+import { createWebAnalytics, createWebErrorReporting, createWebMessaging, createWebPerformance } from '@market/notifications/web';
 
 /** Public configuration only; the stream verification flag requires operator verification. */
 export function preferenceAdapters() {
@@ -14,6 +14,8 @@ export function preferenceAdapters() {
   const base = configuredBase.endsWith('/') ? configuredBase : `${configuredBase}/`;
   return {
     analytics: createWebAnalytics(config, { enhancedMeasurementDisabled: process.env.EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED === 'true' }),
+    performance: createWebPerformance(config),
+    errors: createWebErrorReporting({ dsn: process.env.EXPO_PUBLIC_SENTRY_DSN, environment: process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT, release: process.env.EXPO_PUBLIC_SENTRY_RELEASE }),
     messaging: createWebMessaging(config, { vapidKey: process.env.EXPO_PUBLIC_FIREBASE_VAPID_KEY, workerUrl: `${base}firebase-messaging-worker.js`, scope: base }),
   };
 }

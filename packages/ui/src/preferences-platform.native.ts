@@ -1,7 +1,8 @@
-import { unavailableNativeMessaging, type AnalyticsPort } from '@market/notifications';
+import { unavailableNativeMessaging, type AnalyticsPort, type MonitoringPort } from '@market/notifications';
 const analytics: AnalyticsPort = {
   async enable() { throw new Error('Analytics is not available on this device.'); },
   async disable() {},
   send() {},
 };
-export function preferenceAdapters() { return { analytics, messaging: unavailableNativeMessaging() }; }
+const performance: MonitoringPort = { async enable() {}, async disable() {} };
+export function preferenceAdapters() { return { analytics, performance, errors: performance, messaging: unavailableNativeMessaging() }; }

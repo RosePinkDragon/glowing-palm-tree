@@ -136,7 +136,7 @@ export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Ma
       <MarketRow roomy title="Play a test alert" end={soon} />
     </MarketGroup>
     {status(settings.pushMessage)}
-    <MarketGroup inset title="Privacy">{switchRow('Share app usage', 'Anonymous data that helps us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next))}</MarketGroup>
+    <MarketGroup inset title="Privacy">{switchRow('Share app usage', 'Anonymous usage, speed and error reports that help us improve the app', settings.prefs.analytics, next => void settings.setAnalytics(next))}</MarketGroup>
     {status(settings.analyticsMessage)}
     <Pressable accessibilityRole="button" disabled={settings.busy} onPress={() => { setSignOutError(''); void settings.signOut().catch(e => setSignOutError(messageOf(e))); }}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 56, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.tint : colors.surface, opacity: settings.busy ? 0.6 : 1 })}>

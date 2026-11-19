@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createAnalytics, createMessaging, type Availability } from '@market/notifications';
+import { createAnalytics, createEventOnce, createMessaging, createMonitoring, type Availability, type EventName } from '@market/notifications';
 import type { AppAudience, BusinessSlug } from '@market/core';
 import type { MarketServices } from '@market/services';
 import { preferenceAdapters } from './preferences-platform';
@@ -31,8 +31,16 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
   const controllers = useMemo(() => {
     const adapters = preferenceAdapters();
     const tokenSessions = new Map<string, string>();
+    // One consent control: speed monitoring starts and stops with analytics. It never rejects, so a monitoring fault cannot block analytics or ordering.
+    const base = createAnalytics(adapters.analytics, { brand: business.replace(/-/g, '_') as 'ammu_sammu' | 'kokani_dine_inn', audience });
+    const monitoring = createMonitoring([adapters.performance, adapters.errors]);
+    const analytics = {
+      track: base.track,
+      async setConsent(granted: boolean) { const speed = monitoring.setConsent(granted); try { await base.setConsent(granted); } finally { await speed; } },
+    };
     return {
-      analytics: createAnalytics(adapters.analytics, { brand: business.replace(/-/g, '_') as 'ammu_sammu' | 'kokani_dine_inn', audience }),
+      analytics,
+      once: createEventOnce(name => analytics.track(name)),
       messaging: createMessaging(adapters.messaging, {
         async register(userId, token) {
           const s = currentSession.current;
@@ -113,5 +121,7 @@ export function useNotificationPreferences(business: BusinessSlug, audience: App
     }).catch(() => { void controllers.messaging.disable().catch(() => {}); if (generation === active.current) setPushMessage('Could not update notifications. Please try again.'); }).finally(() => { if (generation === active.current) setBusy(false); });
   }, [controllers, prefs, key, userId]);
   const signOut = useCallback(async () => { setBusy(true); active.current++; controllers.messaging.invalidate(); void controllers.analytics.setConsent(false); try { await controllers.messaging.disable().catch(() => {}); await services.auth.signOut(); } catch (error) { setRetryGeneration(value => value + 1); throw error; } finally { setBusy(false); } }, [controllers, services]);
-  return { prefs, ready, busy, analyticsMessage, pushMessage, setAnalytics, setPush, signOut };
+  /** Sends a named event at most once per page load (per key); does nothing without consent. */
+  const fireOnce = useCallback((name: EventName, key?: string) => { void controllers.once.fire(name, key); }, [controllers]);
+  return { prefs, ready, busy, analyticsMessage, pushMessage, setAnalytics, setPush, signOut, fireOnce };
 }
