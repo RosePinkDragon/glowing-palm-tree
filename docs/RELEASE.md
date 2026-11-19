@@ -28,7 +28,7 @@ supabase functions deploy send-sms-hook
 supabase functions deploy menu-photos
 ```
 
-`request-owner-code` and `send-sms-hook` are required for login. `menu-photos` is called by the owners' app for dish photos (`packages/services`); run `deno install --frozen` in `supabase/functions/menu-photos` first as its README describes, or skip it and launch without photo uploads. `dispatch-notifications` is only needed for push (step 5, optional). Their `verify_jwt = false` settings come from `supabase/config.toml` and each function authenticates itself.
+All three functions are required for the web launch. `request-owner-code` and `send-sms-hook` are required for login. `menu-photos` is required because owners use it to upload dish photos (`packages/services`); run `deno install --frozen` in `supabase/functions/menu-photos` first as its README describes, then deploy it. `dispatch-notifications` is not part of the web launch (step 5). Their `verify_jwt = false` settings come from `supabase/config.toml` and each function authenticates itself.
 
 ### 3. Secrets (names only)
 
@@ -45,7 +45,8 @@ Set from a trusted machine with `supabase secrets set --env-file <untracked file
 | `TURNSTILE_SECRET_KEY` | `request-owner-code` | Yes; without it every owner code request gets a 503 |
 | `OWNER_CODE_RESPONSE_MS` | `request-owner-code` | Optional, default 2000 |
 | `OWNER_CODE_CAPTCHA` | `request-owner-code` | Never on hosted; local development only |
-| `FCM_SERVICE_ACCOUNT`, `NOTIFICATION_DISPATCH_SECRET` | `dispatch-notifications` | Only if you deploy push (step 5) |
+
+Not part of the web launch (native push is tracked in #54): the Firebase secrets `FCM_SERVICE_ACCOUNT` and `NOTIFICATION_DISPATCH_SECRET` for `dispatch-notifications`. Do not set them for this launch.
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are read by the functions too; the platform supplies them to deployed functions (**confirm in dashboard** under Edge Functions → Secrets). The provider accounts (Meta business verification, MSG91 WhatsApp authentication template with copy-code button, Cloudflare Turnstile widget for the four production domains) take days; see [WhatsApp provider setup](#provider-setup-do-first-approvals-take-days).
 
@@ -53,12 +54,12 @@ Set from a trusted machine with `supabase secrets set --env-file <untracked file
 
 1. Authentication → Hooks → **Send SMS**: HTTPS, the URL of `send-sms-hook`, generate the secret and store it as `SEND_SMS_HOOK_SECRET` immediately; enable the hook in that same sitting.
 2. Authentication → Providers → **Phone**: enable; SMS OTP expiry **600** seconds, length 6, resend interval (`max_frequency`) **30** seconds. Keep the project SMS rate limit modest.
-3. Authentication → Bot and Abuse Protection: enable CAPTCHA with **Turnstile** and the secret, only together with `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in step 7.
+3. Authentication → Bot and Abuse Protection: enable CAPTCHA with **Turnstile** and the secret, at the same time as setting `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in all four Vercel projects (step 7). If only one side is set, every login-code request fails.
 4. Authentication → URL Configuration: Site URL and the four exact production domain roots as Redirect URLs, no broad wildcards.
 
-### 5. Optional: push notifications
+### 5. Push notifications: not part of the web launch
 
-Skip for a first launch if you accept no push. Otherwise follow [Firebase, analytics, and notifications](#firebase-analytics-and-notifications): deploy `dispatch-notifications`, set `FCM_SERVICE_ACCOUNT` and `NOTIFICATION_DISPATCH_SECRET`, and configure a trusted scheduler (**confirm in dashboard**; none is provided by this repository).
+Not part of the web launch (native push is tracked in #54). Do not deploy `dispatch-notifications`, set its Firebase secrets or configure a scheduler for this launch. For later reference, the push setup is described in [Firebase, analytics, and notifications](#firebase-analytics-and-notifications): deploy `dispatch-notifications`, set `FCM_SERVICE_ACCOUNT` and `NOTIFICATION_DISPATCH_SECRET`, and configure a trusted scheduler (**confirm in dashboard**; none is provided by this repository).
 
 ### 6. Production owner accounts
 
@@ -91,8 +92,8 @@ Environment variables (Production; public values only, the same for all four unl
 | --- | --- |
 | `EXPO_PUBLIC_SUPABASE_URL` | Project URL from step 1 |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Publishable key from step 1 |
-| `EXPO_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. Set it in all four, or in none and keep Auth CAPTCHA off |
-| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_MEASUREMENT_ID`, `_VAPID_KEY`, `_ANALYTICS_STREAM_VERIFIED` | Optional, only with Firebase (step 5). Each app uses its own Firebase web app config; the verified flag stays `false` until Enhanced Measurement is confirmed off |
+| `EXPO_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. Must be set in all four Vercel projects and Supabase Auth CAPTCHA (Turnstile) enabled together, at the same time. If only one side is set, every login-code request fails |
+| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_MEASUREMENT_ID`, `_VAPID_KEY`, `_ANALYTICS_STREAM_VERIFIED` | Not part of the web launch (step 5); leave unset. Each app uses its own Firebase web app config; the verified flag stays `false` until Enhanced Measurement is confirmed off |
 | `EXPO_PUBLIC_WEB_BASE_PATH` | Leave blank (or `/`) |
 
 `EXPO_PUBLIC_EAS_PROJECT_ID` is not used for web. Variables are baked in at build time, so redeploy after changing any. Add each project's production domain to the Supabase redirect URLs (step 4) and to the Turnstile widget. You trigger the deploys; agents do not.
