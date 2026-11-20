@@ -90,6 +90,10 @@ export interface Order {
   subtotalPaise: number;
   deliveryFeePaise: number;
   totalPaise: number;
+  /** Rupees off, in paise, from the offer applied at checkout (#182); absent when there was none. total = subtotal + delivery - discount. */
+  discountPaise?: number;
+  /** Snapshot of the offer applied (#182); stays correct after the offer changes or ends. */
+  offer?: { id: string; name: string; code: string | null; kind: 'percent' | 'flat' | 'free_delivery' };
   delivery: DeliveryDetails;
   createdAtISO: string;
   /** Delivery pin: the saved address's pin (#48) or, on older orders, the phone's GPS at checkout. */

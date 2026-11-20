@@ -48,15 +48,30 @@ export function validateRestaurantSettings(input: SaveRestaurantSettingsInput): 
 export interface MenuCategory { id: string; businessId: BusinessSlug; name: string; sortOrder: number }
 export interface SaveCategoryInput { id?: string; name: string; sortOrder: number }
 export interface SaveMenuItemInput { diet: Diet | null; id?: string; name: string; description: string; categoryId: string; pricePaise: number; isAvailable: boolean; isDemo: boolean; isFeatured: boolean; sortOrder: number }
+export type OfferKind = 'percent' | 'flat' | 'free_delivery';
+/** The offer an order or quote used (#182). `code` is null for an automatic offer. */
+export interface OfferSnapshot { id: string; name: string; code: string | null; kind: OfferKind }
 export interface PricingTerms {
   lines: { menu_item_id: string; quantity: number; unit_price_paise: number; line_total_paise: number }[];
   delivery_fee_paise: number; min_order_paise: number; subtotal_paise: number; total_paise: number;
+  /** Present only when an offer applies (so a cart with no offer is priced exactly as before offers existed): total = subtotal + delivery - discount. */
+  discount_paise?: number; offer?: OfferSnapshot;
 }
+/** An active automatic offer, as shown on the menu and in the cart. Never carries a code or a limit. */
+export interface ActiveOffer {
+  id: string; name: string; kind: OfferKind; value: number | null; maxDiscountPaise: number | null; minOrderPaise: number; firstOrderOnly: boolean;
+  endsAtISO: string | null; window: { from: string; to: string; days: number[] } | null;
+}
+/** A code that applies to this customer; the cart minimum is checked by the quote. */
+export interface CheckedOfferCode { id: string; name: string; kind: OfferKind; value: number | null; maxDiscountPaise: number | null; minOrderPaise: number; firstOrderOnly: boolean }
+/** "Add shortfallPaise more to get ..." for the closest automatic offer the cart is just short of. */
+export interface OfferNudge { offerId: string; name: string; kind: OfferKind; value: number | null; shortfallPaise: number }
+export interface OrderQuote { pricing: PricingTerms; offerError: OfferError | null; nudge: OfferNudge | null }
 /**
  * An order goes to a saved address (#48): the server checks that address's pin and snapshots the
  * reviewed version. location (the phone, optional) only measures how far away the customer is.
  */
-export interface PlaceOrderInput { pricing: PricingTerms; lines: readonly CartLine[]; delivery: { name: string; phone: string }; location: LocationFix | null; idempotencyKey: string; savedAddress: { id: string; version: number } }
+export interface PlaceOrderInput { pricing: PricingTerms; /** The code the customer entered, if any. It is part of the idempotent request: retry with the same value. */ offerCode?: string | null; lines: readonly CartLine[]; delivery: { name: string; phone: string }; location: LocationFix | null; idempotencyKey: string; savedAddress: { id: string; version: number } }
 /** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
@@ -141,6 +156,42 @@ export function mapRestaurantSettingsView(value: unknown): RestaurantSettingsVie
   return { ...settings, orderPrefix: row.order_prefix, deliveryArea };
 }
 
+export type OfferErrorCode = 'OFFER_NOT_FOUND' | 'OFFER_NOT_ELIGIBLE' | 'OFFER_USED_UP' | 'OFFER_CHANGED' | 'OFFER_RATE_LIMITED';
+/** Why the server refused an offer. Stable machine values; the wording is fixed here (server text is never shown). */
+export type OfferReason = 'not_found' | 'paused' | 'ended' | 'not_started' | 'outside_window' | 'used_up' | 'first_order_only' | 'per_customer_limit' | 'min_order' | 'no_benefit' | 'rate_limited' | 'changed';
+const offerReasons: ReadonlySet<string> = new Set(['not_found', 'paused', 'ended', 'not_started', 'outside_window', 'used_up', 'first_order_only', 'per_customer_limit', 'min_order', 'no_benefit', 'rate_limited', 'changed']);
+const offerMessages: Record<OfferReason, string> = {
+  not_found: 'That code is not valid.', paused: 'This offer is not available right now.', ended: 'This offer has ended.', not_started: 'This offer has not started yet.',
+  outside_window: 'This offer is not available at this time of day.', used_up: 'This offer has been fully used.', first_order_only: 'This offer is only for your first order with this restaurant.',
+  per_customer_limit: 'You\'ve already used this code', min_order: 'Your order is below the minimum for this offer.', no_benefit: 'This offer would not save anything on this order.',
+  rate_limited: 'Too many tries. Please wait a little and try again.', changed: 'The offer on your order has changed. Review the new total.',
+};
+/** Offer failures with stable codes. `reason` is the server's reason; `shortfallPaise` is set for min_order; `retryAfterSeconds` for OFFER_RATE_LIMITED. */
+export class OfferError extends ServiceError {
+  readonly reason: OfferReason;
+  readonly shortfallPaise?: number;
+  readonly retryAfterSeconds?: number;
+  /** For OFFER_CHANGED: the cart as the server now prices it. Review it, then place with a fresh idempotency key. */
+  readonly pricing?: PricingTerms;
+  constructor(code: OfferErrorCode, reason: OfferReason, extra: { shortfallPaise?: number; retryAfterSeconds?: number; pricing?: PricingTerms; cause?: unknown } = {}) {
+    super(code, offerMessages[reason], extra.cause); this.name = 'OfferError'; this.reason = reason;
+    if (extra.shortfallPaise !== undefined) this.shortfallPaise = extra.shortfallPaise;
+    if (extra.retryAfterSeconds !== undefined) this.retryAfterSeconds = extra.retryAfterSeconds;
+    if (extra.pricing) this.pricing = extra.pricing;
+  }
+}
+/** Map a server reason to its code. Unknown reasons become the generic, safe OFFER_NOT_ELIGIBLE / OFFER_CHANGED. */
+export function offerError(reason: unknown, extra: { shortfallPaise?: unknown; retryAfterSeconds?: unknown; pricing?: PricingTerms; changed?: boolean; cause?: unknown } = {}): OfferError {
+  const known: OfferReason = typeof reason === 'string' && offerReasons.has(reason) ? reason as OfferReason : 'changed';
+  const safe = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : undefined;
+  const detail = { shortfallPaise: safe(extra.shortfallPaise), retryAfterSeconds: safe(extra.retryAfterSeconds), pricing: extra.pricing, cause: extra.cause };
+  if (extra.changed) return new OfferError('OFFER_CHANGED', known, detail);
+  if (known === 'not_found') return new OfferError('OFFER_NOT_FOUND', known, detail);
+  if (known === 'used_up') return new OfferError('OFFER_USED_UP', known, detail);
+  if (known === 'rate_limited') return new OfferError('OFFER_RATE_LIMITED', known, { ...detail, retryAfterSeconds: detail.retryAfterSeconds ?? 60 });
+  return new OfferError('OFFER_NOT_ELIGIBLE', known, detail);
+}
+
 /** Only constructed after validating an explicit transactional no-order response. */
 export class PricingChangedError extends ServiceError {
   readonly pricing: PricingTerms;
@@ -158,9 +209,30 @@ export function validateRevisedPricing(value: unknown, lines: readonly CartLine[
     if (!a || a.menu_item_id !== b.item.id || a.quantity !== b.quantity || !amount(a.unit_price_paise) || a.unit_price_paise <= 0 || !amount(a.line_total_paise) || a.line_total_paise !== a.unit_price_paise * a.quantity) return invalid();
     subtotal += a.line_total_paise;
   }
-  if (q.subtotal_paise !== subtotal || q.total_paise !== subtotal + q.delivery_fee_paise) return invalid();
+  // An offer is all-or-nothing: no offer means exactly the old contract, an offer carries a positive discount and its snapshot.
+  const hasOffer = q.discount_paise !== undefined || q.offer !== undefined;
+  const offer = q.offer as Partial<OfferSnapshot> | undefined;
+  if (hasOffer && (!amount(q.discount_paise) || (q.discount_paise as number) <= 0 || !offer || typeof offer !== 'object' || typeof offer.id !== 'string' || !orderIdPattern.test(offer.id) ||
+      typeof offer.name !== 'string' || !offer.name.trim() || offer.name.length > 40 || !(offer.code === null || (typeof offer.code === 'string' && /^[A-Z0-9]{4,15}$/.test(offer.code))) ||
+      (offer.kind !== 'percent' && offer.kind !== 'flat' && offer.kind !== 'free_delivery'))) return invalid();
+  const discount = hasOffer ? q.discount_paise as number : 0;
+  if (discount > subtotal + q.delivery_fee_paise || (offer?.kind === 'free_delivery' && discount !== q.delivery_fee_paise)) return invalid();
+  if (q.subtotal_paise !== subtotal || q.total_paise !== subtotal + q.delivery_fee_paise - discount) return invalid();
   // Copy just the validated contract, never trust arbitrary metadata in the response.
-  return { lines: q.lines.map(a => ({ menu_item_id: a.menu_item_id, quantity: a.quantity, unit_price_paise: a.unit_price_paise, line_total_paise: a.line_total_paise })), delivery_fee_paise: q.delivery_fee_paise, min_order_paise: q.min_order_paise, subtotal_paise: q.subtotal_paise, total_paise: q.total_paise };
+  return { lines: q.lines.map(a => ({ menu_item_id: a.menu_item_id, quantity: a.quantity, unit_price_paise: a.unit_price_paise, line_total_paise: a.line_total_paise })), delivery_fee_paise: q.delivery_fee_paise, min_order_paise: q.min_order_paise, subtotal_paise: q.subtotal_paise, total_paise: q.total_paise,
+    ...(hasOffer ? { discount_paise: discount, offer: { id: offer!.id!, name: offer!.name!, code: offer!.code as string | null, kind: offer!.kind as OfferKind } } : {}) };
+}
+const offerAmount = (v: unknown) => v === null || (Number.isSafeInteger(v) && (v as number) >= 0);
+/** Offers are display data from the server; a malformed one is dropped by the caller as an invalid response. */
+function activeOffer(v: unknown): ActiveOffer {
+  const o = v as Record<string, unknown> | null;
+  const bad = () => { throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid offer.'); };
+  if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !orderIdPattern.test(o.id) || typeof o.name !== 'string' || (o.kind !== 'percent' && o.kind !== 'flat' && o.kind !== 'free_delivery') ||
+      !offerAmount(o.value) || !offerAmount(o.max_discount_paise) || !Number.isSafeInteger(o.min_order_paise) || typeof o.first_order_only !== 'boolean' || !(o.ends_at === null || typeof o.ends_at === 'string')) return bad();
+  const w = o.window as Record<string, unknown> | null | undefined;
+  if (w && (typeof w.from !== 'string' || typeof w.to !== 'string' || !Array.isArray(w.days) || !w.days.every(d => Number.isInteger(d) && d >= 1 && d <= 7))) return bad();
+  return { id: o.id, name: o.name, kind: o.kind, value: o.value as number | null, maxDiscountPaise: o.max_discount_paise as number | null, minOrderPaise: o.min_order_paise as number, firstOrderOnly: o.first_order_only,
+    endsAtISO: o.ends_at as string | null, window: w ? { from: w.from as string, to: w.to as string, days: w.days as number[] } : null };
 }
 
 function fail(error: { message: string; code?: string } | null, action: string): void {
@@ -336,7 +408,7 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; discount_paise?: number | null; offer_id?: string | null; offer_name?: string | null; offer_code?: string | null; offer_kind?: OfferKind | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
 // Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
 type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
 const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
@@ -367,7 +439,7 @@ export function mapSavedAddress(row: AddressRow): SavedAddress {
     inArea: row.in_area, distanceM: Number.isSafeInteger(row.distance_m) && (row.distance_m as number) >= 0 ? row.distance_m : null };
 }
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, ...(row.discount_paise ? { discountPaise: row.discount_paise } : {}), ...(row.offer_id && row.offer_name && row.offer_kind ? { offer: { id: row.offer_id, name: row.offer_name, code: row.offer_code ?? null, kind: row.offer_kind } } : {}), delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
 // History columns are explicit: customers may read status and time only (#98).
@@ -967,6 +1039,52 @@ export function createMarketServices(options: ServiceOptions) {
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'Order was saved, but its details could not be loaded.');
     return mapOrder(data as OrderRow, slug);
   };
+  /** Active automatic offers for the menu and cart. Works signed out; never returns a code or a limit. */
+  const listActiveOffers = async (): Promise<ActiveOffer[]> => {
+    if (!client) return [];
+    const { data, error } = await client.rpc('list_active_offers', { p_business_slug: slug });
+    fail(error, 'Could not load offers');
+    if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offers.');
+    return data.map(activeOffer);
+  };
+  const assertOfferBusiness = async (businessId: string) => {
+    const business = await getBusiness();
+    if (typeof businessId !== 'string' || business.id !== businessId) throw new ServiceError('BUSINESS_MISMATCH', 'This offer belongs to a different restaurant.');
+  };
+  /** Rate-limited code check. Resolves with the offer's terms when the code applies to the signed-in customer; otherwise throws an OfferError. */
+  const checkOfferCode = async (businessId: string, code: string): Promise<CheckedOfferCode> => {
+    const db = requireClient();
+    await assertOfferBusiness(businessId);
+    const entered = typeof code === 'string' ? code.trim().toUpperCase() : '';
+    if (!entered || entered.length > 64) throw offerError('not_found');
+    const { data, error } = await db.rpc('check_offer_code', { p_business_slug: slug, p_code: entered });
+    if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to use a code.', error);
+    fail(error, 'Could not check the code');
+    if (!data || typeof data.applies !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid code check.');
+    if (!data.applies) throw offerError(data.reason, { retryAfterSeconds: data.retry_after_seconds });
+    const offer = activeOffer({ ...data.offer, ends_at: null });
+    return { id: offer.id, name: offer.name, kind: offer.kind, value: offer.value, maxDiscountPaise: offer.maxDiscountPaise, minOrderPaise: offer.minOrderPaise, firstOrderOnly: offer.firstOrderOnly };
+  };
+  /**
+   * The server's quote for the cart, with the offer it would apply (a valid code, else the best automatic offer). Pass `pricing`
+   * as `PlaceOrderInput.pricing`. A code that does not apply is reported in `offerError`; the cart is then priced without it.
+   */
+  const quoteOrder = async (lines: readonly CartLine[], code?: string | null): Promise<OrderQuote> => {
+    const db = requireClient();
+    if (lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
+    const entered = typeof code === 'string' && code.trim() ? code.trim().toUpperCase() : null;
+    const { data, error } = await db.rpc('quote_order', { p_business_slug: slug, p_items: lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_offer_code: entered });
+    if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to get your prices.', error);
+    fail(error, 'Could not price the order');
+    if (!data || data.outcome !== 'quoted') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid quote.');
+    const nudge = data.nudge as Record<string, unknown> | null;
+    return {
+      pricing: validateRevisedPricing(data.pricing, lines),
+      offerError: data.offer_error ? offerError(data.offer_error.reason, { shortfallPaise: data.offer_error.shortfall_paise, retryAfterSeconds: data.offer_error.retry_after_seconds }) : null,
+      nudge: nudge && typeof nudge.offer_id === 'string' && typeof nudge.name === 'string' && Number.isSafeInteger(nudge.shortfall_paise) && (nudge.kind === 'percent' || nudge.kind === 'flat' || nudge.kind === 'free_delivery')
+        ? { offerId: nudge.offer_id, name: nudge.name, kind: nudge.kind, value: typeof nudge.value === 'number' ? nudge.value : null, shortfallPaise: nudge.shortfall_paise as number } : null,
+    };
+  };
   const placeOrder = async (input: PlaceOrderInput): Promise<Order> => {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
@@ -975,7 +1093,9 @@ export function createMarketServices(options: ServiceOptions) {
     const fix = input.location && { latitude: input.location.latitude, longitude: input.location.longitude, accuracy: input.location.accuracy, captured_at: input.location.capturedAtISO };
     const p_delivery = { name: input.delivery.name, phone: input.delivery.phone, address_id: saved.id, address_version: saved.version };
     // Retries must send this exact payload: the server's request hash covers delivery and location.
-    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing });
+    // The code is sent only when there is one, so a cart without a code calls exactly the contract older clients use.
+    const code = typeof input.offerCode === 'string' && input.offerCode.trim() ? { p_offer_code: input.offerCode.trim().toUpperCase() } : {};
+    const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing, ...code });
     lifecycleError(error);
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
@@ -984,10 +1104,16 @@ export function createMarketServices(options: ServiceOptions) {
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (data.outcome === 'pricing_changed' && !('id' in data)) throw new PricingChangedError(validateRevisedPricing(data.pricing, input.lines));
+    // A quoted offer that no longer applies is never dropped silently: nothing was ordered; review the revised quote and retry with a fresh key.
+    if (data.outcome === 'offer_changed' && !('id' in data)) {
+      // Rate limited is its own code (with the wait); every other reason is OFFER_CHANGED. Either way the key is spent and nothing was ordered.
+      throw offerError(data.reason, { changed: data.reason !== 'rate_limited', retryAfterSeconds: data.retry_after_seconds, pricing: validateRevisedPricing(data.pricing, input.lines) });
+    }
     if (data.outcome !== 'placed' || typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
     const order = await loadOrder(data.id);
     const accepted = input.pricing;
-    if (order.subtotalPaise !== accepted.subtotal_paise || order.deliveryFeePaise !== accepted.delivery_fee_paise || order.totalPaise !== accepted.total_paise || order.lines.length !== accepted.lines.length ||
+    if ((data.discount_paise ?? 0) !== (accepted.discount_paise ?? 0) || (order.discountPaise ?? 0) !== (accepted.discount_paise ?? 0) || (order.offer?.id ?? null) !== (accepted.offer?.id ?? null) ||
+        order.subtotalPaise !== accepted.subtotal_paise || order.deliveryFeePaise !== accepted.delivery_fee_paise || order.totalPaise !== accepted.total_paise || order.lines.length !== accepted.lines.length ||
         accepted.lines.some(line => !order.lines.some(saved => saved.menuItemId === line.menu_item_id && saved.quantity === line.quantity && saved.unitPricePaise === line.unit_price_paise && saved.lineTotalPaise === line.line_total_paise))) {
       throw new ServiceError('INVALID_RESPONSE', 'The returned order does not match the accepted pricing. Retry recovery before placing another order.');
     }
@@ -1103,7 +1229,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

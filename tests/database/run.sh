@@ -22,7 +22,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
-self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login)
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
 shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
@@ -175,6 +175,7 @@ SQL
   source tests/database/owner-display-name-races.sh
   source tests/database/customer-relationships-races.sh
   source tests/database/leave-business-races.sh
+  source tests/database/offers-races.sh
   # #50: owner code claims. Committed fixtures and real concurrent sessions: simultaneous requests cannot all
   # pass a limit, and a request waits behind an open claim for the same phone. No remote connections.
   ol_sql() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" "$@"; }
@@ -247,4 +248,4 @@ SQL
   [[ "$(ol_count "select count(*) filter (where outcome='sent_owner') || ',' || count(*) filter (where outcome='rate_limited') from public.owner_login_attempts where phone='+919877000008'")" == 1,1 ]] || { echo 'Waiting claim race log is wrong' >&2; exit 1; }
   rm -rf "$ol_tmp"
 done
-echo 'Baseline, final-schema suites and races (including restaurant settings, customer feed, owner names and owner login limits) passed in both PostGIS layouts.'
+echo 'Baseline, final-schema suites and races (including restaurant settings, customer feed, owner names, owner login limits and offers) passed in both PostGIS layouts.'
