@@ -12,6 +12,7 @@ import { useMarketTheme } from './theme';
 import { OwnerOrderingSwitch } from './OwnerOrderingSwitch';
 import { OwnerSettings } from './OwnerSettings';
 import { OwnerRestaurantDetails } from './OwnerRestaurantDetails';
+import { OwnerOffers } from './OwnerOffers';
 import type { useMarket } from './useMarket';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
@@ -25,6 +26,7 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   const [tab, setTab] = useState<OwnerTabId>(defaultOwnerTab);
   const [addDish, setAddDish] = useState<AdminMenuAddDish | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [offersOpen, setOffersOpen] = useState(false);
   const todayDay = useOwnerTodayDay(tab === 'today');
   // One order list and realtime subscription for every tab, so the Orders badge stays current.
   const queue = useOwnerOrders(services, access === 'allowed', onNewOrders);
@@ -44,6 +46,8 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
   </OwnerScreen>;
   // Restaurant details (#60) is a full screen reached from Settings; Back returns to the Settings tab.
   if (detailsOpen && tab === 'settings') return <OwnerRestaurantDetails services={services} onBack={() => setDetailsOpen(false)} />;
+  // Offers (#182) is a full screen reached from Settings, like Restaurant details.
+  if (offersOpen && tab === 'settings') return <OwnerOffers services={services} onBack={() => setOffersOpen(false)} />;
   return <View style={{ flex: 1 }}>
     <OwnerScreen key={tab} title={ownerTabLabel(tab)} headerRight={tab === 'orders' ? <OrdersConnectionPill connection={queue.connection} /> : tab === 'menu' && addDish ? <AddDishButton action={addDish} /> : undefined}
       headerExtra={tab === 'orders' ? <OwnerOrderFilters queue={queue} /> : tab === 'today' ? <OwnerTodayFilters day={todayDay} /> : undefined}
@@ -52,7 +56,7 @@ export function AdminArea({ services, market, banner, account, ordersSlot, onNew
       {tab === 'orders' ? <OwnerOrders queue={queue} /> : null}
       {tab === 'menu' ? <AdminMenu services={services} showHeader={false} onAddDishChange={setAddDish} /> : null}
       {tab === 'today' ? <OwnerToday services={services} day={todayDay} /> : null}
-      {tab === 'settings' ? <OwnerSettings market={market} onOpenRestaurantDetails={() => setDetailsOpen(true)} /> : null}
+      {tab === 'settings' ? <OwnerSettings market={market} onOpenRestaurantDetails={() => setDetailsOpen(true)} onOpenOffers={() => setOffersOpen(true)} /> : null}
     </OwnerScreen>
     <OwnerTabBar selected={tab} onSelect={id => setTab(selectOwnerTab(id))} badges={{ orders: queue.newCount }} />
   </View>;
