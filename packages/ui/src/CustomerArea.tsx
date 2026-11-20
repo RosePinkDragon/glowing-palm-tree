@@ -21,6 +21,7 @@ import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { CustomerHistory, CustomerOrderDetail, type ReorderAction } from './CustomerOrders';
 import { useCustomerCart } from './useCustomerCart';
 import { PricingChangedError, ServiceError } from '@market/services';
+import { traced, type EventName } from '@market/notifications';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
 import { RevisedPricing } from './RevisedPricing';
 import { cartKey, readCart } from './cart-state';
@@ -37,6 +38,11 @@ import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { CartPage } from './CustomerCart';
 
 const money = formatINRFromPaise;
+/** Sends one analytics event when it mounts (consent permitting). Effects re-run under StrictMode, so the once-guard lives in fireOnce, not here. */
+function SendEvent({ name, consented, fire }: { name: EventName; consented: boolean; fire: (name: EventName) => void }) {
+  useEffect(() => { if (consented) fire(name); }, [consented, name, fire]);
+  return null;
+}
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const market = useMarket(businessId); const { colors, name, menuLayout } = useMarketTheme(); const { width } = useWindowDimensions();
   const fonts = useBrandFonts(businessId); const welcome = useWelcome(businessId);
@@ -94,8 +100,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const send = async (saved: CheckoutAttempt) => {
     if (market.identity.current.userId !== saved.userId) { navigation.current?.login('/cart'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;
     try {
-      const order = await market.services.placeOrder(orderInput(saved));
+      const order = await traced('checkout_submit', () => market.services.placeOrder(orderInput(saved)));
       if (!sameIdentity(started, market.identity.current)) return;
+      market.preferences.fireOnce('order_completed', order.id);
       setReceipt(order); await draft.resetCart(); if (!sameIdentity(started, market.identity.current)) return; navigation.current?.go(`/orders/${order.id}`);
       try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); }
       catch { setLocalError('Your order was confirmed, but this device could not clear its saved attempt. Retry recovery before placing another order.'); }
@@ -227,6 +234,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const menuProps = { items: draft.menu, cart, contentWidth: Math.min(width, 1120) - 2 * edge, orderingAllowed, demo, locked, viewportRevision, onOpen: openDish, onAdd: (item: MenuItem) => changeCart(lines => addCartItem(lines, item), true), onRemove: removeOne };
   const render = (page: CustomerScreen, orderId?: string) => <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" scrollEventThrottle={64} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Menu') viewportListener.current?.({ y: event.nativeEvent.contentOffset.y, height: event.nativeEvent.layoutMeasurement.height, contentHeight: event.nativeEvent.contentSize.height }); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: edge, paddingTop: carta && page === 'Menu' ? 0 : 28, paddingBottom: 28, gap: 24 }}>
 
+    {page === 'Menu' && !demo && !market.loading && !!market.business ? <SendEvent name="menu_view" consented={market.preferences.prefs.analytics} fire={market.preferences.fireOnce} /> : null}
+    {page === 'Cart' && !demo && draft.ready && cart.length > 0 ? <SendEvent name="ordering_started" consented={market.preferences.prefs.analytics} fire={market.preferences.fireOnce} /> : null}
     {page === 'Menu' && carta ? <CartaHeader name={name} {...menuProps} edge={width >= 760 ? 0 : edge} /> : null}
     {page === 'Menu' && !carta ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{facts ? <MarketText variant="muted">{facts}</MarketText> : null}</View> : null}
 

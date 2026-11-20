@@ -1,7 +1,8 @@
 import { initializeApp, getApps, type FirebaseOptions } from 'firebase/app';
 import { initializeAnalytics, isSupported as analyticsSupported, logEvent, setAnalyticsCollectionEnabled, type Analytics } from 'firebase/analytics';
 import { getMessaging, getToken, deleteToken, isSupported as messagingSupported, onMessage, type Messaging } from 'firebase/messaging';
-import type { AnalyticsPort, MessagingPort, TokenResult } from './index';
+import { scrubBreadcrumb, scrubEvent, setErrorReporter, setTracer } from './index.ts';
+import type { AnalyticsPort, MessagingPort, MonitoringPort, TokenResult } from './index';
 
 export type WebConfig = FirebaseOptions & { apiKey: string; projectId: string; appId: string; messagingSenderId: string; measurementId?: string };
 function configured(config: Partial<WebConfig>): config is WebConfig {
@@ -43,6 +44,62 @@ export function createWebAnalytics(config: Partial<WebConfig>, policy?: { enhanc
       clearAnalyticsCookies();
     },
     send(name, context) { if (analytics) logEvent(analytics, name, context); }
+  };
+}
+
+/** Firebase Performance, loaded with a dynamic import only after consent. Needs the same public config as analytics; without it enable() throws and nothing loads. */
+export function createWebPerformance(config: Partial<WebConfig>): MonitoringPort {
+  let perf: import('firebase/performance').FirebasePerformance | undefined;
+  return {
+    async enable() {
+      if (!configured(config)) throw new Error('Firebase Performance is not configured.');
+      const sdk = await import('firebase/performance');
+      perf ??= sdk.getPerformance(appFor(config));
+      perf.instrumentationEnabled = true;
+      perf.dataCollectionEnabled = true;
+      const current = perf;
+      setTracer(name => { const t = sdk.trace(current, name); t.start(); return () => t.stop(); });
+    },
+    async disable() {
+      setTracer(undefined);
+      if (perf) { perf.instrumentationEnabled = false; perf.dataCollectionEnabled = false; }
+    }
+  };
+}
+
+type SentryInit = Parameters<typeof import('@sentry/browser').init>[0];
+/** Errors only. Sentry 11 replaced `sendDefaultPii` with `dataCollection`; everything personal is switched off here, and nothing for replay or tracing is configured. */
+export function webSentryOptions(options: { dsn?: string; environment?: string; release?: string }, isActive: () => boolean = () => true): NonNullable<SentryInit> {
+  return {
+    dsn: options.dsn,
+    environment: options.environment || undefined,
+    release: options.release || undefined,
+    dataCollection: { userInfo: false, cookies: false, httpHeaders: false, httpBodies: [], urlQueryParams: false },
+    maxBreadcrumbs: 20,
+    integrations: defaults => defaults.filter(integration => integration.name !== 'BrowserSession'),
+    beforeSend: event => isActive() ? scrubEvent(event as never) : null,
+    beforeBreadcrumb: breadcrumb => isActive() ? scrubBreadcrumb(breadcrumb as never) : null,
+  };
+}
+/** Sentry for web, loaded with a dynamic import only after consent and only when a DSN is configured. Withdrawal closes the client. */
+export function createWebErrorReporting(options: { dsn?: string; environment?: string; release?: string }): MonitoringPort {
+  let sentry: typeof import('@sentry/browser') | undefined;
+  let active = false;
+  return {
+    async enable() {
+      if (!options.dsn) throw new Error('Error reports are not configured.');
+      sentry ??= await import('@sentry/browser');
+      const sdk = sentry;
+      active = true;
+      sdk.init(webSentryOptions(options, () => active));
+      setErrorReporter(error => { sdk.captureException(error); });
+    },
+    async disable() {
+      setErrorReporter(undefined);
+      active = false;
+      // Not close(0): the SDK treats a falsy timeout as "wait until everything is sent". 1 ms stops the client without a send window.
+      if (sentry) await sentry.close(1);
+    }
   };
 }
 

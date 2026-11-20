@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from '
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { RESEND_COOLDOWN_SECONDS, codeFieldValue, cooldownDeadline, cooldownRemaining, formatAccountPhone, formatCountdown, formatPhone, isCompleteCode, isOtpErrorCode, normalizeIndianMobile, otpErrorCopy, phoneFieldError, phoneFieldValue, type OtpErrorCode } from '@market/core';
 import { ServiceError } from '@market/services';
+import { traced } from '@market/notifications';
 import { MarketButton, MarketCard, MarketField, MarketText } from './components';
 import { messageOf, useMarket } from './useMarket';
 import { useMarketFonts, useMarketTheme } from './theme';
@@ -84,7 +85,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
     if (working.current) return; working.current = true; setBusy(true); setErrorCode(null); setFieldError('');
     const started = market.identity.current;
     try {
-      if (owner) await services.auth.requestOwnerCode(target, useCaptcha ? captcha : undefined); else await services.auth.requestCode(target, useCaptcha ? captcha : undefined);
+      await traced('otp_request', () => owner ? services.auth.requestOwnerCode(target, useCaptcha ? captcha : undefined) : services.auth.requestCode(target, useCaptcha ? captcha : undefined));
       if (!alive.current || !sameIdentity(started, market.identity.current)) return;
       const t = Date.now(); setNow(t); setCooldown({ phone: target, until: cooldownDeadline(t) }); setAnnounce(owner ? `If this number belongs to a restaurant owner, a code is on its way on WhatsApp. You can ask for another in ${RESEND_COOLDOWN_SECONDS} seconds.` : `Code sent on WhatsApp. You can ask for another in ${RESEND_COOLDOWN_SECONDS} seconds.`);
       setPhone(target); setCode(''); if (moveOn) setStage('code');
@@ -108,7 +109,7 @@ function PhoneLogin({ market, onLegal }: { market: Market; onLegal?: (path: '/te
     if (working.current) return;
     if (!isCompleteCode(code)) { setErrorCode('WRONG_OR_EXPIRED_CODE'); codeInput.current?.focus(); return; }
     working.current = true; setBusy(true); setErrorCode(null); const started = market.identity.current; const run = verifyRun.current;
-    try { await services.auth.verifyCode(phone, code); }
+    try { await traced('otp_verify', () => services.auth.verifyCode(phone, code)); }
     catch (e) {
       if (!alive.current || !sameIdentity(started, market.identity.current) || run !== verifyRun.current) return; // the user already moved on (Change number)
       setErrorCode(e instanceof ServiceError && isOtpErrorCode(e.code) ? e.code : 'GENERIC'); setCode(''); codeInput.current?.focus();
@@ -177,7 +178,7 @@ import type { useNotificationPreferences } from './useNotificationPreferences';
 export function NotificationPreferences({ settings }: { settings: ReturnType<typeof useNotificationPreferences> }) {
   return <View style={{ gap: 12 }}>
     <MarketText variant="heading">Your preferences</MarketText>
-    <MarketText>Help us improve the app with basic app usage information.</MarketText>
+    <MarketText>Help us improve the app with anonymous usage, speed and error reports. This stays off unless you turn it on, and you can turn it off at any time.</MarketText>
     <MarketButton variant="secondary" disabled={!settings.ready || settings.busy} label={settings.prefs.analytics ? 'Turn analytics off' : 'Turn analytics on'} onPress={() => void settings.setAnalytics(!settings.prefs.analytics)} />
     <View accessibilityLiveRegion="polite" role="status"><MarketText>{settings.analyticsMessage}</MarketText></View>
     <MarketText>Receive notifications about updates to your orders.</MarketText>

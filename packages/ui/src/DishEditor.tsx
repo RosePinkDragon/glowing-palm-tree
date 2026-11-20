@@ -3,6 +3,7 @@ import { Image, Platform, Pressable, Text, TextInput, View } from 'react-native'
 import { MarketSwitch } from './MarketSwitch';
 import { MarketGroup, MarketRow } from './MarketList';
 import { getDocumentAsync, type DocumentPickerAsset } from 'expo-document-picker';
+import { traced } from '@market/notifications';
 import { dietLabels, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
@@ -209,7 +210,7 @@ function MenuPhotoEditor({ item, services, onSaved, onClose }: {
         if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) throw new Error('Choose a photo up to 5 MB.');
       }
       sent = true;
-      const result = remove ? await services.removeMenuPhoto(item) : await services.uploadMenuPhoto(item, bytes!);
+      const result = remove ? await services.removeMenuPhoto(item) : await traced('photo_upload', () => services.uploadMenuPhoto(item, bytes!));
       await onSaved(`${remove ? 'Photo removed.' : 'Photo saved.'}${result.cleanupComplete ? '' : ' Old photos are queued for cleanup; use Retry photo cleanup.'}`);
       onClose();
     } catch (e) {

@@ -93,10 +93,41 @@ Environment variables (Production; public values only, the same for all four unl
 | `EXPO_PUBLIC_SUPABASE_URL` | Project URL from step 1 |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Publishable key from step 1 |
 | `EXPO_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. Must be set in all four Vercel projects and Supabase Auth CAPTCHA (Turnstile) enabled together, at the same time. If only one side is set, every login-code request fails |
-| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_MEASUREMENT_ID`, `_VAPID_KEY`, `_ANALYTICS_STREAM_VERIFIED` | Not part of the web launch (step 5); leave unset. Each app uses its own Firebase web app config; the verified flag stays `false` until Enhanced Measurement is confirmed off |
+| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_MEASUREMENT_ID`, `_ANALYTICS_STREAM_VERIFIED` | Part of the web launch (step 7a): each app uses its own Firebase web app config. Set `_ANALYTICS_STREAM_VERIFIED=true` only after Enhanced Measurement is confirmed off for that app's stream; until then analytics stays unavailable |
+| `EXPO_PUBLIC_FIREBASE_VAPID_KEY` | Not part of the web launch (step 5); leave unset |
+| `EXPO_PUBLIC_SENTRY_DSN`, `EXPO_PUBLIC_SENTRY_ENVIRONMENT`, `EXPO_PUBLIC_SENTRY_RELEASE` | Error reports (step 7b). Leave all unset to switch error reports off. `_RELEASE` is optional, for example a short commit id |
 | `EXPO_PUBLIC_WEB_BASE_PATH` | Leave blank (or `/`) |
 
 `EXPO_PUBLIC_EAS_PROJECT_ID` is not used for web. Variables are baked in at build time, so redeploy after changing any. Add each project's production domain to the Supabase redirect URLs (step 4) and to the Turnstile widget. You trigger the deploys; agents do not.
+
+### 7a. Firebase analytics and performance (part of the web launch)
+
+Usage analytics (Google Analytics through Firebase) and speed monitoring (Firebase Performance Monitoring) are both part of the web launch. Both are off for every user until they switch on **Share app usage** (the same switch that governs error reports, step 7b); nothing from Firebase loads before that. Push notifications, the VAPID key and `dispatch-notifications` stay out of the launch (step 5).
+
+1. In the Firebase console create one project and register four web apps, one per Vercel project (**Project settings → General → Your apps**). Copy each web app's public config into that Vercel project: `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, and `_MEASUREMENT_ID` (the measurement ID is in the same config once Google Analytics is linked to the project). Firebase client config is public.
+2. Enhanced Measurement verification: for each web app open Google Analytics → Admin → Data streams → the web stream and turn **Enhanced Measurement** off, including every automatically collected option. Check that it is off for the actual stream of each of the four apps, and only then set `EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED=true` in that app's Vercel project. The code cannot see this console setting; leave the flag `false` until you have verified it.
+3. Performance Monitoring needs no extra environment variable: it uses the same Firebase config, and the first time it is used in the project the console asks you to enable it (**Release & Monitor → Performance**, **confirm in dashboard**). Page-load and network-request traces (Supabase REST, Auth and Edge Function calls) are automatic. The custom traces are `checkout_submit`, `otp_request`, `otp_verify` and `photo_upload`; they carry a name and timing only.
+4. Redeploy each project (variables are baked in at build time). Then, on a deployed domain, sign in, switch on **Share app usage** in Account (customers) or Settings (owners) and use the app. Analytics events `menu_view`, `ordering_started` and `order_completed` carry only the brand and audience. Confirm them in Google Analytics → Admin → DebugView or Reports → Realtime, and the traces in the Performance dashboard (data can take some minutes to appear).
+5. Because the switch is per signed-in account, only signed-in customers and owners who have opted in are measured. The first page after consent may be only partly timed, and traces for the sign-in screens (`otp_request`, `otp_verify`) are recorded only if the person was already opted in.
+
+### 7b. Sentry error reports (part of the web launch)
+
+Sentry records uncaught errors, unhandled promise rejections and screens that fail to render, only for people who switched on **Share app usage** and only when a DSN is set. It sends no session replay, request bodies, cookies or user identity, and the app removes URL query strings and phone numbers, emails and 4 to 8 digit codes from reports before they leave the browser.
+
+1. In Sentry (free plan is enough) create one project with the **Browser JavaScript** platform. Copy its DSN (**Settings → Client Keys (DSN)**). A DSN is public client configuration.
+2. Set `EXPO_PUBLIC_SENTRY_DSN` to that DSN in all four Vercel projects. Set `EXPO_PUBLIC_SENTRY_ENVIRONMENT` to `production` (and something else such as `preview` for Preview deployments). Optionally set `EXPO_PUBLIC_SENTRY_RELEASE` (for example a short commit id) so errors can be tied to a deploy. Leaving the DSN unset switches error reports off.
+3. In the Sentry project settings turn **Data Scrubbing** on (**Settings → Security & Privacy**: Data Scrubber and Use Default Scrubbers on), and turn **Prevent Storing of IP Addresses** on if your plan allows it (**confirm in dashboard**). This is a second line of defence behind the app's own scrubbing.
+4. Redeploy, switch on **Share app usage** on a deployed domain, and trigger a test error. Confirm the event arrives and contains no phone number, email, code or query string.
+5. Withdrawal: switching the setting off closes the Sentry client; no further reports are sent.
+
+### 7c. Where to watch server-side speed and errors (Supabase)
+
+Firebase Performance shows what the browser experienced. For the server side, in the Supabase dashboard:
+
+- **Reports** (left menu): the **API** report shows request volume, response times and error rates for REST and Auth; the **Database** report shows load and slow queries; **Edge Functions** reports invocations, errors and execution time for `request-owner-code`, `send-sms-hook` and `menu-photos`.
+- **Logs** (left menu): **API Gateway** and **Postgres** logs for failing requests (filter on status 4xx/5xx), **Edge Functions** logs per function (**Edge Functions → the function → Logs**) for what a function printed, and **Auth** logs for sign-in problems.
+
+Report names can differ by plan and dashboard version (**confirm in dashboard**). Check them on launch day after the first real orders.
 
 ### 8. Purges (retention)
 
@@ -136,7 +167,8 @@ Do these on the deployed domains before enabling ordering for real customers. Us
 6. Place an order end to end on each brand (Ammu Sammu and Kokani Dine Inn): sign in, add to cart, checkout inside the delivery area, see it in that brand's admin app, move it through the order statuses. Confirm an address outside 12 km is refused.
 7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
 8. For each brand, an owner uploads a dish photo in the owners' app and it appears on the customer menu.
-9. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
+9. Analytics, speed and error reports (steps 7a to 7c): with **Share app usage** off, the browser network tab shows no request to Google, Firebase or Sentry; with it on, a signed-in test account's events, traces and a test error reach the three dashboards.
+10. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
 
 ### 10. Rollback
 
@@ -255,7 +287,7 @@ No remote Supabase project is linked or changed by these repository changes.
 ## Firebase, analytics, and notifications
 
 1. Create one Firebase project for the environment and register four web apps, one per target. In Firebase Console → Project settings → General → Your apps, select each web app and copy its public config into the matching Vercel project's `EXPO_PUBLIC_FIREBASE_API_KEY`, `PROJECT_ID`, `MESSAGING_SENDER_ID`, and `APP_ID` variables. The prefix for each is `EXPO_PUBLIC_FIREBASE_`. Firebase client config is public; control access through provider settings and security rules. Supabase provides authentication for these apps.
-2. For analytics, find the web app's measurement ID in its Firebase web config or Google Analytics → Admin → Data streams → the web stream, and set `EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID`. In that same stream turn **Enhanced Measurement** off, verify it is off for the actual stream, and only then set `EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED=true`. Leave it false until verified. Analytics also requires user consent.
+2. For analytics, find the web app's measurement ID in its Firebase web config or Google Analytics → Admin → Data streams → the web stream, and set `EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID`. In that same stream turn **Enhanced Measurement** off, verify it is off for the actual stream, and only then set `EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED=true`. Leave it false until verified. Analytics, Performance Monitoring and Sentry error reports all require user consent through the same switch.
 3. For web push, find or generate the public Web Push certificate key pair in Firebase Console → Project settings → Cloud Messaging → Web Push certificates and set its public key as `EXPO_PUBLIC_FIREBASE_VAPID_KEY`. Configure Firebase Cloud Messaging for the project. Verify permission, token registration, and delivery on each deployed origin.
 4. Deploy `dispatch-notifications` with the Supabase CLI from a trusted machine after linking the correct project: `supabase functions deploy dispatch-notifications`. In Firebase Console → Project settings → Service accounts, choose **Generate new private key** on a trusted machine. Upload the resulting JSON as the Supabase Edge Function secret `FCM_SERVICE_ACCOUNT` (it contains `project_id`, `client_email`, and `private_key`), and store a strong `NOTIFICATION_DISPATCH_SECRET` of at least 32 characters in Supabase Edge Function secrets. The function also uses Supabase's server-side `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Keep these private values out of chat, GitHub, and Vercel frontend variables. Configure a trusted scheduler to POST to the deployed function URL with `Authorization: Bearer <NOTIFICATION_DISPATCH_SECRET>`; the function checks that secret and has JWT verification disabled specifically for this endpoint. Verify scheduling and delivery without exposing the secret. See [function notes](../supabase/functions/dispatch-notifications/README.md).
 
