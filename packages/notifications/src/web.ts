@@ -69,33 +69,36 @@ export function createWebPerformance(config: Partial<WebConfig>): MonitoringPort
 
 type SentryInit = Parameters<typeof import('@sentry/browser').init>[0];
 /** Errors only. Sentry 11 replaced `sendDefaultPii` with `dataCollection`; everything personal is switched off here, and nothing for replay or tracing is configured. */
-export function webSentryOptions(options: { dsn?: string; environment?: string; release?: string }): NonNullable<SentryInit> {
+export function webSentryOptions(options: { dsn?: string; environment?: string; release?: string }, isActive: () => boolean = () => true): NonNullable<SentryInit> {
   return {
     dsn: options.dsn,
     environment: options.environment || undefined,
     release: options.release || undefined,
     dataCollection: { userInfo: false, cookies: false, httpHeaders: false, httpBodies: [], urlQueryParams: false },
     maxBreadcrumbs: 20,
-    tracesSampleRate: 0,
     integrations: defaults => defaults.filter(integration => integration.name !== 'BrowserSession'),
-    beforeSend: event => scrubEvent(event as never),
-    beforeBreadcrumb: breadcrumb => scrubBreadcrumb(breadcrumb as never),
+    beforeSend: event => isActive() ? scrubEvent(event as never) : null,
+    beforeBreadcrumb: breadcrumb => isActive() ? scrubBreadcrumb(breadcrumb as never) : null,
   };
 }
 /** Sentry for web, loaded with a dynamic import only after consent and only when a DSN is configured. Withdrawal closes the client. */
 export function createWebErrorReporting(options: { dsn?: string; environment?: string; release?: string }): MonitoringPort {
   let sentry: typeof import('@sentry/browser') | undefined;
+  let active = false;
   return {
     async enable() {
       if (!options.dsn) throw new Error('Error reports are not configured.');
       sentry ??= await import('@sentry/browser');
       const sdk = sentry;
-      sdk.init(webSentryOptions(options));
+      active = true;
+      sdk.init(webSentryOptions(options, () => active));
       setErrorReporter(error => { sdk.captureException(error); });
     },
     async disable() {
       setErrorReporter(undefined);
-      if (sentry) await sentry.close(2000);
+      active = false;
+      // Not close(0): the SDK treats a falsy timeout as "wait until everything is sent". 1 ms stops the client without a send window.
+      if (sentry) await sentry.close(1);
     }
   };
 }

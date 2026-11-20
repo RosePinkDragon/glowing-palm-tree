@@ -68,16 +68,27 @@ let reporter: ((error: unknown) => void) | undefined;
 export function setErrorReporter(next: ((error: unknown) => void) | undefined) { reporter = next; }
 export function reportError(error: unknown) { try { reporter?.(error); } catch { /* reporting must never break the screen */ } }
 
-// Redaction for anything that leaves the device in an error report or breadcrumb. Order matters: URLs first, then phones, then codes.
-const urlWithQuery = /((?:https?:\/\/)[^\s?#"'<>)]*)[?#][^\s"'<>)]*/gi;
-const emailLike = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/gi;
-const indianPhone = /(?<!\d)(?:\+\s?91[\s-]?|91[\s-]?|0)?\d{5}[\s-]?\d{5}(?!\d)/g;
-const codeLike = /(?<!\d)\d{4,8}(?!\d)/g;
-/** Removes query strings and fragments from URLs, and redacts emails, Indian phone numbers (10 digits, +91 forms) and 4 to 8 digit codes. */
+// Redaction for anything that leaves the device in an error report or breadcrumb. Order matters: URLs first, then emails, phones, then codes.
+// Every pattern is bounded or anchored to a token start so a long string cannot cause quadratic work.
+const urlLikeHead = /^[("']*\/|(?:^|[^a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}:\/\//i;
+const emailLike = /[A-Z0-9._%+-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,8}/gi;
+// Digits glued to letters or other digits are hashes, ids or versions, not codes or phone numbers.
+const indianPhone = /(?<![0-9A-Za-z])(?:\+\s?91[\s-]?|91[\s-]?|0)?\d{5}[\s-]?\d{5}(?![0-9A-Za-z])/g;
+const codeLike = /(?<![0-9A-Za-z])\d{4,8}(?![0-9A-Za-z])/g;
+/**
+ * Removes the query string and fragment from any scheme:// URL and from /paths, whole or embedded in text. Touches nothing else.
+ * Works token by token (split on whitespace) so cost stays linear in the length of the input.
+ */
+export function stripUrlQuery(value: string): string {
+  return value.replace(/\S+/g, token => {
+    const at = token.search(/[?#]/);
+    if (at < 0 || !urlLikeHead.test(token.slice(0, at))) return token;
+    return token.slice(0, at) + token.slice(at).replace(/[?#][^"'<>)]*/g, '');
+  });
+}
+/** Removes query strings and fragments from URLs, and redacts emails, Indian phone numbers (10 digits, +91 forms) and standalone 4 to 8 digit codes. */
 export function scrubText(value: string): string {
-  let text = value;
-  if (/^\/[^\s]*[?#]/.test(text)) text = text.replace(/[?#].*$/, '');
-  return text.replace(urlWithQuery, '$1').replace(emailLike, '[email]').replace(indianPhone, '[phone]').replace(codeLike, '[code]');
+  return stripUrlQuery(value).replace(emailLike, '[email]').replace(indianPhone, '[phone]').replace(codeLike, '[code]');
 }
 function scrubValue(value: unknown, depth: number): unknown {
   if (typeof value === 'string') return scrubText(value);
@@ -89,16 +100,59 @@ function scrubValue(value: unknown, depth: number): unknown {
 }
 /** Minimal shape of a Sentry event/breadcrumb; the scrubber is generic so it needs no SDK types. */
 type Loose = Record<string, unknown>;
-export function scrubBreadcrumb<T extends Loose>(breadcrumb: T): T { return scrubValue(breadcrumb, 0) as T; }
-/** Drops identity and request payload fields entirely, then scrubs every remaining string. */
+const isObject = (value: unknown): value is Loose => value !== null && typeof value === 'object' && !Array.isArray(value);
+/** Breadcrumbs: only the free-text message and data can carry user input; type, category, level and timestamp pass through. */
+export function scrubBreadcrumb<T extends Loose>(breadcrumb: T): T {
+  const copy: Loose = { ...breadcrumb };
+  if ('message' in copy) copy.message = scrubValue(copy.message, 0);
+  if ('data' in copy) copy.data = scrubValue(copy.data, 0);
+  return copy as T;
+}
+function scrubFrame(frame: unknown): unknown {
+  if (!isObject(frame)) return frame;
+  const copy: Loose = { ...frame };
+  for (const key of ['filename', 'abs_path']) if (typeof copy[key] === 'string') copy[key] = stripUrlQuery(copy[key] as string);
+  if ('vars' in copy) copy.vars = scrubValue(copy.vars, 0);
+  return copy;
+}
+function scrubException(exception: unknown): unknown {
+  if (!isObject(exception) || !Array.isArray(exception.values)) return exception;
+  return {
+    ...exception,
+    values: exception.values.map(item => {
+      if (!isObject(item)) return item;
+      const copy: Loose = { ...item };
+      if ('value' in copy) copy.value = scrubValue(copy.value, 0);
+      if (isObject(copy.stacktrace) && Array.isArray(copy.stacktrace.frames)) copy.stacktrace = { ...copy.stacktrace, frames: copy.stacktrace.frames.map(scrubFrame) };
+      return copy;
+    })
+  };
+}
+/**
+ * Drops identity and request payload fields entirely, then scrubs only the fields a user can influence:
+ * message, logentry, exception values, breadcrumbs, request url, extra, tags and non-trace contexts.
+ * Structural fields (event_id, release, environment, dist, sdk, timestamp, platform, trace data, debug_meta, stack frames) are never rewritten,
+ * apart from the query and fragment of frame file names.
+ */
 export function scrubEvent<T extends Loose>(event: T): T {
   const copy: Loose = { ...event };
   delete copy.user; delete copy.server_name;
-  if (copy.request && typeof copy.request === 'object') {
-    const { url, method } = copy.request as Loose;
-    copy.request = { ...(typeof url === 'string' ? { url } : {}), ...(typeof method === 'string' ? { method } : {}) };
+  if (isObject(copy.request)) {
+    const { url, method } = copy.request;
+    copy.request = { ...(typeof url === 'string' ? { url: stripUrlQuery(url) } : {}), ...(typeof method === 'string' ? { method } : {}) };
+  } else delete copy.request;
+  if ('message' in copy) copy.message = scrubValue(copy.message, 0);
+  if ('logentry' in copy) copy.logentry = scrubValue(copy.logentry, 0);
+  if ('exception' in copy) copy.exception = scrubException(copy.exception);
+  if (Array.isArray(copy.breadcrumbs)) copy.breadcrumbs = copy.breadcrumbs.map(item => isObject(item) ? scrubBreadcrumb(item) : item);
+  if ('extra' in copy) copy.extra = scrubValue(copy.extra, 0);
+  if ('tags' in copy) copy.tags = scrubValue(copy.tags, 0);
+  if (isObject(copy.contexts)) {
+    const contexts: Loose = {};
+    for (const [key, item] of Object.entries(copy.contexts)) contexts[key] = key === 'trace' ? item : scrubValue(item, 0);
+    copy.contexts = contexts;
   }
-  return scrubValue(copy, 0) as T;
+  return copy as T;
 }
 
 /** Same consent rules as createAnalytics for ports that send nothing themselves. Never rejects: a monitoring fault must not block the app. */

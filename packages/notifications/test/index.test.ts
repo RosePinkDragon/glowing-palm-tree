@@ -179,6 +179,8 @@ test('scrubText strips URL query strings and fragments', () => {
   assert.equal(scrubText('https://shop.example.com/orders/abc?token=secret&phone=1#frag'), 'https://shop.example.com/orders/abc');
   assert.equal(scrubText('Failed to load https://x.supabase.co/rest/v1/orders?select=*&id=eq.1 now'), 'Failed to load https://x.supabase.co/rest/v1/orders now');
   assert.equal(scrubText('/cart?next=%2Faccount'), '/cart');
+  assert.equal(scrubText('Failed to fetch /rest/v1/orders?id=eq.abc after'), 'Failed to fetch /rest/v1/orders after');
+  assert.equal(scrubText('ws://localhost/socket?token=a#b and chrome-extension://abc/page.js?x=1'), 'ws://localhost/socket and chrome-extension://abc/page.js');
 });
 
 test('scrubText redacts Indian phone numbers, emails and code-like numbers', () => {
@@ -187,6 +189,8 @@ test('scrubText redacts Indian phone numbers, emails and code-like numbers', () 
   assert.equal(scrubText('OTP 123456 and code 4821 and 12345678'), 'OTP [code] and code [code] and [code]');
   assert.equal(scrubText('a 123 b 123456789'), 'a 123 b 123456789');
   assert.equal(scrubText('Something went wrong'), 'Something went wrong');
+  assert.equal(scrubText('build 4769e83 hash b0d967e17e2ab4eb8d1234ae3b45a47 id 0123456789abcdef0123456789abcdef'), 'build 4769e83 hash b0d967e17e2ab4eb8d1234ae3b45a47 id 0123456789abcdef0123456789abcdef');
+  assert.equal(scrubText('port :8081 code 482913.'), 'port :[code] code [code].');
 });
 
 test('scrubEvent removes identity and request payloads and scrubs every string, including breadcrumbs', () => {
@@ -217,7 +221,8 @@ test('scrubEvent removes identity and request payloads and scrubs every string, 
 test('Sentry options switch off personal data, replay and tracing and scrub in both hooks', () => {
   const options = webSentryOptions({ dsn: 'https://key@o1.ingest.sentry.io/1', environment: 'production', release: 'abc123' });
   assert.deepEqual(options.dataCollection, { userInfo: false, cookies: false, httpHeaders: false, httpBodies: [], urlQueryParams: false });
-  assert.equal(options.tracesSampleRate, 0);
+  assert.equal('tracesSampleRate' in options, false);
+  assert.equal('tracesSampler' in options, false);
   assert.equal('replaysSessionSampleRate' in options, false);
   assert.equal(options.environment, 'production');
   assert.equal(options.release, 'abc123');
@@ -240,4 +245,65 @@ test('error reports load nothing without a DSN and do nothing without an install
   setErrorReporter(() => { throw new Error('reporter broke'); });
   reportError('never throws');
   setErrorReporter(undefined);
+});
+
+test('scrubEvent redacts PII but leaves structural fields of a realistic browser event unchanged', () => {
+  const eventId = 'b0d967e17e2ab4eb8d1234ae3b45a470';
+  const traceId = '4769e83a1b2c4d5e8f9012345678abcd';
+  const filename = 'http://127.0.0.1:8081/_expo/static/js/web/index-b0d967e17e2ab4eb8d1234ae3b45a47.js';
+  const event = {
+    event_id: eventId, release: '4769e83', environment: 'production', dist: '20240501', platform: 'javascript', timestamp: 1763600000.123,
+    sdk: { name: 'sentry.javascript.browser', version: '11.0.0' },
+    debug_meta: { images: [{ type: 'sourcemap', code_file: filename, debug_id: '12345678-1234-1234-1234-123456789012' }] },
+    contexts: { trace: { trace_id: traceId, span_id: '1234567812345678' }, device: { note: 'call 9876543210' } },
+    message: 'Order failed for +91 98765 43210, a@b.co, code 482913',
+    user: { email: 'a@b.co' },
+    request: { url: 'http://127.0.0.1:8081/cart?phone=9876543210#x', method: 'GET', headers: { Cookie: 'x' }, cookies: { s: 'x' }, data: 'phone=9876543210' },
+    exception: { values: [{ type: 'Error', value: 'bad a@b.co', stacktrace: { frames: [{ filename: filename + '?v=1#h', abs_path: filename, lineno: 12345, colno: 67890 }] } }] },
+    breadcrumbs: [{ category: 'fetch', timestamp: 1763600000, message: 'GET /rest/v1/orders?id=eq.abc code 482913', data: { url: 'https://x.supabase.co/a?b=9876543210' } }],
+    tags: { who: 'a@b.co' }, extra: { phone: '9876543210' },
+  };
+  const clean = scrubEvent(event);
+  assert.equal(clean.event_id, eventId);
+  assert.equal(clean.release, '4769e83');
+  assert.equal(clean.environment, 'production');
+  assert.equal(clean.dist, '20240501');
+  assert.equal(clean.platform, 'javascript');
+  assert.equal(clean.timestamp, 1763600000.123);
+  assert.deepEqual(clean.sdk, event.sdk);
+  assert.deepEqual(clean.debug_meta, event.debug_meta);
+  assert.deepEqual(clean.contexts.trace, { trace_id: traceId, span_id: '1234567812345678' });
+  const frame = clean.exception.values[0].stacktrace.frames[0];
+  assert.equal(frame.filename, filename);
+  assert.equal(frame.abs_path, filename);
+  assert.equal(frame.lineno, 12345);
+  assert.equal(frame.colno, 67890);
+  assert.equal(clean.message, 'Order failed for [phone], [email], code [code]');
+  assert.equal(clean.exception.values[0].value, 'bad [email]');
+  assert.equal(clean.contexts.device.note, 'call [phone]');
+  assert.equal(clean.breadcrumbs[0].message, 'GET /rest/v1/orders code [code]');
+  assert.equal(clean.breadcrumbs[0].data.url, 'https://x.supabase.co/a');
+  assert.equal(clean.breadcrumbs[0].timestamp, 1763600000);
+  assert.equal(clean.tags.who, '[email]');
+  assert.equal(clean.extra.phone, '[phone]');
+  assert.deepEqual(clean.request, { url: 'http://127.0.0.1:8081/cart', method: 'GET' });
+  assert.equal(clean.user, undefined);
+});
+
+test('scrubbing very long strings stays fast', () => {
+  for (const text of ['a'.repeat(200_000), 'a.'.repeat(100_000), '1'.repeat(200_000), 'a://'.repeat(50_000), ' /a'.repeat(66_000), 'a@'.repeat(100_000)]) {
+    const started = performance.now();
+    scrubText(text);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 500, 'took ' + Math.round(elapsed) + ' ms for ' + text.slice(0, 6));
+  }
+});
+
+test('error reporting stops the client without a send window and drops anything captured after withdrawal', async () => {
+  let active = true;
+  const options = webSentryOptions({ dsn: 'https://key@o1.ingest.sentry.io/1' }, () => active);
+  assert.ok(options.beforeSend!({ message: 'x' } as never, {} as never));
+  active = false;
+  assert.equal(options.beforeSend!({ message: 'x' } as never, {} as never), null);
+  assert.equal(options.beforeBreadcrumb!({ message: 'x' } as never, undefined), null);
 });
