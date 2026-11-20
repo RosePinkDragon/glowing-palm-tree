@@ -1105,7 +1105,10 @@ export function createMarketServices(options: ServiceOptions) {
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (data.outcome === 'pricing_changed' && !('id' in data)) throw new PricingChangedError(validateRevisedPricing(data.pricing, input.lines));
     // A quoted offer that no longer applies is never dropped silently: nothing was ordered; review the revised quote and retry with a fresh key.
-    if (data.outcome === 'offer_changed' && !('id' in data)) throw offerError(data.reason, { changed: true, pricing: validateRevisedPricing(data.pricing, input.lines) });
+    if (data.outcome === 'offer_changed' && !('id' in data)) {
+      // Rate limited is its own code (with the wait); every other reason is OFFER_CHANGED. Either way the key is spent and nothing was ordered.
+      throw offerError(data.reason, { changed: data.reason !== 'rate_limited', retryAfterSeconds: data.retry_after_seconds, pricing: validateRevisedPricing(data.pricing, input.lines) });
+    }
     if (data.outcome !== 'placed' || typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
     const order = await loadOrder(data.id);
     const accepted = input.pricing;

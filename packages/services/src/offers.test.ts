@@ -158,6 +158,13 @@ test('placeOrder passes the code, handles offer_changed and verifies the stored 
     // A quoted offer that is gone: a distinct, handleable error with the new pricing. Nothing is dropped silently.
     response = { outcome: 'offer_changed', reason: 'used_up', pricing: plain };
     await assert.rejects(service.placeOrder(request(discounted, 'SAVE20')), (e: unknown) => isOffer('OFFER_CHANGED', 'used_up')(e) && JSON.stringify((e as OfferError).pricing) === JSON.stringify(plain));
+    // Rate limited at place time: OFFER_RATE_LIMITED with the wait (and the pricing), not OFFER_CHANGED.
+    response = { outcome: 'offer_changed', reason: 'rate_limited', retry_after_seconds: 180, pricing: plain };
+    await assert.rejects(service.placeOrder(request(discounted, 'GUESS123')), (e: unknown) => isOffer('OFFER_RATE_LIMITED', 'rate_limited')(e) && (e as OfferError).retryAfterSeconds === 180 && JSON.stringify((e as OfferError).pricing) === JSON.stringify(plain));
+    response = { outcome: 'offer_changed', reason: 'rate_limited', pricing: plain };
+    await assert.rejects(service.placeOrder(request(discounted, 'GUESS123')), (e: unknown) => isOffer('OFFER_RATE_LIMITED')(e) && (e as OfferError).retryAfterSeconds === 60, 'a missing wait still says to wait');
+    response = { outcome: 'offer_changed', reason: 'rate_limited', retry_after_seconds: 180, pricing: { ...plain, total_paise: 1 } };
+    await assert.rejects(service.placeOrder(request(discounted, 'GUESS123')), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_RESPONSE');
     response = { outcome: 'offer_changed', reason: 'unheard of', pricing: plain };
     await assert.rejects(service.placeOrder(request(discounted)), isOffer('OFFER_CHANGED', 'changed'));
     for (const invalid of [{ outcome: 'offer_changed', reason: 'paused', pricing: { ...plain, total_paise: 1 } }, { outcome: 'offer_changed', reason: 'paused', pricing: plain, id: orderId }, { outcome: 'offer_changed', reason: 'paused' }]) {

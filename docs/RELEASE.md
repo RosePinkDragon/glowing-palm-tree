@@ -514,13 +514,23 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
 - The quote has exactly its old keys when no offer applies. With an offer it adds `discount_paise` and `offer` (`id`, `name`, `code`,
   `kind`); `orders.total_paise = subtotal_paise + delivery_fee_paise - discount_paise` and the order keeps the offer snapshot. An offer
   that stops applying between quote and place returns the outcome `offer_changed` (with a `reason` and the new `pricing`) and the key is
-  terminal, like `pricing_changed`; replays return the stored order. The request hash includes the normalised code only when one is sent.
-- Code lookups are rate limited per customer: 10 rejected lookups in 10 minutes (`offers_private.code_attempts`; lookups that find an
-  applicable code are not counted; limited lookups are not logged, so they never extend the wait). `check_offer_code`, `quote_order` and
+  terminal, like `pricing_changed`; replays return the stored order. A malformed offer id in the accepted pricing is just reason `changed`.
+  When the code lookup at place time is rate limited, the outcome is `offer_changed` with reason `rate_limited` and `retry_after_seconds`;
+  the wait is stored with the rejection so a replay returns it unchanged, the key stays terminal (retry after the wait with a fresh key),
+  and the services raise `OFFER_RATE_LIMITED` (with `retryAfterSeconds` and the repriced cart) rather than `OFFER_CHANGED`. The request hash includes the normalised code only when one is sent.
+- Code lookups are rate limited per customer: 10 rejected lookups in 10 minutes (`offers_private.code_attempts`; only rejected lookups
+  are logged, so lookups that find an applicable code are not counted; limited lookups are not logged either, so they never extend the wait). `check_offer_code`, `quote_order` and
   `place_order` all use the same limit, so none of them can be used to guess codes.
 - Lock order, extending the checkout order above: **users KEY SHARE, sessions SHARE, accounts FOR UPDATE, business SHARE, advisory
   checkout key, advisory code-attempt key (customer; only when a code is sent), advisory offer keys in ascending id order, then
   address/menu/order rows**. Without a code, every not-ended automatic offer of the restaurant is locked and only those are considered.
   The account lock already serialises one customer's orders (per-customer limits and first order only); the offer locks cover the total
   limit across customers. `quote_order` and `check_offer_code` take only the code-attempt key. Cancelling takes no offer lock.
+  An owner's UPDATE or DELETE of an offer takes the same offer key inside the trigger (before it checks for redemptions), so the edit lock
+  cannot be beaten by a first redemption in flight: the edit waits for the open checkout, then sees the redemption and is refused. It
+  holds only that key and the offer row lock, and checkout's foreign keys take KEY SHARE, which an edit does not conflict with, so they
+  cannot form a cycle. One statement that edits several offers locks their keys in scan order, so a bulk edit racing a checkout can be
+  chosen as the deadlock victim (SQLSTATE 40P01) and should simply be retried; the owner screens edit one offer at a time.
+- `orders.offer_id` is a composite foreign key `(business_id, offer_id)` to `offers (business_id, id)`, so an order can only name an offer
+  of its own restaurant.
 - Offer tables are not in any Realtime publication. `tests/database/offers.sql` and `offers-races.sh` cover the above.

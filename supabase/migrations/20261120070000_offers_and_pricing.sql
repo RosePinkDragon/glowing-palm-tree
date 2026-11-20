@@ -82,12 +82,12 @@ create table public.offer_redemptions (
 create index offer_redemptions_offer_idx on public.offer_redemptions (offer_id);
 create index offer_redemptions_customer_idx on public.offer_redemptions (customer_id, business_id);
 
--- Code lookups, per customer, for the rate limit. Outside the Data API; written only by definer functions.
+-- Rejected code lookups, per customer, for the rate limit (lookups that find an applicable code are not logged).
+-- Outside the Data API; written only by definer functions.
 create table offers_private.code_attempts (
   id bigint generated always as identity primary key,
   customer_id uuid not null references auth.users(id) on delete cascade,
   business_id uuid not null references public.businesses(id) on delete cascade,
-  outcome text not null check (outcome in ('ok','rejected')),
   created_at timestamptz not null default clock_timestamp()
 );
 create index code_attempts_customer_idx on offers_private.code_attempts (customer_id, created_at);
@@ -98,25 +98,38 @@ revoke all on table offers_private.code_attempts from public, anon, authenticate
 alter table public.orders drop constraint orders_check;
 alter table public.orders
   add column discount_paise integer not null default 0 constraint orders_discount_nonnegative check (discount_paise >= 0),
-  add column offer_id uuid references public.offers(id),
+  add column offer_id uuid,
   add column offer_name text,
   add column offer_code text,
   add column offer_kind text constraint orders_offer_kind_valid check (offer_kind is null or offer_kind in ('percent','flat','free_delivery'));
 alter table public.orders
+  add constraint orders_offer_fk foreign key (business_id, offer_id) references public.offers (business_id, id),
   add constraint orders_total_matches check (total_paise = subtotal_paise + delivery_fee_paise - discount_paise),
   add constraint orders_total_nonnegative check (total_paise >= 0),
   add constraint orders_offer_snapshot check (
     (offer_id is null and offer_name is null and offer_code is null and offer_kind is null and discount_paise = 0)
     or (offer_id is not null and offer_name is not null and offer_kind is not null and discount_paise > 0)),
   add constraint orders_free_delivery_discount check (offer_kind is distinct from 'free_delivery' or discount_paise = delivery_fee_paise);
--- A rejected key replays as the same outcome: offer_reason is set when the rejection was an offer change.
-alter table public.checkout_pricing_rejections add column offer_reason text;
+-- A rejected key replays as the same outcome: offer_reason is set when the rejection was an offer change, and
+-- offer_retry_after (seconds) when that reason is rate_limited.
+alter table public.checkout_pricing_rejections add column offer_reason text, add column offer_retry_after integer;
 
 -- 4. Triggers -------------------------------------------------------------------------------------
 -- Normalises the code, bumps version/updated_at, keeps identity fixed, locks terms once an offer has been used
 -- (name, end date and paused stay editable) and keeps a code unique among the restaurant's not-ended offers.
+-- UPDATE and DELETE first take the offer's advisory key, the one checkout holds while it redeems the offer, so an edit
+-- either waits for an in-flight first redemption and then sees it (and is refused), or commits before checkout looks.
+-- That key is held with only the offer row lock; checkout's foreign keys take KEY SHARE, which an edit does not conflict
+-- with, so the two cannot form a cycle. (A single statement that edits several offers locks their keys in scan order.)
 create function offers_private.guard_offer() returns trigger language plpgsql security definer set search_path = '' as $$
 begin
+  if tg_op = 'DELETE' then
+    perform pg_advisory_xact_lock(hashtextextended('offer:' || old.id::text, 0));
+    return old;
+  end if;
+  if tg_op = 'UPDATE' then
+    perform pg_advisory_xact_lock(hashtextextended('offer:' || old.id::text, 0));
+  end if;
   if new.code is not null then new.code := upper(btrim(new.code)); end if;
   if tg_op = 'UPDATE' then
     if new.id <> old.id or new.business_id <> old.business_id then
@@ -143,7 +156,7 @@ begin
   end if;
   return new;
 end $$;
-create trigger offers_guard before insert or update on public.offers
+create trigger offers_guard before insert or update or delete on public.offers
   for each row execute function offers_private.guard_offer();
 
 -- 5. Pricing helpers (private) --------------------------------------------------------------------
@@ -228,21 +241,22 @@ end $$;
 -- earliest created, then the lowest id). p_code set: only that code is considered, never silently replaced by an
 -- automatic offer. Returns {offer, discount_paise, error, nudge}. Failed code lookups are rate limited per customer:
 -- 10 rejected lookups in 10 minutes. A lookup is rejected unless the code exists and applies (a cart below the
--- offer's minimum is not a rejection). Rate-limited lookups are not logged, so they never extend the wait.
+-- offer's minimum is not a rejection); only rejected lookups are logged. Rate-limited lookups are not logged either,
+-- so they never extend the wait.
 -- Every code failure RETURNS (never raises) so its log row commits; nothing after this call raises on a hit only.
 create function offers_private.resolve(p_business uuid, p_customer uuid, p_code text, p_subtotal bigint, p_fee bigint, p_allowed uuid[])
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   now_ts timestamptz := clock_timestamp(); o public.offers%rowtype; ev record; norm text;
   best public.offers%rowtype; best_discount bigint := 0; nudge_offer public.offers%rowtype; nudge_short bigint;
-  rejected_count integer; oldest timestamptz; failure jsonb; attempt_outcome text;
+  rejected_count integer; oldest timestamptz; failure jsonb;
 begin
   if p_code is not null then
     norm := upper(btrim(p_code));
     perform pg_advisory_xact_lock(hashtextextended('offer-code:' || p_customer::text, 0));
     delete from offers_private.code_attempts where customer_id = p_customer and created_at < now_ts - interval '1 hour';
     select count(*), min(created_at) into rejected_count, oldest from offers_private.code_attempts
-      where customer_id = p_customer and outcome = 'rejected' and created_at > now_ts - interval '10 minutes';
+      where customer_id = p_customer and created_at > now_ts - interval '10 minutes';
     if rejected_count >= 10 then
       return jsonb_build_object('offer', null, 'discount_paise', 0, 'nudge', null, 'error', jsonb_build_object('reason', 'rate_limited',
         'retry_after_seconds', greatest(1, ceil(extract(epoch from oldest + interval '10 minutes' - now_ts))::integer)));
@@ -261,8 +275,10 @@ begin
           else jsonb_build_object('shortfall_paise', ev.shortfall) end;
       end if;
     end if;
-    attempt_outcome := case when failure is null or failure->>'reason' = 'min_order' then 'ok' else 'rejected' end;
-    insert into offers_private.code_attempts(customer_id, business_id, outcome) values (p_customer, p_business, attempt_outcome);
+    -- A cart below the offer's minimum is not a rejection: the code itself was fine.
+    if failure is not null and failure->>'reason' <> 'min_order' then
+      insert into offers_private.code_attempts(customer_id, business_id) values (p_customer, p_business);
+    end if;
     if failure is not null then
       return jsonb_build_object('offer', null, 'discount_paise', 0, 'nudge', null, 'error', failure);
     end if;
@@ -409,7 +425,7 @@ declare
   crypto_schema text; rejected public.checkout_pricing_rejections%rowtype; quote jsonb;
   addr public.customer_addresses%rowtype; spatial_schema text; covered boolean;
   phone_lat double precision; phone_lon double precision; phone_at timestamptz; phone_distance double precision; kitchen_distance double precision;
-  offer_code text; locked uuid[]; resolution jsonb; code_error jsonb; discount bigint; offer jsonb; change_reason text; previous record;
+  offer_code text; locked uuid[]; resolution jsonb; code_error jsonb; discount bigint; offer jsonb; change_reason text; previous_reason text; retry_after integer;
 begin
   if caller is null or p_idempotency_key is null then raise exception 'authentication and idempotency key required' using errcode='22023'; end if;
   if p_offer_code is not null and char_length(p_offer_code) > 64 then raise exception 'invalid offer code' using errcode='22023'; end if;
@@ -446,7 +462,10 @@ begin
   select * into rejected from public.checkout_pricing_rejections where customer_id=caller and business_id=b.id and idempotency_key=p_idempotency_key;
   if found then
     if rejected.request_hash <> request_digest then raise exception 'idempotency key reused with different request' using errcode='22023'; end if;
-    if rejected.offer_reason is not null then return jsonb_build_object('outcome','offer_changed','reason',rejected.offer_reason,'pricing',rejected.pricing); end if;
+    if rejected.offer_reason is not null then
+      return jsonb_build_object('outcome','offer_changed','reason',rejected.offer_reason,'pricing',rejected.pricing)
+        || case when rejected.offer_retry_after is null then '{}'::jsonb else jsonb_build_object('retry_after_seconds',rejected.offer_retry_after) end;
+    end if;
     return jsonb_build_object('outcome','pricing_changed','pricing',rejected.pricing);
   end if;
   if not b.accepting_orders then
@@ -522,15 +541,22 @@ begin
     change_reason := code_error->>'reason';
     if change_reason is null and jsonb_typeof(p_accepted_pricing->'offer') = 'object'
        and (jsonb_typeof(offer) is distinct from 'object' or offer->>'id' is distinct from p_accepted_pricing->'offer'->>'id') then
-      -- The quoted offer is gone: say why when it still exists, otherwise that it changed.
-      select e.reason into previous from public.offers o
-        cross join lateral offers_private.evaluate(o, caller, subtotal, b.delivery_fee_paise, clock_timestamp()) e
-        where o.id = (p_accepted_pricing->'offer'->>'id')::uuid and o.business_id = b.id;
-      change_reason := coalesce(previous.reason, 'changed');
+      -- The quoted offer is gone: say why when it still exists, otherwise that it changed. The id is client data,
+      -- so a malformed one is simply "changed" (never a cast error).
+      if p_accepted_pricing->'offer'->>'id' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then
+        select e.reason into previous_reason from public.offers o
+          cross join lateral offers_private.evaluate(o, caller, subtotal, b.delivery_fee_paise, clock_timestamp()) e
+          where o.id = (p_accepted_pricing->'offer'->>'id')::uuid and o.business_id = b.id;
+      end if;
+      change_reason := coalesce(previous_reason, 'changed');
     end if;
-    insert into public.checkout_pricing_rejections(customer_id,business_id,idempotency_key,request_hash,pricing,offer_reason)
-      values(caller,b.id,p_idempotency_key,request_digest,quote,change_reason);
-    if change_reason is not null then return jsonb_build_object('outcome','offer_changed','reason',change_reason,'pricing',quote); end if;
+    if change_reason = 'rate_limited' then retry_after := (code_error->>'retry_after_seconds')::integer; end if;
+    insert into public.checkout_pricing_rejections(customer_id,business_id,idempotency_key,request_hash,pricing,offer_reason,offer_retry_after)
+      values(caller,b.id,p_idempotency_key,request_digest,quote,change_reason,retry_after);
+    if change_reason is not null then
+      return jsonb_build_object('outcome','offer_changed','reason',change_reason,'pricing',quote)
+        || case when retry_after is null then '{}'::jsonb else jsonb_build_object('retry_after_seconds',retry_after) end;
+    end if;
     return jsonb_build_object('outcome','pricing_changed','pricing',quote);
   end if;
   if subtotal < b.min_order_paise or total > 2147483647 then raise exception 'invalid order total' using errcode='22023'; end if;

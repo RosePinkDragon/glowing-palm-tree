@@ -152,6 +152,9 @@ select public.t_fails(format($q$update public.orders set discount_paise=65001,to
 select public.t_fails(format($q$update public.orders set offer_id=null where id=%L$q$,current_setting('t.order600')::jsonb->>'id'),'23514');
 select public.t_fails(format($q$update public.orders set offer_kind='free_delivery' where id=%L$q$,current_setting('t.order600')::jsonb->>'id'),'23514');
 select public.t_fails(format($q$update public.orders set offer_kind='bogo' where id=%L$q$,current_setting('t.order600')::jsonb->>'id'),'23514');
+select public.t_offer('percent',10,p_biz=>'kokani-dine-inn',p_name=>'Other restaurant');
+select public.t_fails(format($q$update public.orders set offer_id=(select id from public.offers where name='Other restaurant') where id=%L$q$,current_setting('t.order600')::jsonb->>'id'),'23503');
+delete from public.offers where name='Other restaurant';
 select public.test_assert((select count(*)=1 from pg_constraint where conrelid='public.orders'::regclass and conname='orders_total_matches') and not exists(select 1 from pg_constraint where conrelid='public.orders'::regclass and conname='orders_check'),'the old total check was replaced');
 select public.test_assert((select count(*)=0 from public.orders where discount_paise<>0 and offer_id is null),'existing-style rows stay valid');
 
@@ -263,6 +266,12 @@ select public.test_assert(not exists(select 1 from public.orders where idempoten
 set role authenticated;
 select public.test_assert(public.t_place(20,current_setting('t.cart')::jsonb,null,current_setting('t.quoted')::jsonb)=current_setting('t.changed')::jsonb,'the refused key replays as the same offer_changed outcome');
 select public.test_assert(public.place_order('ammu-sammu',current_setting('t.cart')::jsonb,public.test_delivery('T'),null,'18200000-0000-4000-9000-000000000021',(current_setting('t.changed')::jsonb->'pricing'))->>'outcome'='placed','accepting the new quote with a fresh key places the order');
+-- A malformed offer id in the accepted pricing is client data: it is simply "changed", never a cast error.
+select public.test_assert(public.t_place(25,current_setting('t.cart')::jsonb,null,jsonb_set(current_setting('t.quoted')::jsonb,'{offer,id}','"not-a-uuid"'))->>'reason'='changed','a malformed offer id in the accepted pricing is refused as changed');
+select public.test_assert(public.t_place(26,current_setting('t.cart')::jsonb,null,jsonb_set(current_setting('t.quoted')::jsonb,'{offer,id}','12345'))->>'outcome'='offer_changed','a non-string offer id too');
+reset role;
+select public.test_assert((select count(*)=2 from public.checkout_pricing_rejections where idempotency_key in ('18200000-0000-4000-9000-000000000025','18200000-0000-4000-9000-000000000026') and offer_reason='changed'),'and the rejections are stored, so the keys are terminal');
+set role authenticated; select public.t_login(1);
 -- A code that is used up between quote and place.
 select public.t_login(2);
 select set_config('t.codeq',(public.t_quote(current_setting('t.cart')::jsonb,'short30')->'pricing')::text,false);
@@ -353,12 +362,18 @@ select set_config('t.limited',public.check_offer_code('ammu-sammu','GOODCODE')::
 select public.test_assert(not (current_setting('t.limited')::jsonb->>'applies')::boolean and current_setting('t.limited')::jsonb->>'reason'='rate_limited'
   and (current_setting('t.limited')::jsonb->>'retry_after_seconds')::integer between 1 and 600,'the 11th lookup in 10 minutes is refused, even for a valid code, with a wait');
 select public.test_assert(public.t_quote(public.t_cart(25000,1),'GOODCODE')->'offer_error'->>'reason'='rate_limited' and not (public.t_quote(public.t_cart(25000,1),'GOODCODE')->'pricing' ? 'offer'),'the quote is rate limited too, so it cannot be used to guess codes');
-select public.test_assert(public.t_place(50,public.t_cart(25000,1),'GOODCODE',(public.t_quote(public.t_cart(25000,1))->'pricing'))->>'reason'='rate_limited','and so is place_order');
+select set_config('t.placelimited',public.t_place(50,public.t_cart(25000,1),'GOODCODE',(public.t_quote(public.t_cart(25000,1))->'pricing'))::text,false);
+select public.test_assert(current_setting('t.placelimited')::jsonb->>'outcome'='offer_changed' and current_setting('t.placelimited')::jsonb->>'reason'='rate_limited'
+  and (current_setting('t.placelimited')::jsonb->>'retry_after_seconds')::integer between 1 and 600,'and so is place_order, which also says how long to wait');
+select public.test_assert(public.t_place(50,public.t_cart(25000,1),'GOODCODE',(public.t_quote(public.t_cart(25000,1))->'pricing'))=current_setting('t.placelimited')::jsonb,'the rate-limited rejection replays with the same wait and stays terminal for its key');
+reset role;
+select public.test_assert(not exists(select 1 from public.orders where idempotency_key='18200000-0000-4000-9000-000000000050') and (select offer_retry_after=(current_setting('t.placelimited')::jsonb->>'retry_after_seconds')::integer from public.checkout_pricing_rejections where idempotency_key='18200000-0000-4000-9000-000000000050'),'no order was created and the wait is stored with the rejection');
+set role authenticated; select public.t_login(4);
 select public.t_login(3);
 select public.test_assert((public.check_offer_code('ammu-sammu','GOODCODE')->>'applies')::boolean,'the limit is per customer');
 reset role;
-select public.test_assert((select count(*)=10 and bool_and(outcome='rejected') from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000004'),'only rejected lookups are logged; limited ones are not, so they never extend the wait');
-select public.test_assert((select count(*)=16 and bool_and(outcome='ok') from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000003'),'accepted lookups are logged as ok');
+select public.test_assert((select count(*)=10 from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000004'),'only rejected lookups are logged; limited ones are not, so they never extend the wait');
+select public.test_assert((select count(*)=0 from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000003') and not exists(select 1 from information_schema.columns where table_schema='offers_private' and table_name='code_attempts' and column_name='outcome'),'accepted lookups are not logged at all');
 update offers_private.code_attempts set created_at=created_at-interval '11 minutes' where customer_id='18200000-0000-4000-8000-000000000004';
 set role authenticated; select public.t_login(4);
 select public.test_assert((public.check_offer_code('ammu-sammu','GOODCODE')->>'applies')::boolean,'the window slides: after 10 minutes the customer can try again');
@@ -368,7 +383,7 @@ update offers_private.code_attempts set created_at=created_at-interval '2 hours'
 set role authenticated;
 select public.check_offer_code('ammu-sammu','GOODCODE');
 reset role;
-select public.test_assert((select count(*)=1 from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000004'),'attempts older than an hour are pruned');
+select public.test_assert((select count(*)=0 from offers_private.code_attempts where customer_id='18200000-0000-4000-8000-000000000004'),'attempts older than an hour are pruned by the next lookup');
 
 -- 11. Daily window in Asia/Kolkata -------------------------------------------------------------------------------
 select public.t_clear();

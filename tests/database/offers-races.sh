@@ -15,6 +15,8 @@ offer_sql >/dev/null <<'SQL'
 insert into auth.users(id) select ('18201000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,12) n;
 insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source)
   select ('18201000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'home','Offer race house','Offer race road',0.5,0.5,'pin' from generate_series(1,12) n;
+insert into auth.users(id) values ('18201000-0000-4000-8000-000000000013');
+insert into public.business_memberships(business_id,user_id,role) values ('10000000-0000-4000-8000-000000000001','18201000-0000-4000-8000-000000000013','admin');
 update public.businesses set accepting_orders=true,ordering_enabled=true,delivery_fee_paise=0,min_order_paise=0 where slug='ammu-sammu';
 update public.menu_items set available=true,is_demo=false,price_paise=15000 where id='20000000-0000-4000-8000-000000000001';
 SQL
@@ -126,6 +128,49 @@ wait "$p1" && wait "$p2" || { echo 'Concurrent identical requests failed' >&2; e
 cmp -s "$offer_tmp/same_1" "$offer_tmp/same_2" && [[ "$(offer_count "$offer_tmp/same_1" placed)" == 1 ]] || { cat "$offer_tmp"/same_[12] >&2; echo 'Concurrent identical requests did not return the same order' >&2; exit 1; }
 offer_sql >/dev/null <<'SQL'
 select public.test_assert((select count(*)=1 from public.orders where idempotency_key='18201000-0000-4000-9000-000000000051') and (select count(*)=1 from public.offer_redemptions r join public.offers o on o.id=r.offer_id where o.name='Replay race'),'concurrent identical requests: one order and one redemption');
+SQL
+
+# 5. The edit lock cannot be beaten by a first redemption in flight. An owner edit waits for the open checkout (it holds the
+# offer's key), then sees the redemption and is refused; the offer keeps its terms.
+offer_reset
+offer_sql >/dev/null <<'SQL'
+insert into public.offers(business_id,name,kind,value,apply_mode)
+  values ('10000000-0000-4000-8000-000000000001','Lockable','flat',1000,'automatic');
+SQL
+quote_f=$(offer_quote 1 '')
+offer_owner_edit() { # name, new value, application name, optional hold seconds; leaves stderr in $offer_tmp/$3.err
+  local hold=''; [[ -n "${4:-}" ]] && hold="select pg_sleep($4);"
+  { echo "begin; set application_name='$3'; set local role authenticated; select set_config('request.jwt.claim.sub','$(offer_user 13)',true);"
+    echo "update public.offers set value=$2 where name='$1'; $hold commit;"; } | offer_sql >/dev/null 2>"$offer_tmp/$3.err"
+}
+offer_place 1 18201000-0000-4000-9000-000000000061 '' "$quote_f" "$offer_tmp/edit_checkout" offer_checkout_hold 3 & p1=$!
+offer_wait_for "application_name='offer_checkout_hold' and wait_event='PgSleep'"
+offer_owner_edit Lockable 2000 offer_edit_waits & p2=$!
+offer_wait_for "application_name='offer_edit_waits' and cardinality(pg_blocking_pids(pid))>0"
+wait "$p1" || { cat "$offer_tmp/edit_checkout.raw" >&2; exit 1; }
+if wait "$p2"; then echo 'An owner edit beat a first redemption in flight' >&2; exit 1; fi
+grep -q 'offer terms are locked once it has been used' "$offer_tmp/offer_edit_waits.err" || { cat "$offer_tmp/offer_edit_waits.err" >&2; echo 'Edit was refused for another reason' >&2; exit 1; }
+offer_sql >/dev/null <<'SQL'
+select public.test_assert((select count(*)=1 from public.offer_redemptions r join public.offers o on o.id=r.offer_id where o.name='Lockable') and (select value=1000 from public.offers where name='Lockable'),'edit lock: one redemption and the terms the customer was quoted');
+select public.test_assert((select discount_paise=1000 from public.orders where idempotency_key='18201000-0000-4000-9000-000000000061'),'edit lock: the order kept its quoted discount');
+SQL
+# The other way round: a checkout that arrives during an open edit waits for it, then prices with the new terms (the
+# quote it holds is stale, so it is told so) and nothing deadlocks.
+offer_reset
+offer_sql >/dev/null <<'SQL'
+insert into public.offers(business_id,name,kind,value,apply_mode)
+  values ('10000000-0000-4000-8000-000000000001','Lockable two','flat',1000,'automatic');
+SQL
+quote_g=$(offer_quote 2 '')
+offer_owner_edit 'Lockable two' 2000 offer_edit_hold 3 & p2=$!
+offer_wait_for "application_name='offer_edit_hold' and wait_event='PgSleep'"
+offer_place 2 18201000-0000-4000-9000-000000000062 '' "$quote_g" "$offer_tmp/edit_after" offer_checkout_waits & p1=$!
+offer_wait_for "application_name='offer_checkout_waits' and cardinality(pg_blocking_pids(pid))>0"
+wait "$p2" || { cat "$offer_tmp/offer_edit_hold.err" >&2; echo 'Owner edit failed' >&2; exit 1; }
+wait "$p1" || { cat "$offer_tmp/edit_after.raw" >&2; exit 1; }
+grep -q '"outcome": "pricing_changed"' "$offer_tmp/edit_after" && grep -q '"discount_paise": 2000' "$offer_tmp/edit_after" || { cat "$offer_tmp/edit_after" >&2; echo 'Waiting checkout did not see the edited offer' >&2; exit 1; }
+offer_sql >/dev/null <<'SQL'
+select public.test_assert((select value=2000 and version=2 from public.offers where name='Lockable two') and not exists(select 1 from public.orders where idempotency_key='18201000-0000-4000-9000-000000000062'),'edit first: the edit committed and the stale checkout created no order');
 SQL
 
 # Leave the committed fixtures inert for later suites.
