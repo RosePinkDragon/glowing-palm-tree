@@ -443,7 +443,8 @@ select public.t_fails($q$select * from offers_private.code_attempts$q$,'42501');
 set role authenticated; select public.t_login(1);
 select public.test_assert((select count(*)=0 from public.offers) and (select count(*)=0 from public.offer_redemptions),'a customer sees no offer rows and no redemptions, not even their own');
 select public.t_fails($q$insert into public.offers(business_id,name,kind,value,apply_mode) values ('10000000-0000-4000-8000-000000000001','Mine','percent',10,'automatic')$q$,'42501');
-select public.test_assert(public.t_rows('update public.offers set paused=true')=0 and public.t_rows('delete from public.offers')=0,'a customer can neither change nor delete offers');
+select public.test_assert(public.t_rows('update public.offers set paused=true')=0,'a customer cannot change offers');
+select public.t_fails($q$delete from public.offers$q$,'42501');
 select public.t_fails($q$select * from offers_private.code_attempts$q$,'42501');
 select public.t_fails($q$select offers_private.resolve('10000000-0000-4000-8000-000000000001',auth.uid(),'SECRET11',1,1,null)$q$,'42501');
 -- The owner of Ammu Sammu manages exactly that restaurant's offers.
@@ -458,8 +459,12 @@ select public.test_assert(public.t_rows($q$insert into public.offers(business_id
 select public.test_assert((select code='OWNER55' and version=1 from public.offers where name='Owner made'),'its code is stored upper case at version 1');
 select public.test_assert(public.t_rows($q$update public.offers set name='Owner edited' where name='Owner made'$q$)=1,'and edits it');
 select public.test_assert((select version=2 from public.offers where name='Owner edited'),'the version bumps');
-select public.test_assert(public.t_rows($q$delete from public.offers where name='Owner edited'$q$)=1,'and deletes an unused one');
-select public.t_fails($q$delete from public.offers where name='Used up auto'$q$,'23503');
+-- Offers are never deleted by clients: no DELETE grant, even for the owner and even for an unused offer.
+select public.t_fails($q$delete from public.offers where name='Owner edited'$q$,'42501');
+select public.t_fails($q$delete from public.offers where name='Used up auto'$q$,'42501');
+select public.test_assert(not has_table_privilege('authenticated','public.offers','delete') and not has_table_privilege('anon','public.offers','delete')
+  and not exists(select 1 from pg_policies where schemaname='public' and tablename='offers' and cmd in ('DELETE','ALL')) and not exists(select 1 from pg_trigger where tgrelid='public.offers'::regclass and not tgisinternal and tgtype & 8 <> 0),'no delete grant, policy or trigger on offers');
+select public.test_assert((select count(*)=1 from public.offers where name='Owner edited'),'the owner offer is still there after the refused deletes');
 select public.t_login(6);
 select public.test_assert((select count(*)=1 and min(name)='Other restaurant auto' from public.offers) and (select count(*)=0 from public.offer_redemptions),'the other restaurant''s owner sees only their own offers and no redemptions of Ammu Sammu');
 select public.test_assert(public.t_rows($q$update public.offers set paused=true where business_id='10000000-0000-4000-8000-000000000001'$q$)=0,'and cannot change Ammu Sammu offers');

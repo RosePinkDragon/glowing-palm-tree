@@ -117,16 +117,17 @@ alter table public.checkout_pricing_rejections add column offer_reason text, add
 -- 4. Triggers -------------------------------------------------------------------------------------
 -- Normalises the code, bumps version/updated_at, keeps identity fixed, locks terms once an offer has been used
 -- (name, end date and paused stay editable) and keeps a code unique among the restaurant's not-ended offers.
--- UPDATE and DELETE first take the offer's advisory key, the one checkout holds while it redeems the offer, so an edit
--- either waits for an in-flight first redemption and then sees it (and is refused), or commits before checkout looks.
--- That key is held with only the offer row lock; checkout's foreign keys take KEY SHARE, which an edit does not conflict
--- with, so the two cannot form a cycle. (A single statement that edits several offers locks their keys in scan order.)
+-- UPDATE first takes the offer's advisory key, the one checkout holds while it redeems the offer, so an edit either
+-- waits for an in-flight first redemption and then sees it (and is refused), or commits before checkout looks. The edit
+-- holds only that key and the offer row lock (a non-key UPDATE lock), and checkout's foreign keys take KEY SHARE, which
+-- that lock does not conflict with, so a single-offer UPDATE and a checkout cannot form a cycle. A statement that edits
+-- several offers locks their keys in scan order, so either side of such a race can be chosen as a deadlock victim
+-- (40P01): edit one offer per statement.
+-- Offers are never deleted: owners pause, resume or end them. There is no DELETE grant or policy for clients, and no
+-- DELETE trigger, because a DELETE locks the row FOR UPDATE before any trigger runs and that conflicts with checkout's
+-- KEY SHARE, which would make the checkout a deadlock victim.
 create function offers_private.guard_offer() returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  if tg_op = 'DELETE' then
-    perform pg_advisory_xact_lock(hashtextextended('offer:' || old.id::text, 0));
-    return old;
-  end if;
   if tg_op = 'UPDATE' then
     perform pg_advisory_xact_lock(hashtextextended('offer:' || old.id::text, 0));
   end if;
@@ -156,7 +157,7 @@ begin
   end if;
   return new;
 end $$;
-create trigger offers_guard before insert or update or delete on public.offers
+create trigger offers_guard before insert or update on public.offers
   for each row execute function offers_private.guard_offer();
 
 -- 5. Pricing helpers (private) --------------------------------------------------------------------
@@ -605,7 +606,6 @@ create policy offers_admin_select on public.offers for select to authenticated u
 create policy offers_admin_insert on public.offers for insert to authenticated with check (public.is_business_admin(business_id));
 create policy offers_admin_update on public.offers for update to authenticated
   using (public.is_business_admin(business_id)) with check (public.is_business_admin(business_id));
-create policy offers_admin_delete on public.offers for delete to authenticated using (public.is_business_admin(business_id));
 create policy offer_redemptions_admin_select on public.offer_redemptions for select to authenticated using (public.is_business_admin(business_id));
 -- No Realtime: neither table is added to supabase_realtime.
 
@@ -618,7 +618,6 @@ grant insert (business_id, name, kind, value, max_discount_paise, min_order_pais
   update (name, kind, value, max_discount_paise, min_order_paise, apply_mode, code, first_order_only,
     per_customer_limit, total_limit, starts_at, ends_at, window_from, window_to, window_days, paused)
   on public.offers to authenticated;
-grant delete on public.offers to authenticated;
 grant all on public.offers, public.offer_redemptions to service_role;
 
 -- Default privileges grant EXECUTE broadly: revoke everything, then grant explicitly.

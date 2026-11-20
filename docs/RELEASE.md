@@ -502,7 +502,7 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
 
 - `public.offers` (per restaurant) holds order-level offers: `percent` (1 to 90), `flat` (Rs 1 to Rs 1,000) and `free_delivery`,
   `automatic` or by `code`. Owners (admin members) manage their own restaurant's rows through RLS; nobody else has table access.
-  Once an offer has been redeemed its terms are locked by a trigger (name, end date and `paused` stay editable) and it cannot be deleted.
+  Once an offer has been redeemed its terms are locked by a trigger (name, end date and `paused` stay editable). Offers are never deleted: owners pause, resume or end them, and clients have no DELETE grant or policy.
   A code is stored upper case and is unique among the restaurant's not-ended offers. Daily windows are evaluated in Asia/Kolkata.
 - Customers never list codes. `public.list_active_offers(slug)` (also for signed-out visitors) returns active automatic offers only,
   with no code, limit or count. `public.check_offer_code(slug, code)` checks one code. `public.quote_order(slug, items, code)` returns the
@@ -526,11 +526,13 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
   address/menu/order rows**. Without a code, every not-ended automatic offer of the restaurant is locked and only those are considered.
   The account lock already serialises one customer's orders (per-customer limits and first order only); the offer locks cover the total
   limit across customers. `quote_order` and `check_offer_code` take only the code-attempt key. Cancelling takes no offer lock.
-  An owner's UPDATE or DELETE of an offer takes the same offer key inside the trigger (before it checks for redemptions), so the edit lock
-  cannot be beaten by a first redemption in flight: the edit waits for the open checkout, then sees the redemption and is refused. It
-  holds only that key and the offer row lock, and checkout's foreign keys take KEY SHARE, which an edit does not conflict with, so they
-  cannot form a cycle. One statement that edits several offers locks their keys in scan order, so a bulk edit racing a checkout can be
-  chosen as the deadlock victim (SQLSTATE 40P01) and should simply be retried; the owner screens edit one offer at a time.
+  An owner's UPDATE of an offer takes the same offer key inside the trigger (before it checks for redemptions), so the edit lock
+  cannot be beaten by a first redemption in flight: the edit waits for the open checkout, then sees the redemption and is refused. For a
+  single-offer UPDATE it holds only that key and the offer row lock, and checkout's foreign keys take KEY SHARE, which that lock does not
+  conflict with, so they cannot form a cycle. That claim is for UPDATE only: a statement that edits several offers locks their keys in
+  scan order, so either side of a bulk UPDATE racing a checkout can be chosen as the deadlock victim (SQLSTATE 40P01). Slice B must edit one
+  offer per statement. Offers are never deleted (there is no DELETE grant, policy or trigger): a DELETE locks the row FOR UPDATE before any
+  trigger runs, which conflicts with checkout's KEY SHARE and made the checkout a deadlock victim.
 - `orders.offer_id` is a composite foreign key `(business_id, offer_id)` to `offers (business_id, id)`, so an order can only name an offer
   of its own restaurant.
 - Offer tables are not in any Realtime publication. `tests/database/offers.sql` and `offers-races.sh` cover the above.
