@@ -29,3 +29,10 @@ day, per IP, null addresses, per restaurant sends), the log growth cap, provider
 90-day purge. The races in `run.sh` fire simultaneous claims from real sessions (eight for one number, fourteen for one address,
 six owners against the restaurant cap) and require exactly the permitted number to pass, then hold one claim open and observe a
 second blocked behind it. No pg_cron or remote project is involved.
+
+`offers.sql` (#182 slice A) covers offers and order discounts: every constraint, RLS and grants (owners manage their own restaurant's
+offers; signed-out visitors see only active automatic offers and never a code, limit or count; customers have no table access), the
+acceptance examples, pricing rules, place-time changes (`offer_changed`), exact replay with the code in the request hash, the code rate
+limit, the Asia/Kolkata daily window and cancellation giving a use back. `offers-races.sh` observes the real offer lock wait for the last
+use, races six orders for two uses (automatic and code), and races one customer's two orders against a per-customer limit and first order
+only, plus a concurrent identical request. Both run in the final-schema pass for both PostGIS layouts.

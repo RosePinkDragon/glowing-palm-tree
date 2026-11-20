@@ -493,3 +493,34 @@ and use local sign-out after confirmation; never let an old receipt clear a late
 Local storage cannot be cleared by SQL. This backend slice does not wire screens/device
 cleanup, and does not claim those steps or full #52 are complete. Keep the left row forever
 until account deletion; only explicit join replaces its generation.
+
+## Offers and discounts (#182, slice A: database and pricing)
+
+Added by the forward-only migration `20261120070000_offers_and_pricing.sql`; the baseline is untouched. This slice is the
+database and the services only: no owner or customer screens (slices B and C), and no dish-level offers (slice D, which also
+widens the `kind` check). Nothing here is applied to a remote project by agents.
+
+- `public.offers` (per restaurant) holds order-level offers: `percent` (1 to 90), `flat` (Rs 1 to Rs 1,000) and `free_delivery`,
+  `automatic` or by `code`. Owners (admin members) manage their own restaurant's rows through RLS; nobody else has table access.
+  Once an offer has been redeemed its terms are locked by a trigger (name, end date and `paused` stay editable) and it cannot be deleted.
+  A code is stored upper case and is unique among the restaurant's not-ended offers. Daily windows are evaluated in Asia/Kolkata.
+- Customers never list codes. `public.list_active_offers(slug)` (also for signed-out visitors) returns active automatic offers only,
+  with no code, limit or count. `public.check_offer_code(slug, code)` checks one code. `public.quote_order(slug, items, code)` returns the
+  server's quote (there was no server-side quote before; the client built one and `place_order` compared it). `public.place_order`
+  gained an optional `p_offer_code`; the six-argument form remains for clients built before offers.
+- One order-level offer per order: a valid code if sent (never silently replaced), else the best eligible automatic offer (largest
+  discount; ties go to the earliest created, then the lowest id). Minimums are checked against the pre-discount subtotal. Uses count
+  only non-cancelled orders (`offer_redemptions` joined to `orders`), so cancelling an order gives its use back with no extra code.
+- The quote has exactly its old keys when no offer applies. With an offer it adds `discount_paise` and `offer` (`id`, `name`, `code`,
+  `kind`); `orders.total_paise = subtotal_paise + delivery_fee_paise - discount_paise` and the order keeps the offer snapshot. An offer
+  that stops applying between quote and place returns the outcome `offer_changed` (with a `reason` and the new `pricing`) and the key is
+  terminal, like `pricing_changed`; replays return the stored order. The request hash includes the normalised code only when one is sent.
+- Code lookups are rate limited per customer: 10 rejected lookups in 10 minutes (`offers_private.code_attempts`; lookups that find an
+  applicable code are not counted; limited lookups are not logged, so they never extend the wait). `check_offer_code`, `quote_order` and
+  `place_order` all use the same limit, so none of them can be used to guess codes.
+- Lock order, extending the checkout order above: **users KEY SHARE, sessions SHARE, accounts FOR UPDATE, business SHARE, advisory
+  checkout key, advisory code-attempt key (customer; only when a code is sent), advisory offer keys in ascending id order, then
+  address/menu/order rows**. Without a code, every not-ended automatic offer of the restaurant is locked and only those are considered.
+  The account lock already serialises one customer's orders (per-customer limits and first order only); the offer locks cover the total
+  limit across customers. `quote_order` and `check_offer_code` take only the code-attempt key. Cancelling takes no offer lock.
+- Offer tables are not in any Realtime publication. `tests/database/offers.sql` and `offers-races.sh` cover the above.
