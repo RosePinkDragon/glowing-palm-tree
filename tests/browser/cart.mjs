@@ -93,6 +93,8 @@ try {
       return json({ outcome: 'placed', id: pricingOrder.id });
     }
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
+    if (url.pathname === '/rest/v1/rpc/list_active_offers') return json([]); // #182: no offers here
+    if (url.pathname === '/rest/v1/rpc/quote_order') return json({ outcome: 'quoted', pricing: null, offer_error: null, nudge: null }); // #182: an unusable quote, so the cart prices itself
     if (url.pathname === '/rest/v1/customer_businesses') return json([]);
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });

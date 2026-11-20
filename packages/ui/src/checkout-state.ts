@@ -15,6 +15,8 @@ export interface CheckoutAttempt {
   idempotencyKey: string;
   lines: CartLine[];
   pricing: PricingTerms;
+  /** The offer code the customer applied (#182), saved with the attempt so a recovery replays the same request. Absent when none. */
+  offerCode?: string | null;
   delivery: CheckoutDelivery;
   savedAddress: { id: string; version: number };
   location: LocationFix | null;
@@ -34,7 +36,7 @@ export function readAttempt(value: string | null, businessId: BusinessSlug): Che
   const common = !!attempt && typeof attempt === 'object' && attempt.businessId === businessId && !!attempt.userId && !!attempt.idempotencyKey && Array.isArray(attempt.lines) && !!attempt.pricing
     && !!attempt.delivery && typeof attempt.delivery.name === 'string' && typeof attempt.delivery.phone === 'string';
   const saved = attempt?.savedAddress;
-  const valid = common && attempt.version === 2 && !!saved && typeof saved.id === 'string' && Number.isSafeInteger(saved.version) && saved.version >= 1 && (attempt.location === null || isFix(attempt.location));
+  const valid = common && attempt.version === 2 && !!saved && typeof saved.id === 'string' && Number.isSafeInteger(saved.version) && saved.version >= 1 && (attempt.location === null || isFix(attempt.location)) && (attempt.offerCode === undefined || attempt.offerCode === null || (typeof attempt.offerCode === 'string' && /^[A-Z0-9]{1,64}$/.test(attempt.offerCode)));
   if (!valid) throw unreadable();
   return attempt;
 }

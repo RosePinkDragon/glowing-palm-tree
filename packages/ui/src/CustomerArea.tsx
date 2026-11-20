@@ -20,7 +20,7 @@ import { messageOf, useMarket } from './useMarket';
 import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { CustomerHistory, CustomerOrderDetail, type ReorderAction } from './CustomerOrders';
 import { useCustomerCart } from './useCustomerCart';
-import { PricingChangedError, ServiceError } from '@market/services';
+import { OfferError, PricingChangedError, ServiceError } from '@market/services';
 import { traced, type EventName } from '@market/notifications';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
 import { RevisedPricing } from './RevisedPricing';
@@ -36,6 +36,9 @@ import { CustomerAddresses } from './CustomerAddresses';
 import { CustomerNotifications } from './CustomerNotifications';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { CartPage } from './CustomerCart';
+import { CartOffer, OfferBanner } from './CartOffer';
+import { useOfferQuote } from './useOfferQuote';
+import { billTotals, quoteSignature, quotedOffer } from './offer-model';
 
 const money = formatINRFromPaise;
 /** Sends one analytics event when it mounts (consent permitting). Effects re-run under StrictMode, so the once-guard lives in fireOnce, not here. */
@@ -96,6 +99,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const locked = !!quote || !!market.attempt || !market.attemptReady || !!market.storageError || !draft.ready || draft.saving || !!draft.cartError;
   const unavailable = cart.some(line => !line.item.isAvailable && !line.item.isDemo);
   const subtotal = cartSubtotalPaise(cart.filter(line => line.item.isAvailable || line.item.isDemo));
+  // #182: signed in, the server prices the cart (discount, offer, nudge); signed out, only the public automatic offers are listed.
+  const signedIn = !!market.session && market.authReady, fee = market.business?.deliveryFeePaise ?? 0, minOrder = market.business?.minOrderPaise ?? 0;
+  const priced = cart.filter(line => line.item.isAvailable || line.item.isDemo);
+  const offers = useOfferQuote({ services: market.services, quoting: !demo && signedIn && draft.ready && !!market.business && priced.length > 0, listing: !demo && market.authReady && !market.session && !!market.business,
+    lines: priced, signature: quoteSignature(priced, fee, minOrder), identityKey: `${businessId}:${market.session?.user.id ?? ''}:${market.identityVersion}` });
+  const offerTerms = quotedOffer(offers.quote?.pricing), billing = billTotals(subtotal, fee, offerTerms);
+  const offerKey = JSON.stringify([offers.code, offers.quote?.pricing.total_paise ?? null]);
+  useEffect(() => { setConfirming(null); }, [offerKey]); // a sheet shows the total it was opened with
   const changeCart = (fn: (lines: CartLine[]) => CartLine[], adding = false) => { void draft.changeCart(lines => { if (adding) requireOrdering(); return fn(lines); }).then(() => setLocalError('')).catch(e => setLocalError(messageOf(e))); };
   const send = async (saved: CheckoutAttempt) => {
     if (market.identity.current.userId !== saved.userId) { navigation.current?.login('/cart'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;
@@ -122,6 +133,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
           setRevision({ original: saved, pricing: e.pricing, identity: started, sourceCart });
           navigation.current?.go('/cart');
         } catch { setLocalError('The revised quote could not be saved safely. Retry recovery before placing another order.'); }
+      } else if (e instanceof OfferError) {
+        // The quoted offer no longer applies (or the code lookup is rate limited). Nothing was ordered and the key is spent, like pricing_changed:
+        // release the attempt, drop the code and show why with the repriced total. The customer must tap Place order again; it is never retried for them.
+        try {
+          await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null);
+          if (!sameIdentity(started, market.identity.current)) return;
+          offers.rejected(e); navigation.current?.go('/cart');
+        } catch { setLocalError('The offer changed, but the saved attempt could not be cleared. Retry recovery before placing another order.'); }
       } else if (e instanceof ServiceError && (e.code === 'BUSINESS_JOIN_REQUIRED' || e.code === 'BUSINESS_LIFECYCLE_PENDING')) {
         // The relationship gate runs before the idempotency lookup, so on a replay this does not prove nothing was written: keep the saved attempt and recover the same order.
         const pending = e.code === 'BUSINESS_LIFECYCLE_PENDING'; let rejoined = false;
@@ -154,11 +173,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (cartSubtotalPaise(cart) < market.business.minOrderPaise) throw new Error(`The minimum order is ${money(market.business.minOrderPaise)}.`);
     const userId = market.session?.user.id;
     if (!userId || market.identity.current.userId !== userId) throw new Error('Sign in before placing your order.');
-    return { userId, contact: validateContact(details), pricing: capturePricing(cart, market.business.deliveryFeePaise, market.business.minOrderPaise) };
+    // The accepted pricing carries the server's discount and offer (capturePricing), or place_order would refuse any cart an offer applies to.
+    if (offers.pending) throw new Error('Updating your offer. Try again in a moment.');
+    if (offers.code && !offers.quote) throw new Error('Could not confirm your code. Remove it or try again.');
+    return { userId, contact: validateContact(details), pricing: capturePricing(cart, market.business.deliveryFeePaise, market.business.minOrderPaise, offerTerms), offerCode: offers.code };
   };
   const submit = (address: SavedAddress, fix: LocationFix | null) => guarded(async () => {
-    const { userId, contact, pricing } = validateOrder();
-    const result = await prepareAttempt(AsyncStorage, businessId, () => { requireOrdering(); return freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, pricing, delivery: contact, savedAddress: { id: address.id, version: address.version }, location: fix }); });
+    const { userId, contact, pricing, offerCode } = validateOrder();
+    const result = await prepareAttempt(AsyncStorage, businessId, () => { requireOrdering(); return freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, pricing, offerCode, delivery: contact, savedAddress: { id: address.id, version: address.version }, location: fix }); });
     market.setAttempt(result.attempt);
     if (result.existing) { setLocalError('An earlier order needs confirmation. Retry its recovery before placing another order.'); return; }
     await send(result.attempt);
@@ -250,11 +272,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {market.storageError ? <MarketText>Saved checkout state is unavailable. Ordering is paused to avoid creating a duplicate order.</MarketText> : null}
     {market.attempt ? <MarketCard><MarketText variant="heading">Order awaiting confirmation</MarketText><MarketText>Your previous order may have been received. Retry the same request to recover its result before changing the cart or placing another order.</MarketText>{market.authReady && market.session?.user.id === market.attempt.userId ? market.attempt.lines.map(line => <View key={line.item.id} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.item.name} · {money(line.item.pricePaise * line.quantity)}</MarketText><DietMark diet={line.item.diet} /></View>) : null}<MarketButton label={busy ? 'Checking…' : 'Retry order recovery'} disabled={busy} onPress={retry} /></MarketCard> : null}
     {quote ? <RevisedPricing quote={quote} busy={busy || !!market.attempt || !draft.ready} orderingAllowed={orderingAllowed} accept={acceptRevision} edit={editRevision} /> : null}
+    {page === 'Menu' && !demo && !market.session && market.authReady ? <OfferBanner offers={offers.active} /> : null}
     {page === 'Menu' ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <MenuBody variant={menuLayout} facts={facts} businessId={businessId} {...menuProps} bleed={edge} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} />) : null}
     {page === 'Cart' ? <CartPage demo={demo} cartMessage={cartMessage} ready={draft.ready} cartError={draft.cartError} cart={cart} locked={locked} orderingAllowed={orderingAllowed} hasUnavailable={unavailable}
-      subtotalPaise={subtotal} deliveryFeePaise={market.business?.deliveryFeePaise ?? 0} minOrderPaise={market.business?.minOrderPaise ?? 0} details={details} setDetails={setDetails} addrs={addrs}
+      subtotalPaise={subtotal} deliveryFeePaise={fee} minOrderPaise={minOrder} discountPaise={billing.discountPaise} details={details} setDetails={setDetails} addrs={addrs}
       placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
-      placeDisabled={busy || locked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
+      offerSlot={demo ? null : <CartOffer signedIn={signedIn} offers={offers.active} pricing={offers.quote?.pricing ?? null} nudge={offers.quote?.nudge ?? null} code={offers.code} message={offers.message} applying={offers.applying} disabled={locked || busy}
+        onApply={code => void offers.apply(code)} onRemove={offers.remove} onSignIn={() => navigation.current?.login('/cart')} />}
+      placeDisabled={busy || locked || offers.pending || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
       localError={localError} change={changeCart} onPlace={() => void checkout()} onBrowse={() => navigation.current?.go('/')} /> : null}
     {page === 'Account' || page === 'Login' ? <AuthPanel onLegal={path => navigation.current?.go(path)} accountActions={page === 'Account' ? <LeaveRestaurant market={market} businessId={businessId} resetCart={draft.resetCart} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} onLeft={setLeftNotice} /> : null} market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}

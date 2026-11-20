@@ -7,6 +7,7 @@ import { MarketIcon } from './MarketIcons';
 import { DietMark } from './DietMark';
 import { restorePanelFocus } from './AccessiblePanel';
 import { statusCopy, terminalTime, trackingTimeline } from './order-history';
+import { discountLabel, minus } from './offer-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 /**
@@ -117,6 +118,7 @@ function Lines({ order }: { order: Order }) {
   return <MarketSection>
     <View style={{ gap: 14 }}>{order.lines.map((line, i) => <View key={`${line.menuItemId}-${i}`} role="group" accessibilityLabel={`${line.quantity} × ${line.name}`} style={{ gap: 2 }}><MarketLine left={`${line.quantity} × ${line.name}`} right={formatINRFromPaise(line.lineTotalPaise)} /><DietMark diet={line.diet} compact /></View>)}</View>
     <MarketLine left={<Text style={{ color: colors.muted }}>Delivery</Text>} right={<Text style={{ color: colors.muted, fontSize: 15 }}>{formatINRFromPaise(order.deliveryFeePaise)}</Text>} />
+    {order.discountPaise ? <MarketLine left={<Text style={{ color: colors.primary }}>{discountLabel(order.offer)}</Text>} right={<Text style={{ color: colors.primary, fontSize: 15 }}>{minus(order.discountPaise)}</Text>} /> : null}
     <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 10 }}>
       <MarketLine bold left={cancelled ? 'Total' : 'Paid in cash'} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
     </View>
@@ -206,6 +208,7 @@ export function OrderStatusView({ order, restaurant, phone, updates, onReorder }
         </View>
       </DetailRow>
       <DetailRow label="Deliver to">{addressTitle ? `${addressTitle} · ${address}` : address}</DetailRow>
+      {order.discountPaise ? <DetailRow label={discountLabel(order.offer)}>{minus(order.discountPaise)}</DetailRow> : null}
       <DetailRow label="Payment">{`${formatINRFromPaise(order.totalPaise)} cash on delivery`}</DetailRow>
     </MarketSection> : <Lines order={order} />}
     {order.status === 'delivered' ? <MarketSection><View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>

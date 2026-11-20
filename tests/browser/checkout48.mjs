@@ -52,6 +52,8 @@ try {
       if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
       if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? fixture.placed : fixture.placed ? [fixture.placed] : []);
       if (url.pathname === '/rest/v1/rpc/list_addresses') { fixture.listCalls++; return json(fixture.rows); }
+      if (url.pathname === '/rest/v1/rpc/list_active_offers') return json([]); // #182: no offers here
+      if (url.pathname === '/rest/v1/rpc/quote_order') return json({ outcome: 'quoted', pricing: null, offer_error: null, nudge: null }); // #182: an unusable quote, so the cart prices itself
       if (url.pathname === '/rest/v1/customer_addresses' && method === 'POST') {
         const body = request.postDataJSON(), row = { ...body, id: addressId(20), version: 1, updated_at: new Date().toISOString(), in_area: true, distance_m: 900 };
         fixture.rows.push(row); return json({ id: row.id, version: 1 }, 201);
