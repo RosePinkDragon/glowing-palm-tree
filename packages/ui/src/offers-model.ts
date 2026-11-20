@@ -5,6 +5,8 @@ import type { PillTone } from './MarketChips';
 // Pure model for the owners' Offers screens (#182 slice B): list order, wording, and the form's text <-> OfferInput conversion.
 // The service validates again and the database is the authority; this only gives each field a plain message.
 
+export const offerEndedMessage = 'This offer has ended. Create a new one to run it again.';
+export const endInPastMessage = 'End must be in the future.';
 export const offerLockedMessage = 'Terms are locked once an offer has been used. End it and create a new one to change them.';
 export const kindLabels: Record<OfferKind, string> = { percent: 'Percent off', flat: 'Flat ₹ off', free_delivery: 'Free delivery' };
 export const weekdayShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
@@ -26,7 +28,9 @@ export function offerSummary(offer: Pick<OwnerOffer, 'kind' | 'value' | 'maxDisc
 /** "Automatic" or "Code DINNER20". */
 export const offerApplied = (offer: Pick<OwnerOffer, 'applyMode' | 'code'>) => offer.applyMode === 'code' ? `Code ${offer.code}` : 'Automatic';
 /** "12 uses · ₹1,200 given". */
-export const offerUsage = (offer: Pick<OwnerOffer, 'useCount' | 'discountGivenPaise'>) => `${offer.useCount} ${offer.useCount === 1 ? 'use' : 'uses'} · ${inr(offer.discountGivenPaise)} given`;
+export const offerUsage = (offer: Pick<OwnerOffer, 'useCount' | 'discountGivenPaise' | 'usageKnown'>) => !offer.usageKnown ? 'Usage unavailable' : `${offer.useCount} ${offer.useCount === 1 ? 'use' : 'uses'} · ${inr(offer.discountGivenPaise)} given`;
+/** "₹340 given across 7 orders". */
+export const dayOffersTotal = (givenPaise: number, orders: number) => `${inr(givenPaise)} given across ${orders} ${orders === 1 ? 'order' : 'orders'}`;
 export const statusLabels: Record<OfferStatus, string> = { active: 'Active', scheduled: 'Scheduled', paused: 'Paused', ended: 'Ended', used_up: 'Used up' };
 export const statusTones: Record<OfferStatus, PillTone> = { active: 'positive', scheduled: 'info', paused: 'quiet', ended: 'outline', used_up: 'neutral' };
 
@@ -109,7 +113,7 @@ const optionalWhole = (text: string) => text.trim() === '' ? null : whole(text);
 const optionalPaise = (text: string) => text.trim() === '' ? null : parseRupees(text) ?? NaN;
 
 /** Text in, a complete OfferInput out, or one plain message per invalid field. Nothing is sent while any field is invalid. */
-export function validateOfferForm(form: OfferForm): { ok: true; input: OfferInput } | { ok: false; errors: OfferFormErrors } {
+export function validateOfferForm(form: OfferForm, options: { creating?: boolean; now?: Date } = {}): { ok: true; input: OfferInput } | { ok: false; errors: OfferFormErrors } {
   const errors: OfferFormErrors = {};
   const starts = parseIstInput(form.startsAt), ends = parseIstInput(form.endsAt);
   const code = form.code.trim().toUpperCase();
@@ -121,11 +125,14 @@ export function validateOfferForm(form: OfferForm): { ok: true; input: OfferInpu
     startsAt: starts.ok ? starts.iso : 'invalid', endsAt: ends.ok ? ends.iso : 'invalid',
     window: form.windowOn ? { from: form.windowFrom.trim(), to: form.windowTo.trim(), days: form.windowDays } : null,
   };
-  try { return { ok: true, input: validateOffer(candidate) }; }
+  // A new offer that has already ended would never run: block it rather than save a dead offer.
+  const past = options.creating === true && ends.ok && ends.iso !== null && Date.parse(ends.iso) <= (options.now ?? new Date()).getTime();
+  try { const input = validateOffer(candidate); return past ? { ok: false, errors: { endsAt: endInPastMessage } } : { ok: true, input }; }
   catch (error) {
     if (!(error instanceof OfferValidationError)) throw error;
     const text = messages(form.kind);
     for (const [field, message] of Object.entries(error.fields) as [OfferField, string][]) errors[field] = field === 'endsAt' ? (ends.ok ? message : dateHint) : text[field] ?? message;
+    if (past && !errors.endsAt) errors.endsAt = endInPastMessage;
     return { ok: false, errors };
   }
 }

@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { OwnerOffer } from '@market/services';
-import { emptyOfferForm, firstOfferError, formatIst, formatWindow, formFromOffer, istInput, offerActions, offerApplied, offerGroups, offerSummary, offerUsage, parseIstInput, validateLockedForm, validateOfferForm, type OfferForm } from './offers-model.ts';
+import { dayOffersTotal, emptyOfferForm, firstOfferError, formatIst, formatWindow, formFromOffer, istInput, offerActions, offerApplied, offerGroups, offerSummary, offerUsage, parseIstInput, validateLockedForm, validateOfferForm, type OfferForm } from './offers-model.ts';
 
-const offer = (over: Partial<OwnerOffer> = {}): OwnerOffer => ({ id: 'a', version: 1, paused: false, createdAt: '2026-11-20T10:00:00.000Z', status: 'active', useCount: 0, discountGivenPaise: 0, termsLocked: false, name: 'Dinner', kind: 'percent', value: 20, maxDiscountPaise: 10000,
+const offer = (over: Partial<OwnerOffer> = {}): OwnerOffer => ({ id: 'a', version: 1, paused: false, createdAt: '2026-11-20T10:00:00.000Z', status: 'active', useCount: 0, discountGivenPaise: 0, termsLocked: false, usageKnown: true, name: 'Dinner', kind: 'percent', value: 20, maxDiscountPaise: 10000,
   minOrderPaise: 30000, applyMode: 'automatic', code: null, firstOrderOnly: false, perCustomerLimit: null, totalLimit: null, startsAt: null, endsAt: null, window: null, ...over });
 const form = (over: Partial<OfferForm> = {}): OfferForm => ({ ...emptyOfferForm(), name: 'Dinner deal', value: '20', ...over });
 const errorsOf = (f: OfferForm) => { const r = validateOfferForm(f); assert.equal(r.ok, false); return r.ok ? {} : r.errors; };
@@ -12,8 +12,10 @@ test('summaries, application and usage wording', () => {
   assert.equal(offerSummary(offer()), '20% off up to ₹100'); assert.equal(offerSummary(offer({ maxDiscountPaise: null })), '20% off');
   assert.equal(offerSummary(offer({ kind: 'flat', value: 5000, maxDiscountPaise: null })), '₹50 off'); assert.equal(offerSummary(offer({ kind: 'free_delivery', value: null, maxDiscountPaise: null })), 'Free delivery');
   assert.equal(offerApplied(offer()), 'Automatic'); assert.equal(offerApplied(offer({ applyMode: 'code', code: 'DINNER20' })), 'Code DINNER20');
-  assert.equal(offerUsage(offer({ useCount: 12, discountGivenPaise: 120000 })), '12 uses · ₹1,200 given'); assert.equal(offerUsage(offer({ useCount: 1, discountGivenPaise: 5050 })), '1 use · ₹50.50 given'); assert.equal(offerUsage(offer()), '0 uses · ₹0 given');
+  assert.equal(offerUsage(offer({ useCount: 12, discountGivenPaise: 120000 })), '12 uses · ₹1,200 given'); assert.equal(offerUsage(offer({ useCount: 1, discountGivenPaise: 5050 })), '1 use · ₹50.50 given'); assert.equal(offerUsage(offer()), '0 uses · ₹0 given'); assert.equal(offerUsage(offer({ usageKnown: false })), 'Usage unavailable');
 });
+
+test('the day total reads plainly', () => { assert.equal(dayOffersTotal(34000, 7), '₹340 given across 7 orders'); assert.equal(dayOffersTotal(5050, 1), '₹50.50 given across 1 order'); });
 
 test('list order: active and scheduled, then paused, then ended and used up', () => {
   const list = [offer({ id: 'e', status: 'ended' }), offer({ id: 'p', status: 'paused' }), offer({ id: 's', status: 'scheduled', createdAt: '2026-11-19T00:00:00.000Z' }), offer({ id: 'a' }), offer({ id: 'u', status: 'used_up' }), offer({ id: 'n', createdAt: '2026-11-21T00:00:00.000Z' })];
@@ -59,6 +61,13 @@ test('every invalid field gets a plain message, and focus order starts at the fi
   for (const w of [{ windowFrom: '18:00', windowTo: '18:00' }, { windowFrom: '6pm', windowTo: '9pm' }, { windowDays: [] as number[] }]) assert.ok(errorsOf(form({ windowOn: true, ...w })).window, JSON.stringify(w));
   const many = errorsOf(form({ name: '', value: '', minOrder: 'x', applyMode: 'code', code: '', endsAt: 'bad' }));
   assert.deepEqual(Object.keys(many).sort(), ['code', 'endsAt', 'minOrder', 'name', 'value']); assert.equal(firstOfferError(many), 'name'); assert.equal(firstOfferError({ endsAt: 'x', code: 'y' }), 'code'); assert.equal(firstOfferError({}), undefined);
+});
+
+test('a new offer cannot end in the past, but an existing one is not blocked here', () => {
+  const now = new Date('2026-11-20T12:00:00Z');
+  assert.deepEqual(validateOfferForm(form({ endsAt: '2026-11-20 17:00' }), { creating: true, now }), { ok: false, errors: { endsAt: 'End must be in the future.' } }, '17:00 IST is 11:30 UTC, already past');
+  assert.ok(validateOfferForm(form({ endsAt: '2026-11-20 18:00' }), { creating: true, now }).ok); assert.ok(validateOfferForm(form({ endsAt: '2026-11-20 17:00' }), { now }).ok);
+  assert.deepEqual(validateOfferForm(form({ name: '', endsAt: '2026-11-20 17:00' }), { creating: true, now }), { ok: false, errors: { name: 'Enter a name of 3 to 40 characters.', endsAt: 'End must be in the future.' } });
 });
 
 test('an offer round-trips through the form, and a used offer only edits name and end', () => {

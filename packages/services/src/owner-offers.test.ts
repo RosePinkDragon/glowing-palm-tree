@@ -71,7 +71,7 @@ async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu') {
   const state = {
     requests: [] as Req[], offers: [row()] as Record<string, unknown>[], redemptions: [] as { id: string; offer_id: string; orders: { status: string; discount_paise: number } }[],
     /** Answers for the next write(s): consumed in order. */
-    writes: [] as (() => Response)[], member: true, gone: false,
+    writes: [] as (() => Response)[], member: true, gone: false, statsFail: false, endless: false, dayOrders: [] as { id: string; offer_id: string; offer_name: string; offer_code: string | null; offer_kind: string; discount_paise: number }[],
   };
   globalThis.fetch = async (url, init) => {
     const target = new URL(String(url));
@@ -84,9 +84,12 @@ async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu') {
     state.requests.push(req);
     assert.notEqual(method, 'DELETE', 'offers are never deleted');
     if (req.path === 'offer_redemptions') {
+      if (state.statsFail) return Response.json({ code: 'XX000', message: 'boom', details: null, hint: null }, { status: 500 });
+      if (state.endless) { const from = state.requests.filter(r => r.path === 'offer_redemptions').length * 1000; return Response.json(Array.from({ length: 1000 }, (_, i) => ({ id: `e${String(from + i).padStart(8, '0')}`, offer_id: offerId, orders: { status: 'delivered', discount_paise: 1 } }))); }
       const after = target.searchParams.get('id')?.replace('gt.', ''), offer = target.searchParams.get('offer_id')?.replace('eq.', '');
       return Response.json(state.redemptions.filter(r => (!after || r.id > after) && (!offer || r.offer_id === offer)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(target.searchParams.get('limit'))));
     }
+    if (req.path === 'orders') { const after = target.searchParams.get('id')?.replace('gt.', ''); return Response.json(state.dayOrders.filter(o => !after || o.id > after).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(target.searchParams.get('limit')))); }
     assert.equal(req.path, 'offers');
     if (method === 'GET' && target.searchParams.get('select') === 'id') return Response.json(state.gone ? null : { id: offerId });
     if (method === 'GET') return Response.json(state.offers);
@@ -130,7 +133,7 @@ test('listOffers pages redemptions by key so nothing is skipped or counted twice
     const [offer] = await service.listOffers();
     assert.deepEqual([offer.useCount, offer.discountGivenPaise], [2500, 25000]);
     const pages = state.requests.filter(r => r.path === 'offer_redemptions');
-    assert.equal(pages.length, 3); assert.equal(pages[0].query.get('id'), null); assert.equal(pages[1].query.get('id'), 'gt.r00999'); assert.equal(pages[2].query.get('id'), 'gt.r01999');
+    assert.equal(pages.length, 4, 'paging ends on an empty page'); assert.equal(pages[3].query.get('id'), 'gt.r02499'); assert.equal(pages[0].query.get('id'), null); assert.equal(pages[1].query.get('id'), 'gt.r00999'); assert.equal(pages[2].query.get('id'), 'gt.r01999');
   } finally { cleanup(); }
 });
 
@@ -250,4 +253,63 @@ test('a write retries once on a deadlock or serialization failure, never more', 
       assert.equal(writes().filter(w => w.method === 'POST').length, 2, 'an insert retries too');
     } finally { cleanup(); }
   }
+});
+
+test('a committed write is never reported as failed because the usage read-back failed', async () => {
+  const { service, state, cleanup, writes } = await fixture();
+  try {
+    state.statsFail = true;
+    const created = await service.createOffer(input);
+    assert.deepEqual([created.id, created.useCount, created.termsLocked, created.usageKnown], [offerId, 0, false, true], 'a new offer has no usage to read');
+    assert.equal(state.requests.filter(r => r.path === 'offer_redemptions').length, 0, 'create reads nothing back');
+    state.writes.push(() => Response.json([row({ paused: true, version: 5 })]));
+    const paused = await service.pauseOffer(offerId, 4);
+    assert.deepEqual([paused.status, paused.version, paused.usageKnown, paused.termsLocked], ['paused', 5, false, false], 'the write resolves; usage is simply unknown');
+    state.writes.push(() => Response.json([row({ ends_at: '2026-11-01T12:00:00+00:00', version: 6 })]));
+    assert.equal((await service.endOffer(offerId, 5)).status, 'ended');
+    state.writes.push(() => Response.json([row({ name: 'Renamed', version: 7 })]));
+    assert.equal((await service.updateOffer(offerId, 6, { name: 'Renamed' })).name, 'Renamed');
+    assert.equal(writes().length, 4);
+  } finally { cleanup(); }
+});
+
+test('listOffers still lists offers, without usage, when usage cannot be read or is too large', async () => {
+  const { service, state, cleanup } = await fixture();
+  try {
+    state.statsFail = true;
+    let [offer] = await service.listOffers();
+    assert.deepEqual([offer.name, offer.usageKnown, offer.useCount, offer.discountGivenPaise, offer.termsLocked, offer.status], ['Dinner', false, 0, 0, false, 'active']);
+    state.statsFail = false; state.endless = true; const before = state.requests.filter(r => r.path === 'offer_redemptions').length;
+    [offer] = await service.listOffers();
+    assert.equal(offer.usageKnown, false, 'the 200-page cap degrades to unknown usage instead of failing the screen');
+    assert.equal(state.requests.filter(r => r.path === 'offer_redemptions').length - before, 200);
+    state.endless = false;
+    [offer] = await service.listOffers();
+    assert.equal(offer.usageKnown, true);
+    // A failed offers read is still an error: there is nothing to show.
+    state.member = false;
+    await rejects(service.listOffers(), 'ADMIN_REQUIRED');
+  } finally { cleanup(); }
+});
+
+test('getDayOffers totals a day from the orders\' own offer snapshots, and lists running offers only for today', async () => {
+  const { service, state, cleanup } = await fixture();
+  try {
+    const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const o = (id: string, offer: string, name: string, code: string | null, kind: string, discount: number) => ({ id, offer_id: offer, offer_name: name, offer_code: code, offer_kind: kind, discount_paise: discount });
+    state.dayOrders = [o('o1', offerId, 'Old name', 'DINNER20', 'percent', 10000), o('o2', offerId, 'Old name', 'DINNER20', 'percent', 6000), o('o3', otherId, 'Free delivery', null, 'free_delivery', 3000)];
+    state.offers = [row(), row({ id: otherId, name: 'Free delivery' }), row({ id: '18200000-0000-4000-b000-0000000000b3', name: 'Quiet one' }), row({ id: '18200000-0000-4000-b000-0000000000b4', name: 'Paused one', paused: true })];
+    const today = await service.getDayOffers(day);
+    assert.deepEqual(today.used.map(u => [u.name, u.code, u.uses, u.givenPaise]), [['Old name', 'DINNER20', 2, 16000], ['Free delivery', null, 1, 3000]], 'the snapshot name is used, biggest first');
+    assert.deepEqual([today.orderCount, today.totalGivenPaise], [3, 19000]);
+    assert.deepEqual(today.running?.map(r => r.name), ['Quiet one'], 'active offers with no use today; used and paused ones are not listed as running');
+    const read = state.requests.find(r => r.path === 'orders')!;
+    assert.equal(read.query.get('business_id'), 'eq.business'); assert.equal(read.query.get('status'), 'neq.cancelled'); assert.equal(read.query.get('offer_id'), 'not.is.null');
+    assert.deepEqual([read.query.getAll('created_at')[0], read.query.getAll('created_at')[1]], [`gte.${new Date(Date.parse(day + 'T00:00:00Z') - 330 * 60000).toISOString()}`, `lt.${new Date(Date.parse(day + 'T00:00:00Z') - 330 * 60000 + 86400000).toISOString()}`], 'the day is an India-time day');
+    const past = await service.getDayOffers('2026-01-05');
+    assert.deepEqual([past.running, past.used.length], [[], 2]);
+    state.dayOrders = [];
+    assert.deepEqual((await service.getDayOffers('2026-01-05')).used, []);
+    await assert.rejects(service.getDayOffers('2026-02-30'), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_DATE');
+  } finally { cleanup(); }
 });

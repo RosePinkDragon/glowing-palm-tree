@@ -26,10 +26,10 @@ try {
     const idFor = () => `18200000-0000-4000-b000-${String(++counter).padStart(12, '0')}`;
     const make = over => ({ id: idFor(), business_id: businessId, name: 'Offer', kind: 'percent', value: 10, max_discount_paise: null, min_order_paise: 0, apply_mode: 'automatic', code: null, first_order_only: false, per_customer_limit: null, total_limit: null, starts_at: null, ends_at: null,
       window_from: null, window_to: null, window_days: null, paused: false, created_at: '2026-11-01T10:00:00+00:00', version: 1, ...over });
-    const db = [], redemptions = [], log = { posts: [], patches: [], deletes: 0, listReads: 0 };
-    let failList = true;
-    const open = async (viewport = { width: 390, height: 844 }) => {
-      const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
+    const db = [], redemptions = [], dayOrders = [], log = { posts: [], patches: [], deletes: 0, listReads: 0 };
+    let failList = true, failUsage = false;
+    const open = async (viewport = { width: 390, height: 844 }, timezoneId = undefined) => {
+      const context = await browser.newContext({ viewport, serviceWorkers: 'block', ...(timezoneId ? { timezoneId } : {}) });
       await context.addInitScript(({ slug, value }) => { localStorage.setItem(`market:https%3A%2F%2Fmarket-fixture.supabase.co:${slug}:admin`, JSON.stringify(value)); }, { slug, value: session(owner) });
       await context.routeWebSocket(/.*/, socket => socket.onMessage(message => {
         const data = JSON.parse(String(message)), array = Array.isArray(data);
@@ -49,8 +49,16 @@ try {
         if (path === '/rest/v1/businesses') return json(business);
         if (path === '/rest/v1/business_memberships') return json(who === owner.id ? { role: 'admin' } : null);
         if (path === '/rest/v1/menu_items' || path === '/rest/v1/menu_categories') return json([]);
-        if (path === '/rest/v1/orders') return json([]);
+        if (path === '/rest/v1/orders') {
+          if (!q.has('offer_id')) return json([]);
+          // The Today card's read: this restaurant's non-cancelled orders that used an offer, inside one India-time day.
+          assert.equal(q.get('business_id'), `eq.${businessId}`); assert.equal(q.get('status'), 'neq.cancelled');
+          const [from, to] = q.getAll('created_at').map(value => value.replace(/^(gte|lt)\./, '')), after = q.get('id')?.replace('gt.', '');
+          return json(dayOrders.filter(o => o.status !== 'cancelled' && o.created_at >= from && o.created_at < to && (!after || o.id > after)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))));
+        }
+        if (path === '/rest/v1/rpc/daily_summary') { const date = request.postDataJSON().p_date ?? new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return json({ date, collected_paise: 0, delivered_count: 0, outstanding_paise: 0, outstanding_count: 0, placed_count: 0, cancelled_count: 0, top_dishes: [] }); }
         if (path === '/rest/v1/offer_redemptions') {
+          if (failUsage) return fail('XX000', 'usage view unavailable', 500);
           const after = q.get('id')?.replace('gt.', ''), offer = q.get('offer_id')?.replace('eq.', '');
           assert.equal(q.get('business_id'), `eq.${businessId}`);
           return json(redemptions.filter(r => (!after || r.id > after) && (!offer || r.offer_id === offer)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))).map(r => ({ id: r.id, offer_id: r.offer_id, orders: { status: r.status, discount_paise: r.discount } })));
@@ -104,7 +112,8 @@ try {
 
       // ---- Error state with retry, then the empty state ----
       await openOffers();
-      await text('Could not load offers').waitFor(); await text('database unavailable').waitFor().catch(() => {});
+      await text("Couldn't load offers").waitFor(); await text('Check your connection and try again.').waitFor();
+      assert.equal(await visible(page.getByText(/database unavailable|Could not load/)).count(), 0, 'raw server text is never shown');
       await shot('error-390'); await noOverflow();
       await button('Try again').click(); await text('No offers yet').waitFor(); await button('Create an offer').waitFor();
       await shot('empty-390'); await noOverflow();
@@ -115,10 +124,10 @@ try {
       await eventually(async () => await page.evaluate(() => document.activeElement?.tagName === 'H1')); // the panel has finished opening and moved focus to its heading
       await targets(); await noOverflow(); await shot('form-new-390');
       await input('Offer name').fill('ab'); await input('Discount percent').fill('95'); await input('Maximum discount (optional)').fill('5000'); await input('Minimum order (optional)').fill('20000');
-      await input('Uses per customer (optional)').fill('0'); await input('Total uses (optional)').fill('100001'); await input('Ends (optional)').fill('someday');
+      await input('Uses per customer (optional)').fill('0'); await input('Total uses (optional)').fill('100001'); await input('Starts (optional)').fill('2026-12-02T10:00'); await input('Ends (optional)').fill('2026-12-01T10:00');
       await button('Create offer').click();
       for (const message of ['Enter a name of 3 to 40 characters.', 'Enter a whole percent from 1 to 90.', 'Enter an amount from ₹1 to ₹1,000, or leave it empty.', 'Enter an amount from ₹0 to ₹10,000, or leave it empty.', 'Enter a number from 1 to 99, or leave it empty.', 'Enter a number from 1 to 100,000, or leave it empty.']) await text(message).waitFor();
-      await text('Enter it as 2026-11-21 18:00 (India time), or leave it empty.').waitFor(); await text('Check the highlighted fields above.').waitFor();
+      await text('The end must be after the start.').waitFor(); await text('Check the highlighted fields above.').waitFor();
       assert.equal(log.posts.length, 0, 'nothing is sent while any field is invalid');
       await eventually(async () => await page.evaluate(() => document.activeElement?.getAttribute('aria-label')) === 'Offer name'); // focus goes to the first invalid field
       for (const label of ['Offer name', 'Discount percent', 'Maximum discount (optional)', 'Minimum order (optional)', 'Uses per customer (optional)', 'Total uses (optional)', 'Ends (optional)']) {
@@ -127,8 +136,11 @@ try {
       }
       await shot('form-errors-390');
       await input('Offer name').fill('Weekend 20'); await input('Discount percent').fill('20'); await input('Maximum discount (optional)').fill('100'); await input('Minimum order (optional)').fill('300');
-      await input('Uses per customer (optional)').fill(''); await input('Total uses (optional)').fill(''); await input('Ends (optional)').fill('');
+      await input('Uses per customer (optional)').fill(''); await input('Total uses (optional)').fill(''); await input('Starts (optional)').fill(''); await input('Ends (optional)').fill('');
       assert.equal(await text('Enter a name of 3 to 40 characters.').count(), 0, 'a corrected field clears its error');
+      // An end date that has already passed would save a dead offer: blocked, nothing sent.
+      await input('Ends (optional)').fill('2020-01-01T00:00'); await button('Create offer').click(); await text('End must be in the future.').waitFor(); assert.equal(log.posts.length, 0);
+      await input('Ends (optional)').fill('');
       await button('Create offer').click(); await text('Offer created.').waitFor();
       assert.deepEqual(log.posts, [{ business_id: businessId, name: 'Weekend 20', kind: 'percent', value: 20, max_discount_paise: 10000, min_order_paise: 30000, apply_mode: 'automatic', code: null, first_order_only: false, per_customer_limit: null, total_limit: null, starts_at: null, ends_at: null, window_from: null, window_to: null, window_days: null, paused: false }]);
       const weekend = row(/^Weekend 20, Active, 20% off up to ₹100, Automatic, 0 uses · ₹0 given$/); await weekend.waitFor();
@@ -144,7 +156,7 @@ try {
       await input('Offer code').fill('save50');
       await visible(page.getByRole('switch', { name: 'First order only', exact: true })).click();
       await input('Uses per customer (optional)').fill('1'); await input('Total uses (optional)').fill('100');
-      await input('Starts (optional)').fill('2026-12-01 18:00'); await input('Ends (optional)').fill('2027-01-31 23:59');
+      await input('Starts (optional)').fill('2026-12-01T18:00'); await input('Ends (optional)').fill('2027-01-31T23:59');
       await visible(page.getByRole('switch', { name: 'Happy hour window', exact: true })).click();
       await visible(page.getByRole('button', { name: 'Saturday', exact: true })).click(); await visible(page.getByRole('button', { name: 'Sunday', exact: true })).click();
       await targets(); await shot('form-code-390');
@@ -177,6 +189,11 @@ try {
       assert.ok(log.patches.every(p => /^eq\.18200000-/.test(p.query.id)), 'each statement names exactly one offer');
       await row(/^Weekend 20, Ended/).click(); await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor();
       for (const label of ['Pause offer', 'Resume offer', 'End offer']) assert.equal(await button(label).count(), 0, `an ended offer cannot be ${label}`);
+      // An ended offer is view only: its end date cannot quietly bring it back.
+      await text('This offer has ended. Create a new one to run it again.').waitFor();
+      assert.equal(await visible(page.getByRole('textbox')).count(), 0, 'no editable fields'); assert.equal(await visible(page.getByRole('radio')).count(), 0); assert.equal(await visible(page.getByRole('switch')).count(), 0);
+      assert.equal(await button('Save changes').isDisabled(), true); await text('Weekend 20').first().waitFor();
+      const patchesAtEnded = log.patches.length; await button('Save changes').click({ force: true, timeout: 1000 }).catch(() => {}); assert.equal(log.patches.length, patchesAtEnded, 'nothing can be sent'); await shot('form-ended-390');
       await button('Back').click(); await gone(page.getByRole('heading', { name: 'Edit offer' }));
 
       // ---- A used offer: terms are read-only, only the name and end date change ----
@@ -193,7 +210,7 @@ try {
       for (const label of ['10% off', '₹200', 'Code USED10', 'Yes', '6:00 pm to 10:30 pm, Mon, Wed, Fri']) await text(label).first().waitFor();
       assert.equal(await visible(page.getByRole('textbox')).count(), 2, 'only the name and the end date are editable');
       await input('Offer name').waitFor(); await input('Ends (optional)').waitFor(); await button('Pause offer').waitFor(); await targets(); await shot('form-locked-390');
-      await input('Offer name').fill('Used deal 2'); await input('Ends (optional)').fill('2027-01-01 00:00'); await button('Save changes').click(); await text('Offer saved.').waitFor();
+      await input('Offer name').fill('Used deal 2'); await input('Ends (optional)').fill('2027-01-01T00:00'); await button('Save changes').click(); await text('Offer saved.').waitFor();
       const lockedPatch = log.patches.at(-1);
       assert.deepEqual(lockedPatch.body, { name: 'Used deal 2', ends_at: '2026-12-31T18:30:00.000Z' }, 'only the name and end date are sent'); assert.deepEqual(Object.keys(lockedPatch.body).filter(key => termColumns.includes(key)), []);
 
@@ -220,6 +237,67 @@ try {
       await text(lockedText).waitFor(); assert.equal(await text(lockedText).count(), 1, 'the banner is replaced by the locked terms');
       await button('Back').click(); await gone(page.getByRole('heading', { name: 'Edit offer' }));
 
+      // ---- Usage cannot be read: the offers still list, and pause, resume and end keep working ----
+      await button('Back to Settings').click(); failUsage = true; await button('Offers').click(); await visible(page.getByRole('heading', { name: 'Offers', level: 1 })).waitFor();
+      await text("Usage couldn't be loaded, so counts are hidden. You can still pause, resume and end offers.").waitFor(); await button('Reload usage').waitFor();
+      await row(/^Race deal, Active, 15% off, Automatic, Usage unavailable$/).waitFor(); await row(/^Used deal final, Active, 10% off, Code USED10, Usage unavailable$/).waitFor();
+      assert.equal(await visible(page.getByText(/\d+ uses? · /)).count(), 0, 'no invented counts'); await shot('list-usage-unavailable-390');
+      await row(/^Race deal, Active/).click(); await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor();
+      assert.equal(await text(lockedText).count(), 0, 'with usage unknown the terms are editable and the database decides');
+      await button('Pause offer').click(); await text('Offer paused.').waitFor(); await row(/^Race deal, Paused, 15% off, Automatic, Usage unavailable$/).click();
+      await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor(); await button('Resume offer').click(); await text('Offer resumed.').waitFor();
+      await row(/^Race deal, Active/).click(); await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor(); await input('Discount percent').fill('25'); await button('Save changes').click();
+      await text(lockedText).waitFor(); assert.equal(race.value, 15, 'the database refused the edit of a used offer'); await button('Back').click(); await gone(page.getByRole('heading', { name: 'Edit offer' }));
+      failUsage = false;
+
+      // ---- The Today tab's Offers card: history from the orders' own snapshots, running offers for today ----
+      await button('Back to Settings').click(); await button('Settings').waitFor();
+      const created = new Date().toISOString(), snap = (id, over) => ({ id, status: 'delivered', created_at: created, offer_id: used.id, offer_name: 'Used deal (old name)', offer_code: 'USED10', offer_kind: 'percent', discount_paise: 2000, ...over });
+      dayOrders.push(snap('t1', {}), snap('t2', { discount_paise: 3000 }), snap('t3', { offer_id: db[0].id, offer_name: 'Weekend 20', offer_code: null, offer_kind: 'free_delivery', discount_paise: 3000, status: 'placed' }), snap('t4', { discount_paise: 9000, status: 'cancelled' }));
+      await button('Today').click(); await text('CASH').waitFor();
+      const card = visible(page.getByRole('button', { name: 'Offers', exact: true }));
+      await card.waitFor(); await text('Code USED10 · 2 uses · ₹50 given').waitFor(); await text('Automatic · 1 use · ₹30 given').waitFor();
+      await text('₹80 given across 3 orders').waitFor(); // the cancelled order's ₹90 is not counted
+      await text('Used deal (old name)').waitFor(); // the order's own snapshot, not the live offer's current name
+      await text('Code SAVE50 · Running · no uses yet').waitFor(); await text('Automatic · Running · no uses yet').first().waitFor(); // active offers nobody used today
+      assert.equal(await text('Future fest').count(), 0, 'a scheduled offer is not running'); assert.equal(await text('Dinner code').count(), 0);
+      await noOverflow(); await shot('today-offers-390');
+      await page.setViewportSize({ width: 1280, height: 800 }); await noOverflow(); await shot('today-offers-1280'); await page.setViewportSize({ width: 390, height: 844 });
+      // An earlier day with nothing used.
+      await button('Yesterday').click(); await text('No offers used on this day').waitFor(); assert.equal(await text('Code SAVE50 · Running · no uses yet').count(), 0, 'running offers are for today only'); await shot('today-offers-empty-day-390');
+      // Today with nothing running and nothing used: a way to create one.
+      const paused = db.filter(o => !o.paused); for (const o of paused) o.paused = true; const keep = dayOrders.splice(0);
+      await visible(page.getByRole('group', { name: 'Choose a day' }).getByRole('button', { name: /^Today,/ })).click();
+      await text('No offers running').waitFor(); await shot('today-offers-none-390');
+      await button('Create an offer').click(); await visible(page.getByRole('heading', { name: 'Offers', level: 1 })).waitFor();
+      for (const o of paused) o.paused = false; dayOrders.push(...keep); // Back remounts Today, which reads the day again
+      await button('Back to Today').click(); await text('CASH').waitFor();
+      // Tapping the card header opens Offers, and Back comes home to Today.
+      await text('₹80 given across 3 orders').waitFor();
+      await card.click(); await visible(page.getByRole('heading', { name: 'Offers', level: 1 })).waitFor(); await button('Back to Today').click(); await text('CASH').waitFor();
+      await button('Settings').click(); await button('Offers').click(); await visible(page.getByRole('heading', { name: 'Offers', level: 1 })).waitFor(); // the Settings entry is still there
+
+      // ---- A browser in another time zone: the date inputs are India wall time, whatever the device clock says ----
+      const london = await open({ width: 390, height: 844 }, 'Europe/London');
+      try {
+        const lp = london.page, lbutton = label => visible(lp.getByRole('button', { name: label, exact: true })), linput = label => visible(lp.getByLabel(label, { exact: true }));
+        assert.equal(await lp.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone), 'Europe/London');
+        await lbutton('Settings').click(); await lbutton('Offers').click(); await lbutton('New offer').click(); await visible(lp.getByRole('heading', { name: 'New offer' })).waitFor();
+        assert.equal(await linput('Starts (optional)').getAttribute('type'), 'datetime-local'); assert.equal(await linput('From (24-hour)').count(), 0);
+        await linput('Offer name').fill('Zone check'); await linput('Discount percent').fill('10');
+        await linput('Starts (optional)').fill('2027-07-01T18:00'); await linput('Ends (optional)').fill('2027-07-02T09:30'); // July: London is on BST, an hour off UTC
+        assert.equal(await lbutton('Clear starts').count(), 1); await visible(lp.getByRole('switch', { name: 'Happy hour window', exact: true })).click();
+        assert.equal(await linput('From (24-hour)').getAttribute('type'), 'time'); await linput('From (24-hour)').fill('22:00'); await linput('To (24-hour)').fill('02:00');
+        await lbutton('Create offer').click(); await visible(lp.getByText('Offer created.', { exact: true })).waitFor();
+        const zone = log.posts.at(-1);
+        assert.equal(zone.starts_at, '2027-07-01T12:30:00.000Z', '18:00 India time, not 18:00 London'); assert.equal(zone.ends_at, '2027-07-02T04:00:00.000Z');
+        assert.deepEqual([zone.window_from, zone.window_to], ['22:00', '02:00']);
+        await visible(lp.getByRole('button', { name: /^Zone check, Scheduled/ })).click(); await visible(lp.getByRole('heading', { name: 'Edit offer' })).waitFor();
+        assert.equal(await linput('Starts (optional)').inputValue(), '2027-07-01T18:00', 'the chosen wall time round-trips'); assert.equal(await linput('Ends (optional)').inputValue(), '2027-07-02T09:30');
+        assert.equal(await linput('Ends (optional)').getAttribute('min'), '2027-07-01T18:00', 'Ends cannot be before Starts');
+        await lbutton('Clear starts').click(); assert.equal(await linput('Starts (optional)').inputValue(), '');
+      } finally { await london.context.close(); }
+
       // ---- Never deleted; both layouts ----
       assert.equal(log.deletes, 0, 'no DELETE was ever sent');
       await shot('list-390'); await noOverflow();
@@ -229,7 +307,7 @@ try {
       assert.ok(column <= 1280, 'the list stays inside the page');
       await row(/^Dinner code, Scheduled/).click(); await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor();
       await input('Offer name').waitFor(); await input('Offer code').waitFor(); await targets(); await noOverflow(); await shot('form-edit-1280');
-      assert.equal(await input('Offer code').inputValue(), 'DINNER50'); assert.equal(await input('Starts (optional)').inputValue(), '2026-12-01 18:00'); assert.equal(await input('From (24-hour)').inputValue(), '15:00');
+      assert.equal(await input('Offer code').inputValue(), 'DINNER50'); assert.equal(await input('Starts (optional)').inputValue(), '2026-12-01T18:00'); assert.equal(await input('From (24-hour)').inputValue(), '15:00');
       assert.equal(await visible(page.getByRole('button', { name: 'Saturday', exact: true })).getAttribute('aria-pressed'), 'false'); assert.equal(await visible(page.getByRole('button', { name: 'Friday', exact: true })).getAttribute('aria-pressed'), 'true');
       await button('Back').click();
       console.log(`PASS: ${slug} Offers (#182 B): error and empty states, percent offer with validation then valid, code offer with duplicate-code error, pause/resume/end with confirmation, locked terms on a used offer, stale version and lock race, 390px and 1280px layouts`);

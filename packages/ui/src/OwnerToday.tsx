@@ -1,10 +1,12 @@
 import { createElement, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { formatINRFromPaise } from '@market/core';
-import { ServiceError, type MarketServices } from '@market/services';
+import { ServiceError, type DayOffers, type MarketServices } from '@market/services';
 import type { DailySummary } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';
-import { MarketSection } from './MarketList';
+import { MarketGroup, MarketRow, MarketSection } from './MarketList';
+import { MarketIcon } from './MarketIcons';
+import { dayOffersTotal } from './offers-model';
 import { MarketChip } from './MarketChips';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { useOwnerHorizontalPadding } from './OwnerShell';
@@ -77,8 +79,45 @@ function Tile({ label, value }: { label: string; value: number }) {
   </View>;
 }
 
+/**
+ * Offers on the selected day (#182): what was applied to that day's non-cancelled orders, from the orders' own offer snapshots,
+ * and for today the active offers nobody has used yet. The header opens the Offers page (also reachable from Settings).
+ */
+function TodayOffers({ services, date, onOpenOffers }: { services: MarketServices; date: string; onOpenOffers: () => void }) {
+  const { colors } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const [state, setState] = useState<{ kind: 'loading' } | { kind: 'error' } | { kind: 'ready'; offers: DayOffers }>({ kind: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setState({ kind: 'loading' });
+    services.getDayOffers(date).then(offers => { if (active) setState({ kind: 'ready', offers }); }, () => { if (active) setState({ kind: 'error' }); });
+    return () => { active = false; };
+  }, [services, date, attempt]);
+  const today = date === istDateISO();
+  const note = { color: colors.muted, fontSize: 15, lineHeight: 23, ...(fonts.body ? { fontFamily: fonts.body } : {}) };
+  const offers = state.kind === 'ready' ? state.offers : null;
+  const running = offers?.running ?? [];
+  return <MarketSection>
+    <Pressable accessibilityRole="button" accessibilityLabel="Offers" accessibilityHint="Opens your offers" onPress={onOpenOffers} style={({ pressed }) => ({ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: pressed ? 0.7 : 1 })}>
+      <Bold size={18}>Offers</Bold><MarketIcon name="chevronRight" color={colors.muted} />
+    </Pressable>
+    {state.kind === 'loading' ? <Text style={note}>Loading offers…</Text> : null}
+    {state.kind === 'error' ? <View style={{ gap: 10 }}><Text style={note}>Couldn't load offers for this day.</Text><MarketButton label="Try again" variant="secondary" onPress={() => setAttempt(n => n + 1)} /></View> : null}
+    {offers ? <View style={{ gap: 12 }}>
+      {offers.used.length || running.length ? <MarketGroup>
+        {[...offers.used.map(offer => <MarketRow key={offer.offerId} title={offer.name} detail={`${offer.code ? `Code ${offer.code}` : 'Automatic'} · ${offer.uses} ${offer.uses === 1 ? 'use' : 'uses'} · ${rupees(offer.givenPaise)} given`} />),
+          ...running.map(offer => <MarketRow key={offer.id} title={offer.name} detail={`${offer.code ? `Code ${offer.code}` : 'Automatic'} · Running · no uses yet`} />)]}
+      </MarketGroup> : null}
+      {offers.used.length ? <Bold size={15}>{dayOffersTotal(offers.totalGivenPaise, offers.orderCount)}</Bold> : null}
+      {!offers.used.length && !today ? <Text style={note}>No offers used on this day</Text> : null}
+      {!offers.used.length && today && offers.running && !running.length ? <View style={{ gap: 10 }}><Text style={note}>No offers running</Text><MarketButton label="Create an offer" variant="secondary" onPress={onOpenOffers} /></View> : null}
+    </View> : null}
+  </MarketSection>;
+}
+
 /** Owners' Today tab: cash for a chosen India-time day, what is still to collect now, order counts and the most-ordered dishes. */
-export function OwnerToday({ services, day }: { services: MarketServices; day: OwnerTodayDay }) {
+export function OwnerToday({ services, day, onOpenOffers }: { services: MarketServices; day: OwnerTodayDay; onOpenOffers?: () => void }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const demo = services.mode === 'demo';
@@ -146,6 +185,7 @@ export function OwnerToday({ services, day }: { services: MarketServices; day: O
           <View aria-hidden style={{ width: 90, height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: 'hidden' }}><View style={{ width: `${Math.max(4, Math.round(dish.quantity / topQuantity * 100))}%`, height: '100%', backgroundColor: colors.primary }} /></View>
         </View>) : <MarketText variant="muted">No dishes ordered</MarketText>}
       </MarketSection>
+      {onOpenOffers ? <TodayOffers services={services} date={shown} onOpenOffers={onOpenOffers} /> : null}
       <MarketText variant="muted">{summaryFooter}</MarketText>
     </View> : null}
   </View>;

@@ -1,5 +1,5 @@
-import { useRef, useState, type ComponentRef } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { createElement, useRef, useState } from 'react';
+import { Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { formatINRFromPaise } from '@market/core';
 import { OfferValidationError, OwnerOfferError, type MarketServices, type OfferField, type OwnerOffer } from '@market/services';
 import { MarketButton } from './components';
@@ -8,7 +8,7 @@ import { MarketChip, MarketPill } from './MarketChips';
 import { MarketLine, MarketSection } from './MarketList';
 import { MarketSwitch } from './MarketSwitch';
 import { useMarketFonts, useMarketTheme } from './theme';
-import { emptyOfferForm, firstOfferError, formFromOffer, formatIst, formatWindow, kindLabels, offerActions, offerApplied, offerLockedMessage, offerSummary, offerUsage, serverOfferErrors, statusLabels, statusTones, validateLockedForm, validateOfferForm, weekdayLong, weekdayShort, type OfferForm, type OfferFormErrors } from './offers-model';
+import { emptyOfferForm, firstOfferError, formFromOffer, istInput, formatIst, formatWindow, kindLabels, offerActions, offerApplied, offerEndedMessage, offerLockedMessage, offerSummary, offerUsage, serverOfferErrors, statusLabels, statusTones, validateLockedForm, validateOfferForm, weekdayLong, weekdayShort, type OfferForm, type OfferFormErrors } from './offers-model';
 
 // Owners' offer form (#182 slice B): create, edit, and for an offer that has been used, only its name and end date.
 // Terms are read-only once an offer has been redeemed; pause, resume and end live here too.
@@ -23,6 +23,8 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const locked = offer?.termsLocked === true;
+  // An ended offer is view only: its end date could otherwise quietly bring it back to life.
+  const ended = offer?.status === 'ended';
   const [form, setForm] = useState<OfferForm>(() => offer ? formFromOffer(offer) : emptyOfferForm());
   const [errors, setErrors] = useState<OfferFormErrors>({});
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -30,12 +32,12 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
   const [confirmEnd, setConfirmEnd] = useState(false);
   const busyRef = useRef(false);
   const trigger = useRef<HTMLElement | null>(null);
-  const refs = useRef<Partial<Record<FieldKey, ComponentRef<typeof TextInput> | null>>>({});
+  const refs = useRef<Partial<Record<FieldKey, { focus(): void } | null>>>({});
   const body = (size = 15) => ({ color: colors.ink, fontSize: size, lineHeight: Math.round(size * 1.45), ...(fonts.body ? { fontFamily: fonts.body } : {}) });
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const muted = { ...body(13), color: colors.muted };
   const actions = offer ? offerActions(offer) : null;
-  const blocked = problem?.kind === 'stale' || problem?.kind === 'locked' || problem?.kind === 'missing';
+  const blocked = ended || problem?.kind === 'stale' || problem?.kind === 'locked' || problem?.kind === 'missing';
 
   const set = (changes: Partial<OfferForm>, ...cleared: FieldKey[]) => {
     setForm(current => ({ ...current, ...changes }));
@@ -64,7 +66,7 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
       if (!checked.ok) { setErrors(checked.errors); focus(checked.errors); return; }
       setErrors({}); void run('save', () => services.updateOffer(offer.id, offer.version, checked.patch), 'Offer saved.'); return;
     }
-    const checked = validateOfferForm(form);
+    const checked = validateOfferForm(form, { creating: !offer });
     if (!checked.ok) { setErrors(checked.errors); focus(checked.errors); return; }
     setErrors({});
     void run('save', () => offer ? services.updateOffer(offer.id, offer.version, checked.input) : services.createOffer(checked.input), offer ? 'Offer saved.' : 'Offer created.');
@@ -72,17 +74,24 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
   const act = (kind: 'pause' | 'resume' | 'end') => { if (offer) void run(kind, () => services[`${kind}Offer`](offer.id, offer.version), notes[kind]); };
 
   const ids = (key: string) => ({ label: `offer-${key}-label`, error: `offer-${key}-error`, hint: `offer-${key}-hint` });
-  const field = (key: FieldKey, label: string, value: string, onChange: (text: string) => void, o: { optional?: boolean; hint?: string; prefix?: string; suffix?: string; numeric?: boolean; placeholder?: string; capitals?: boolean; errorKey?: OfferField; flex?: boolean } = {}) => {
+  const field = (key: FieldKey, label: string, value: string, onChange: (text: string) => void, o: { optional?: boolean; hint?: string; prefix?: string; suffix?: string; numeric?: boolean; placeholder?: string; capitals?: boolean; errorKey?: OfferField; flex?: boolean; picker?: 'datetime-local' | 'time'; min?: string } = {}) => {
     const error = errors[o.errorKey ?? (key as OfferField)], id = ids(key), name = o.optional ? `${label} (optional)` : label;
     const describedBy = [error ? id.error : '', o.hint ? id.hint : ''].filter(Boolean).join(' ') || undefined;
+    // On the web, dates and times come from the browser's own pickers. Their values are IST wall time as typed: nothing here ever goes through the device's time zone.
+    const web = Platform.OS === 'web' && o.picker !== undefined;
+    const shown = o.picker === 'datetime-local' ? value.replace(' ', 'T') : value;
     return <View key={key} style={{ gap: 8, flex: o.flex ? 1 : undefined }}>
       <Text nativeID={id.label} style={{ ...body(15), ...bold }}>{label}{o.optional ? <Text style={{ ...body(14), color: colors.muted, fontWeight: '400' }}>{' (optional)'}</Text> : null}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 52, borderWidth: error ? 2 : 1, borderColor: error ? colors.danger : colors.fieldBorder, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14, gap: 6 }}>
         {o.prefix ? <Text aria-hidden style={body(16)}>{o.prefix}</Text> : null}
-        <TextInput ref={node => { refs.current[key] = node; }} value={value} editable={!busy} onChangeText={onChange} onSubmitEditing={save} placeholder={o.placeholder} placeholderTextColor={colors.muted} maxLength={40}
+        {web ? createElement('input', { ref: (node: HTMLInputElement | null) => { refs.current[key] = node; }, type: o.picker, value: shown, min: o.min || undefined, disabled: !!busy, 'aria-label': name, 'aria-labelledby': id.label, 'aria-invalid': error ? true : undefined, 'aria-describedby': describedBy,
+          onChange: (event: { target: { value: string } }) => onChange(event.target.value), onKeyDown: (event: { key: string }) => { if (event.key === 'Enter') save(); },
+          style: { flex: 1, minWidth: 0, minHeight: 48, boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', color: colors.ink, fontSize: 16, fontFamily: fonts.body ?? 'inherit' } })
+          : <TextInput ref={node => { refs.current[key] = node; }} value={value} editable={!busy} onChangeText={onChange} onSubmitEditing={save} placeholder={o.placeholder} placeholderTextColor={colors.muted} maxLength={40}
           accessibilityLabel={name} aria-labelledby={id.label} aria-label={name} aria-invalid={error ? true : undefined} aria-describedby={describedBy} accessibilityHint={error}
           inputMode={o.numeric ? 'decimal' : 'text'} keyboardType={o.numeric ? 'decimal-pad' : 'default'} autoCapitalize={o.capitals ? 'characters' : 'none'} autoComplete="off" autoCorrect={false} returnKeyType="done"
-          style={{ flex: 1, minWidth: 0, minHeight: 48, color: colors.ink, fontSize: 16, ...(fonts.body ? { fontFamily: fonts.body } : {}), ...({ outlineStyle: 'none' } as object) }} />
+          style={{ flex: 1, minWidth: 0, minHeight: 48, color: colors.ink, fontSize: 16, ...(fonts.body ? { fontFamily: fonts.body } : {}), ...({ outlineStyle: 'none' } as object) }} />}
+        {web && o.optional && value ? <Pressable accessibilityRole="button" accessibilityLabel={`Clear ${label.toLowerCase()}`} disabled={!!busy} onPress={() => onChange('')} style={({ pressed }) => ({ minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}><Text aria-hidden style={{ ...body(14), color: colors.muted, ...bold }}>Clear</Text></Pressable> : null}
         {o.suffix ? <Text aria-hidden style={body(16)}>{o.suffix}</Text> : null}
       </View>
       {error ? <Text nativeID={id.error} role="alert" accessibilityRole="alert" style={{ ...body(14), color: colors.danger }}>{error}</Text> : null}
@@ -104,6 +113,10 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
   const row = (label: string, value: string) => <MarketLine key={label} left={<Text style={muted}>{label}</Text>} right={<Text style={{ ...body(14), ...bold, flexShrink: 1, textAlign: 'right' }}>{value}</Text>} />;
 
   const percent = form.kind === 'percent';
+  // Ends cannot be before Starts, nor (for a new offer) in the past. Same IST wall-time format as the picker.
+  const startsPicked = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(form.startsAt) ? form.startsAt.replace(' ', 'T') : '';
+  const nowIst = istInput(new Date().toISOString()).replace(' ', 'T');
+  const endsMin = [startsPicked, offer ? '' : nowIst].sort().at(-1) || undefined;
   return <AccessiblePanel fullScreen owner title={offer ? 'Edit offer' : 'New offer'} subtitle={offer ? offer.name : undefined} closeDisabled={!!busy} onClose={() => { if (!busy) onClose(); }}
     footer={<>
       {problem ? <View role="alert" accessibilityRole="alert" style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: colors.warningTint }}>
@@ -119,10 +132,11 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
       <Text style={muted}>{offerSummary(offer)} · {offerApplied(offer)} · {offerUsage(offer)}</Text>
     </View> : null}
 
-    {field('name', 'Offer name', form.name, name => set({ name }, 'name'), { hint: 'Shown to customers. 3 to 40 characters.', placeholder: 'Weekend special' })}
+    {ended ? null : field('name', 'Offer name', form.name, name => set({ name }, 'name'), { hint: 'Shown to customers. 3 to 40 characters.', placeholder: 'Weekend special' })}
 
-    {locked ? <MarketSection muted title="Terms">
-      <Text style={body(14)}>{offerLockedMessage}</Text>
+    {locked || ended ? <MarketSection muted title="Terms">
+      <Text style={body(14)}>{ended ? offerEndedMessage : offerLockedMessage}</Text>
+      {ended ? <>{row('Name', offer!.name)}{row('Ended', formatIst(offer!.endsAt))}</> : null}
       {row('Offer', offerSummary(offer!))}{row('Minimum order', offer!.minOrderPaise ? inr(offer!.minOrderPaise) : 'None')}{row('How applied', offerApplied(offer!))}
       {row('First order only', offer!.firstOrderOnly ? 'Yes' : 'No')}{row('Uses per customer', offer!.perCustomerLimit === null ? 'No limit' : String(offer!.perCustomerLimit))}{row('Total uses', offer!.totalLimit === null ? 'No limit' : String(offer!.totalLimit))}
       {row('Starts', offer!.startsAt ? formatIst(offer!.startsAt) : 'Right away')}{row('Daily window', offer!.window ? formatWindow(offer!.window) : 'All day')}
@@ -149,19 +163,19 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
       </View>
     </>}
 
-    <View style={{ gap: 18 }}>
+    {ended ? null : <View style={{ gap: 18 }}>
       {heading('Dates (India time)')}
-      {locked ? null : field('startsAt', 'Starts', form.startsAt, startsAt => set({ startsAt }, 'startsAt', 'endsAt'), { optional: true, placeholder: '2026-11-21 18:00', hint: 'Year-month-day and 24-hour time, like 2026-11-21 18:00. Empty starts right away.' })}
-      {field('endsAt', 'Ends', form.endsAt, endsAt => set({ endsAt }, 'endsAt'), { optional: true, placeholder: '2026-12-31 23:59', hint: locked ? 'Year-month-day and 24-hour time. Empty runs until you end it.' : 'Empty runs until you end it.' })}
-    </View>
+      {locked ? null : field('startsAt', 'Starts', form.startsAt, startsAt => set({ startsAt }, 'startsAt', 'endsAt'), { optional: true, picker: 'datetime-local', placeholder: '2026-11-21 18:00', hint: Platform.OS === 'web' ? 'Pick a date and time in India time. Empty starts right away.' : 'Year-month-day and 24-hour time, like 2026-11-21 18:00. Empty starts right away.' })}
+      {field('endsAt', 'Ends', form.endsAt, endsAt => set({ endsAt }, 'endsAt'), { optional: true, picker: 'datetime-local', min: endsMin, placeholder: '2026-12-31 23:59', hint: Platform.OS === 'web' ? 'Pick a date and time in India time. Empty runs until you end it.' : locked ? 'Year-month-day and 24-hour time. Empty runs until you end it.' : 'Year-month-day and 24-hour time. Empty runs until you end it.' })}
+    </View>}
 
-    {locked ? null : <View style={{ gap: 18 }}>
+    {locked || ended ? null : <View style={{ gap: 18 }}>
       {heading('Happy hour')}
       {switchRow('Happy hour window', 'Only on certain days, between two times', form.windowOn, windowOn => set({ windowOn }, 'window'))}
       {form.windowOn ? <>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          {field('windowFrom', 'From (24-hour)', form.windowFrom, windowFrom => set({ windowFrom }, 'window'), { placeholder: '15:00', flex: true })}
-          {field('windowTo', 'To (24-hour)', form.windowTo, windowTo => set({ windowTo }, 'window'), { placeholder: '18:00', flex: true })}
+          {field('windowFrom', 'From (24-hour)', form.windowFrom, windowFrom => set({ windowFrom }, 'window'), { placeholder: '15:00', picker: 'time', flex: true })}
+          {field('windowTo', 'To (24-hour)', form.windowTo, windowTo => set({ windowTo }, 'window'), { placeholder: '18:00', picker: 'time', flex: true })}
         </View>
         <View style={{ gap: 8 }}>
           <Text nativeID="offer-days-label" style={{ ...body(15), ...bold }}>Days</Text>
