@@ -70,9 +70,10 @@ export function CheckoutAddressSummary({ ctrl }: { ctrl: CheckoutAddresses }) {
     <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Delivery address</Text>
     {error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 22 }}>{error}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={ctrl.refresh} /></> : null}
     {addresses === null && !error ? <Text accessibilityRole="progressbar" style={muted}>Loading your saved addresses…</Text> : null}
+    {/* A customer with no saved address gets the add-address form right here (#187): same form, checks and location step as the dialog. */}
     {addresses && !addresses.length && !error ? <>
-      <MarketStatus kind="empty" title="No saved addresses yet" message="Add an address to deliver to. It is saved for next time, in both restaurant apps." />
-      <MarketButton label="Add a new address" onPress={() => { ctrl.open(); ctrl.setDialog('form'); }} />
+      <Text style={muted}>Add where we should deliver. It is saved for next time, in both restaurant apps.</Text>
+      <AddressForm inline editing={null} save={ctrl.saveNew} close={() => {}} />
     </> : null}
     {addresses?.length ? <>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
