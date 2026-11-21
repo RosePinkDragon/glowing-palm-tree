@@ -1155,6 +1155,7 @@ async function tracking47() {
       await ctx.route(origin + '/**', async route => {
         const url = new URL(route.request().url());
         const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/token') return json(session);
         if (url.pathname === '/auth/v1/user') return json(user);
         if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name: brandName, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: contactPhone });
