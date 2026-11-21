@@ -210,6 +210,7 @@ try {
       for (const label of ['10% off', '₹200', 'Code USED10', 'Yes', '6:00 pm to 10:30 pm, Mon, Wed, Fri']) await text(label).first().waitFor();
       assert.equal(await visible(page.getByRole('textbox')).count(), 2, 'only the name and the end date are editable');
       await input('Offer name').waitFor(); await input('Ends (optional)').waitFor(); await button('Pause offer').waitFor(); await targets(); await shot('form-locked-390');
+      const patchesBeforePast = log.patches.length; await input('Ends (optional)').fill('2020-01-01T00:00'); await button('Save changes').click(); await text('End must be in the future.').waitFor(); assert.equal(log.patches.length, patchesBeforePast, 'ending is the End action\'s job');
       await input('Offer name').fill('Used deal 2'); await input('Ends (optional)').fill('2027-01-01T00:00'); await button('Save changes').click(); await text('Offer saved.').waitFor();
       const lockedPatch = log.patches.at(-1);
       assert.deepEqual(lockedPatch.body, { name: 'Used deal 2', ends_at: '2026-12-31T18:30:00.000Z' }, 'only the name and end date are sent'); assert.deepEqual(Object.keys(lockedPatch.body).filter(key => termColumns.includes(key)), []);
@@ -283,11 +284,11 @@ try {
         const lp = london.page, lbutton = label => visible(lp.getByRole('button', { name: label, exact: true })), linput = label => visible(lp.getByLabel(label, { exact: true }));
         assert.equal(await lp.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone), 'Europe/London');
         await lbutton('Settings').click(); await lbutton('Offers').click(); await lbutton('New offer').click(); await visible(lp.getByRole('heading', { name: 'New offer' })).waitFor();
-        assert.equal(await linput('Starts (optional)').getAttribute('type'), 'datetime-local'); assert.equal(await linput('From (24-hour)').count(), 0);
+        assert.equal(await linput('Starts (optional)').getAttribute('type'), 'datetime-local'); assert.equal(await linput('From').count(), 0);
         await linput('Offer name').fill('Zone check'); await linput('Discount percent').fill('10');
         await linput('Starts (optional)').fill('2027-07-01T18:00'); await linput('Ends (optional)').fill('2027-07-02T09:30'); // July: London is on BST, an hour off UTC
         assert.equal(await lbutton('Clear starts').count(), 1); await visible(lp.getByRole('switch', { name: 'Happy hour window', exact: true })).click();
-        assert.equal(await linput('From (24-hour)').getAttribute('type'), 'time'); await linput('From (24-hour)').fill('22:00'); await linput('To (24-hour)').fill('02:00');
+        assert.equal(await linput('From').getAttribute('type'), 'time'); await linput('From').fill('22:00'); await linput('To').fill('02:00');
         await lbutton('Create offer').click(); await visible(lp.getByText('Offer created.', { exact: true })).waitFor();
         const zone = log.posts.at(-1);
         assert.equal(zone.starts_at, '2027-07-01T12:30:00.000Z', '18:00 India time, not 18:00 London'); assert.equal(zone.ends_at, '2027-07-02T04:00:00.000Z');
@@ -307,7 +308,7 @@ try {
       assert.ok(column <= 1280, 'the list stays inside the page');
       await row(/^Dinner code, Scheduled/).click(); await visible(page.getByRole('heading', { name: 'Edit offer' })).waitFor();
       await input('Offer name').waitFor(); await input('Offer code').waitFor(); await targets(); await noOverflow(); await shot('form-edit-1280');
-      assert.equal(await input('Offer code').inputValue(), 'DINNER50'); assert.equal(await input('Starts (optional)').inputValue(), '2026-12-01T18:00'); assert.equal(await input('From (24-hour)').inputValue(), '15:00');
+      assert.equal(await input('Offer code').inputValue(), 'DINNER50'); assert.equal(await input('Starts (optional)').inputValue(), '2026-12-01T18:00'); assert.equal(await input('From').inputValue(), '15:00');
       assert.equal(await visible(page.getByRole('button', { name: 'Saturday', exact: true })).getAttribute('aria-pressed'), 'false'); assert.equal(await visible(page.getByRole('button', { name: 'Friday', exact: true })).getAttribute('aria-pressed'), 'true');
       await button('Back').click();
       console.log(`PASS: ${slug} Offers (#182 B): error and empty states, percent offer with validation then valid, code offer with duplicate-code error, pause/resume/end with confirmation, locked terms on a used offer, stale version and lock race, 390px and 1280px layouts`);

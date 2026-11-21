@@ -113,7 +113,7 @@ const optionalWhole = (text: string) => text.trim() === '' ? null : whole(text);
 const optionalPaise = (text: string) => text.trim() === '' ? null : parseRupees(text) ?? NaN;
 
 /** Text in, a complete OfferInput out, or one plain message per invalid field. Nothing is sent while any field is invalid. */
-export function validateOfferForm(form: OfferForm, options: { creating?: boolean; now?: Date } = {}): { ok: true; input: OfferInput } | { ok: false; errors: OfferFormErrors } {
+export function validateOfferForm(form: OfferForm, options: { now?: Date } = {}): { ok: true; input: OfferInput } | { ok: false; errors: OfferFormErrors } {
   const errors: OfferFormErrors = {};
   const starts = parseIstInput(form.startsAt), ends = parseIstInput(form.endsAt);
   const code = form.code.trim().toUpperCase();
@@ -125,8 +125,8 @@ export function validateOfferForm(form: OfferForm, options: { creating?: boolean
     startsAt: starts.ok ? starts.iso : 'invalid', endsAt: ends.ok ? ends.iso : 'invalid',
     window: form.windowOn ? { from: form.windowFrom.trim(), to: form.windowTo.trim(), days: form.windowDays } : null,
   };
-  // A new offer that has already ended would never run: block it rather than save a dead offer.
-  const past = options.creating === true && ends.ok && ends.iso !== null && Date.parse(ends.iso) <= (options.now ?? new Date()).getTime();
+  // An end in the past would end the offer the moment it is saved (a new offer would never run): ending is the End action's job.
+  const past = ends.ok && ends.iso !== null && Date.parse(ends.iso) <= (options.now ?? new Date()).getTime();
   try { const input = validateOffer(candidate); return past ? { ok: false, errors: { endsAt: endInPastMessage } } : { ok: true, input }; }
   catch (error) {
     if (!(error instanceof OfferValidationError)) throw error;
@@ -137,11 +137,12 @@ export function validateOfferForm(form: OfferForm, options: { creating?: boolean
   }
 }
 /** The only fields an offer that has been used can still change. */
-export function validateLockedForm(form: Pick<OfferForm, 'name' | 'endsAt'>): { ok: true; patch: Required<OfferLockedPatch> } | { ok: false; errors: OfferFormErrors } {
+export function validateLockedForm(form: Pick<OfferForm, 'name' | 'endsAt'>, options: { now?: Date } = {}): { ok: true; patch: Required<OfferLockedPatch> } | { ok: false; errors: OfferFormErrors } {
   const errors: OfferFormErrors = {};
   const name = form.name.trim(), ends = parseIstInput(form.endsAt);
   if ([...name].length < 3 || [...name].length > 40 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) errors.name = 'Enter a name of 3 to 40 characters.';
   if (!ends.ok) errors.endsAt = dateHint;
+  else if (ends.iso !== null && Date.parse(ends.iso) <= (options.now ?? new Date()).getTime()) errors.endsAt = endInPastMessage;
   return Object.keys(errors).length || !ends.ok ? { ok: false, errors } : { ok: true, patch: { name, endsAt: ends.iso } };
 }
 /** Server field errors (field names are the service's) shown with the same plain wording. */

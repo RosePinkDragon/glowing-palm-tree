@@ -213,10 +213,17 @@ export interface OwnerOffer extends OfferInput {
   /** False when usage could not be read: counts are then 0, terms are not treated as locked, and the database decides (PT409). */
   usageKnown: boolean;
 }
+/** Is the daily window open at this instant, in India time? Same rule as the database (a window past midnight belongs to the day it starts on). */
+export function offerWindowOpen(window: OfferWindow | null, now: Date): boolean {
+  if (!window) return true;
+  const ist = new Date(now.getTime() + 330 * 60000), t = ist.getUTCHours() * 60 + ist.getUTCMinutes(), day = ist.getUTCDay() || 7, previous = day === 1 ? 7 : day - 1;
+  const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5)), from = minutes(window.from), to = minutes(window.to);
+  return from < to ? window.days.includes(day) && t >= from && t < to : (window.days.includes(day) && t >= from) || (window.days.includes(previous) && t < to);
+}
 /** One offer as it was applied to the orders of a day: from the orders' own offer snapshot, so it stays right after the offer changes or ends. */
 export interface DayOffer { offerId: string; name: string; code: string | null; kind: OfferKind; uses: number; givenPaise: number }
-/** `running` (today only) is the active offers with no use today, or null when they could not be read. */
-export interface DayOffers { dateISO: string; used: DayOffer[]; orderCount: number; totalGivenPaise: number; running: { id: string; name: string; code: string | null; kind: OfferKind }[] | null }
+/** `running` (today only) is the active offers with no use today, or null when they could not be read. `state` is honest about what is known: running now, active but outside its happy-hour window (see `window`), or active with a total limit whose remaining uses could not be checked. */
+export interface DayOffers { dateISO: string; used: DayOffer[]; orderCount: number; totalGivenPaise: number; running: { id: string; name: string; code: string | null; kind: OfferKind; state: 'running' | 'outside_window' | 'unconfirmed'; window: OfferWindow | null }[] | null }
 export type OfferField = 'name' | 'kind' | 'value' | 'maxDiscount' | 'minOrder' | 'applyMode' | 'code' | 'perCustomerLimit' | 'totalLimit' | 'startsAt' | 'endsAt' | 'window' | 'expectedVersion';
 export const offerFieldMessages: Record<OfferField, string> = {
   name: 'Enter a name of 3 to 40 characters.', kind: 'Choose percent off, flat off or free delivery.', value: 'Enter a percent from 1 to 90, or a flat amount from ₹1 to ₹1,000.',
@@ -1293,7 +1300,20 @@ export function createMarketServices(options: ServiceOptions) {
       const read = await db.from('offers').select(offerSelect).eq('business_id', business.id).eq('paused', false);
       if (!read.error && Array.isArray(read.data)) {
         const now = new Date();
-        try { running = read.data.map(row => mapOwnerOffer(row, 'unknown', now)).filter(offer => offer.status === 'active' && !groups.has(offer.id)).map(offer => ({ id: offer.id, name: offer.name, code: offer.code, kind: offer.kind })); } catch { running = null; }
+        try {
+          const candidates = read.data.map(row => mapOwnerOffer(row, 'unknown', now)).filter(offer => offer.status === 'active' && !groups.has(offer.id));
+          running = [];
+          for (const offer of candidates) {
+            // Usage was not read with the offers, so an offer with a total limit may be used up: check it, and say so honestly if that cannot be checked.
+            let state: 'running' | 'outside_window' | 'unconfirmed' = offerWindowOpen(offer.window, now) ? 'running' : 'outside_window';
+            if (offer.totalLimit !== null) {
+              const uses = await readOfferStats(db, business.id, offer.id).then(found => found.get(offer.id)?.uses ?? 0, () => null);
+              if (uses !== null && uses >= offer.totalLimit) continue;
+              if (uses === null && state === 'running') state = 'unconfirmed';
+            }
+            running.push({ id: offer.id, name: offer.name, code: offer.code, kind: offer.kind, state, window: offer.window });
+          }
+        } catch { running = null; }
       }
     } else running = [];
     return { dateISO, used, orderCount, totalGivenPaise, running };

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMarketServices, deriveOfferStatus, OfferValidationError, OwnerOfferError, ServiceError, validateOffer, validateOfferPatch, type OfferInput } from './index.ts';
+import { createMarketServices, deriveOfferStatus, offerWindowOpen, OfferValidationError, OwnerOfferError, ServiceError, validateOffer, validateOfferPatch, type OfferInput } from './index.ts';
 
 const offerId = '18200000-0000-4000-b000-0000000000b1';
 const otherId = '18200000-0000-4000-b000-0000000000b2';
@@ -312,4 +312,41 @@ test('getDayOffers totals a day from the orders\' own offer snapshots, and lists
     assert.deepEqual((await service.getDayOffers('2026-01-05')).used, []);
     await assert.rejects(service.getDayOffers('2026-02-30'), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_DATE');
   } finally { cleanup(); }
+});
+
+test('Today lists an offer as running only when it honestly is: used-up, out-of-window and unchecked offers are not', async () => {
+  const { service, state, cleanup } = await fixture();
+  try {
+    const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const clock = (offsetMinutes: number) => { const t = new Date(Date.now() + 330 * 60000 + offsetMinutes * 60000); return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}:00`; };
+    const id = (n: number) => `18200000-0000-4000-b000-0000000001${String(n).padStart(2, '0')}`;
+    const all = [1, 2, 3, 4, 5, 6, 7];
+    state.offers = [
+      row({ id: id(1), name: 'Plain', total_limit: null, window_from: null, window_to: null, window_days: null }),
+      row({ id: id(2), name: 'Used up', total_limit: 1, window_from: null, window_to: null, window_days: null }),
+      row({ id: id(3), name: 'Some left', total_limit: 5, window_from: null, window_to: null, window_days: null }),
+      row({ id: id(4), name: 'In window', total_limit: null, window_from: clock(-60), window_to: clock(60), window_days: all }),
+      row({ id: id(5), name: 'Later today', total_limit: null, window_from: clock(180), window_to: clock(240), window_days: all }),
+      row({ id: id(6), name: 'Cancelled use', total_limit: 1, window_from: null, window_to: null, window_days: null }),
+    ];
+    state.redemptions = [{ id: 'u1', offer_id: id(2), orders: { status: 'delivered', discount_paise: 100 } }, { id: 'u2', offer_id: id(6), orders: { status: 'cancelled', discount_paise: 100 } }, { id: 'u3', offer_id: id(3), orders: { status: 'placed', discount_paise: 100 } }];
+    let { running } = await service.getDayOffers(day);
+    assert.deepEqual(running?.map(r => [r.name, r.state]), [['Plain', 'running'], ['Some left', 'running'], ['In window', 'running'], ['Later today', 'outside_window'], ['Cancelled use', 'running']], 'used up is dropped; a cancelled order gave its use back');
+    assert.deepEqual(running?.find(r => r.name === 'Later today')?.window, { from: clock(180).slice(0, 5), to: clock(240).slice(0, 5), days: all });
+    // Usage that cannot be read is not guessed: limited offers are no longer called running.
+    state.statsFail = true;
+    ({ running } = await service.getDayOffers(day));
+    assert.deepEqual(running?.map(r => [r.name, r.state]), [['Plain', 'running'], ['Some left', 'unconfirmed'], ['In window', 'running'], ['Later today', 'outside_window'], ['Used up', 'unconfirmed'], ['Cancelled use', 'unconfirmed']].sort((a, b) => ['Plain', 'Used up', 'Some left', 'In window', 'Later today', 'Cancelled use'].indexOf(a[0]!) - ['Plain', 'Used up', 'Some left', 'In window', 'Later today', 'Cancelled use'].indexOf(b[0]!)));
+  } finally { cleanup(); }
+});
+
+test('the daily window is evaluated in India time, past midnight included', () => {
+  const at = (iso: string) => new Date(iso); // 2026-11-23 is a Monday in India
+  const evening = { from: '18:00', to: '22:30', days: [1] };
+  assert.equal(offerWindowOpen(null, at('2026-11-23T00:00:00Z')), true);
+  assert.equal(offerWindowOpen(evening, at('2026-11-23T12:30:00Z')), true, '18:00 IST Monday'); assert.equal(offerWindowOpen(evening, at('2026-11-23T12:29:00Z')), false);
+  assert.equal(offerWindowOpen(evening, at('2026-11-23T17:00:00Z')), false, '22:30 IST is the end'); assert.equal(offerWindowOpen(evening, at('2026-11-24T12:30:00Z')), false, 'Tuesday is not a window day');
+  const late = { from: '22:00', to: '02:00', days: [1] };
+  assert.equal(offerWindowOpen(late, at('2026-11-23T17:00:00Z')), true, '22:30 IST Monday'); assert.equal(offerWindowOpen(late, at('2026-11-23T20:00:00Z')), true, '01:30 IST Tuesday still belongs to Monday');
+  assert.equal(offerWindowOpen(late, at('2026-11-23T21:00:00Z')), false, '02:30 IST Tuesday'); assert.equal(offerWindowOpen(late, at('2026-11-23T05:00:00Z')), false, '10:30 IST Monday');
 });

@@ -63,11 +63,11 @@ test('every invalid field gets a plain message, and focus order starts at the fi
   assert.deepEqual(Object.keys(many).sort(), ['code', 'endsAt', 'minOrder', 'name', 'value']); assert.equal(firstOfferError(many), 'name'); assert.equal(firstOfferError({ endsAt: 'x', code: 'y' }), 'code'); assert.equal(firstOfferError({}), undefined);
 });
 
-test('a new offer cannot end in the past, but an existing one is not blocked here', () => {
+test('an end in the past is blocked on create and on edit', () => {
   const now = new Date('2026-11-20T12:00:00Z');
-  assert.deepEqual(validateOfferForm(form({ endsAt: '2026-11-20 17:00' }), { creating: true, now }), { ok: false, errors: { endsAt: 'End must be in the future.' } }, '17:00 IST is 11:30 UTC, already past');
-  assert.ok(validateOfferForm(form({ endsAt: '2026-11-20 18:00' }), { creating: true, now }).ok); assert.ok(validateOfferForm(form({ endsAt: '2026-11-20 17:00' }), { now }).ok);
-  assert.deepEqual(validateOfferForm(form({ name: '', endsAt: '2026-11-20 17:00' }), { creating: true, now }), { ok: false, errors: { name: 'Enter a name of 3 to 40 characters.', endsAt: 'End must be in the future.' } });
+  assert.deepEqual(validateOfferForm(form({ endsAt: '2026-11-20 17:00' }), { now }), { ok: false, errors: { endsAt: 'End must be in the future.' } }, '17:00 IST is 11:30 UTC, already past');
+  assert.ok(validateOfferForm(form({ endsAt: '2026-11-20 18:00' }), { now }).ok); assert.deepEqual(validateLockedForm({ name: 'Fine name', endsAt: '2026-11-20 17:00' }, { now }), { ok: false, errors: { endsAt: 'End must be in the future.' } }); assert.ok(validateLockedForm({ name: 'Fine name', endsAt: '2026-11-20 18:00' }, { now }).ok); assert.ok(validateLockedForm({ name: 'Fine name', endsAt: '' }, { now }).ok, 'no end is fine');
+  assert.deepEqual(validateOfferForm(form({ name: '', endsAt: '2026-11-20 17:00' }), { now }), { ok: false, errors: { name: 'Enter a name of 3 to 40 characters.', endsAt: 'End must be in the future.' } });
 });
 
 test('an offer round-trips through the form, and a used offer only edits name and end', () => {

@@ -6,7 +6,7 @@ import type { DailySummary } from '@market/core';
 import { MarketButton, MarketStatus, MarketText } from './components';
 import { MarketGroup, MarketRow, MarketSection } from './MarketList';
 import { MarketIcon } from './MarketIcons';
-import { dayOffersTotal } from './offers-model';
+import { dayOffersTotal, formatWindow } from './offers-model';
 import { MarketChip } from './MarketChips';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { useOwnerHorizontalPadding } from './OwnerShell';
@@ -107,7 +107,7 @@ function TodayOffers({ services, date, onOpenOffers }: { services: MarketService
     {offers ? <View style={{ gap: 12 }}>
       {offers.used.length || running.length ? <MarketGroup>
         {[...offers.used.map(offer => <MarketRow key={offer.offerId} title={offer.name} detail={`${offer.code ? `Code ${offer.code}` : 'Automatic'} · ${offer.uses} ${offer.uses === 1 ? 'use' : 'uses'} · ${rupees(offer.givenPaise)} given`} />),
-          ...running.map(offer => <MarketRow key={offer.id} title={offer.name} detail={`${offer.code ? `Code ${offer.code}` : 'Automatic'} · Running · no uses yet`} />)]}
+          ...running.map(offer => <MarketRow key={offer.id} title={offer.name} detail={`${offer.code ? `Code ${offer.code}` : 'Automatic'} · ${offer.state === 'running' ? 'Running · no uses yet' : offer.state === 'outside_window' && offer.window ? `Runs ${formatWindow(offer.window)}` : 'Active'}`} />)]}
       </MarketGroup> : null}
       {offers.used.length ? <Bold size={15}>{dayOffersTotal(offers.totalGivenPaise, offers.orderCount)}</Bold> : null}
       {!offers.used.length && !today ? <Text style={note}>No offers used on this day</Text> : null}

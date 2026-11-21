@@ -66,7 +66,7 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
       if (!checked.ok) { setErrors(checked.errors); focus(checked.errors); return; }
       setErrors({}); void run('save', () => services.updateOffer(offer.id, offer.version, checked.patch), 'Offer saved.'); return;
     }
-    const checked = validateOfferForm(form, { creating: !offer });
+    const checked = validateOfferForm(form);
     if (!checked.ok) { setErrors(checked.errors); focus(checked.errors); return; }
     setErrors({});
     void run('save', () => offer ? services.updateOffer(offer.id, offer.version, checked.input) : services.createOffer(checked.input), offer ? 'Offer saved.' : 'Offer created.');
@@ -116,7 +116,7 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
   // Ends cannot be before Starts, nor (for a new offer) in the past. Same IST wall-time format as the picker.
   const startsPicked = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(form.startsAt) ? form.startsAt.replace(' ', 'T') : '';
   const nowIst = istInput(new Date().toISOString()).replace(' ', 'T');
-  const endsMin = [startsPicked, offer ? '' : nowIst].sort().at(-1) || undefined;
+  const endsMin = [startsPicked, nowIst].sort().at(-1) || undefined;
   return <AccessiblePanel fullScreen owner title={offer ? 'Edit offer' : 'New offer'} subtitle={offer ? offer.name : undefined} closeDisabled={!!busy} onClose={() => { if (!busy) onClose(); }}
     footer={<>
       {problem ? <View role="alert" accessibilityRole="alert" style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: colors.warningTint }}>
@@ -174,8 +174,8 @@ export function OwnerOfferForm({ services, offer, onClose, onSaved, onReload }: 
       {switchRow('Happy hour window', 'Only on certain days, between two times', form.windowOn, windowOn => set({ windowOn }, 'window'))}
       {form.windowOn ? <>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          {field('windowFrom', 'From (24-hour)', form.windowFrom, windowFrom => set({ windowFrom }, 'window'), { placeholder: '15:00', picker: 'time', flex: true })}
-          {field('windowTo', 'To (24-hour)', form.windowTo, windowTo => set({ windowTo }, 'window'), { placeholder: '18:00', picker: 'time', flex: true })}
+          {field('windowFrom', Platform.OS === 'web' ? 'From' : 'From (24-hour)', form.windowFrom, windowFrom => set({ windowFrom }, 'window'), { placeholder: '15:00', picker: 'time', flex: true })}
+          {field('windowTo', Platform.OS === 'web' ? 'To' : 'To (24-hour)', form.windowTo, windowTo => set({ windowTo }, 'window'), { placeholder: '18:00', picker: 'time', flex: true })}
         </View>
         <View style={{ gap: 8 }}>
           <Text nativeID="offer-days-label" style={{ ...body(15), ...bold }}>Days</Text>
