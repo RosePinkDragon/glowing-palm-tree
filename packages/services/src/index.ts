@@ -192,6 +192,153 @@ export function offerError(reason: unknown, extra: { shortfallPaise?: unknown; r
   return new OfferError('OFFER_NOT_ELIGIBLE', known, detail);
 }
 
+// ---- Owner offers (#182 slice B) -------------------------------------------------------------------------------------
+export type OfferApplyMode = 'automatic' | 'code';
+/** Derived, never stored. An ended offer wins over everything, then used up, then paused, then scheduled. */
+export type OfferStatus = 'scheduled' | 'active' | 'paused' | 'ended' | 'used_up';
+/** A daily happy-hour window in Asia/Kolkata. `from` and `to` are "HH:MM"; `from` later than `to` runs past midnight. Days are ISO weekdays: 1 = Monday ... 7 = Sunday. */
+export interface OfferWindow { from: string; to: string; days: number[] }
+/** What an owner sets. `value` is a whole percent for `percent`, paise for `flat` and null for `free_delivery`. Money is paise; times are ISO instants. */
+export interface OfferInput {
+  name: string; kind: OfferKind; value: number | null; maxDiscountPaise: number | null; minOrderPaise: number;
+  applyMode: OfferApplyMode; code: string | null; firstOrderOnly: boolean; perCustomerLimit: number | null; totalLimit: number | null;
+  startsAt: string | null; endsAt: string | null; window: OfferWindow | null;
+}
+/** Only these two stay editable once an offer has been used. */
+export type OfferLockedPatch = Partial<Pick<OfferInput, 'name' | 'endsAt'>>;
+/** An offer as the owner sees it. `useCount` and `discountGivenPaise` count non-cancelled orders only; `termsLocked` is true once ANY redemption exists, even on a since-cancelled order, because that is what the database locks on. */
+export interface OwnerOffer extends OfferInput {
+  id: string; version: number; paused: boolean; createdAt: string;
+  status: OfferStatus; useCount: number; discountGivenPaise: number; termsLocked: boolean;
+  /** False when usage could not be read: counts are then 0, terms are not treated as locked, and the database decides (PT409). */
+  usageKnown: boolean;
+}
+/** Is the daily window open at this instant, in India time? Same rule as the database (a window past midnight belongs to the day it starts on). */
+export function offerWindowOpen(window: OfferWindow | null, now: Date): boolean {
+  if (!window) return true;
+  const ist = new Date(now.getTime() + 330 * 60000), t = ist.getUTCHours() * 60 + ist.getUTCMinutes(), day = ist.getUTCDay() || 7, previous = day === 1 ? 7 : day - 1;
+  const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5)), from = minutes(window.from), to = minutes(window.to);
+  return from < to ? window.days.includes(day) && t >= from && t < to : (window.days.includes(day) && t >= from) || (window.days.includes(previous) && t < to);
+}
+/** One offer as it was applied to the orders of a day: from the orders' own offer snapshot, so it stays right after the offer changes or ends. */
+export interface DayOffer { offerId: string; name: string; code: string | null; kind: OfferKind; uses: number; givenPaise: number }
+/** `running` (today only) is the active offers with no use today, or null when they could not be read. `state` is honest about what is known: running now, active but outside its happy-hour window (see `window`), or active with a total limit whose remaining uses could not be checked. */
+export interface DayOffers { dateISO: string; used: DayOffer[]; orderCount: number; totalGivenPaise: number; running: { id: string; name: string; code: string | null; kind: OfferKind; state: 'running' | 'outside_window' | 'unconfirmed'; window: OfferWindow | null }[] | null }
+export type OfferField = 'name' | 'kind' | 'value' | 'maxDiscount' | 'minOrder' | 'applyMode' | 'code' | 'perCustomerLimit' | 'totalLimit' | 'startsAt' | 'endsAt' | 'window' | 'expectedVersion';
+export const offerFieldMessages: Record<OfferField, string> = {
+  name: 'Enter a name of 3 to 40 characters.', kind: 'Choose percent off, flat off or free delivery.', value: 'Enter a percent from 1 to 90, or a flat amount from ₹1 to ₹1,000.',
+  maxDiscount: 'Enter a maximum discount from ₹1 to ₹1,000, for percent offers only.', minOrder: 'Enter a minimum order from ₹0 to ₹10,000.', applyMode: 'Choose automatic or code.',
+  code: 'Enter a code of 4 to 15 letters and numbers, and only for offers applied by code.', perCustomerLimit: 'Enter a limit from 1 to 99.', totalLimit: 'Enter a limit from 1 to 100,000.',
+  startsAt: 'Enter a valid start date and time.', endsAt: 'The end must be after the start.', window: 'Choose a from and to time that differ, and at least one day.', expectedVersion: 'Reload the offer before saving.',
+};
+export class OfferValidationError extends ServiceError {
+  readonly fields: Partial<Record<OfferField, string>>;
+  constructor(fields: Partial<Record<OfferField, string>>) { super('INVALID_OFFER', 'Check the highlighted offer fields.'); this.name = 'OfferValidationError'; this.fields = fields; }
+}
+export type OwnerOfferErrorCode = 'OFFER_LOCKED' | 'OFFER_STALE' | 'OFFER_CODE_TAKEN' | 'OFFER_MISSING';
+const ownerOfferMessages: Record<OwnerOfferErrorCode, string> = {
+  OFFER_LOCKED: 'Terms are locked once an offer has been used. End it and create a new one to change them.',
+  OFFER_STALE: 'Another owner changed this offer. Reload to see the latest.',
+  OFFER_CODE_TAKEN: 'Another active or scheduled offer already uses this code.',
+  OFFER_MISSING: 'This offer no longer exists, or you no longer have access to it.',
+};
+/** Owner write failures with stable codes; the wording is fixed here (server text is never shown). */
+export class OwnerOfferError extends ServiceError {
+  constructor(code: OwnerOfferErrorCode, cause?: unknown) { super(code, ownerOfferMessages[code], cause); this.name = 'OwnerOfferError'; }
+}
+const offerKinds: ReadonlySet<string> = new Set(['percent', 'flat', 'free_delivery']);
+const clockPattern = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
+const instant = (v: unknown): number | null => typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
+const nameProblem = (v: unknown) => typeof v !== 'string' || [...v.trim()].length < 3 || [...v.trim()].length > 40 || /[\u0000-\u001f\u007f-\u009f]/.test(v);
+
+/** Mirrors the table's check constraints, so a bad value is caught before it is sent. The database stays the authority. */
+export function validateOffer(input: OfferInput): OfferInput {
+  const f: Partial<Record<OfferField, string>> = {};
+  const int = (v: unknown, min: number, max: number) => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
+  const optionalInt = (v: unknown, min: number, max: number) => v === null || int(v, min, max);
+  if (nameProblem(input?.name)) f.name = offerFieldMessages.name;
+  if (!offerKinds.has(input?.kind)) f.kind = offerFieldMessages.kind;
+  else if (input.kind === 'percent' ? !int(input.value, 1, 90) : input.kind === 'flat' ? !int(input.value, 100, 100000) : input.value !== null) f.value = offerFieldMessages.value;
+  if (input?.maxDiscountPaise !== null && (input?.kind !== 'percent' || !int(input.maxDiscountPaise, 100, 100000))) f.maxDiscount = offerFieldMessages.maxDiscount;
+  if (!int(input?.minOrderPaise, 0, 1000000)) f.minOrder = offerFieldMessages.minOrder;
+  const code = typeof input?.code === 'string' ? input.code.trim().toUpperCase() : null;
+  if (input?.applyMode !== 'automatic' && input?.applyMode !== 'code') f.applyMode = offerFieldMessages.applyMode;
+  else if (input.applyMode === 'code' ? !code || !/^[A-Z0-9]{4,15}$/.test(code) : input.code !== null) f.code = offerFieldMessages.code;
+  if (!optionalInt(input?.perCustomerLimit, 1, 99)) f.perCustomerLimit = offerFieldMessages.perCustomerLimit;
+  if (!optionalInt(input?.totalLimit, 1, 100000)) f.totalLimit = offerFieldMessages.totalLimit;
+  const starts = input?.startsAt === null ? null : instant(input?.startsAt), ends = input?.endsAt === null ? null : instant(input?.endsAt);
+  if (starts === null && input?.startsAt !== null) f.startsAt = offerFieldMessages.startsAt;
+  if (ends === null && input?.endsAt !== null) f.endsAt = 'Enter a valid end date and time.';
+  else if (starts !== null && ends !== null && ends <= starts) f.endsAt = offerFieldMessages.endsAt;
+  const w = input?.window;
+  const days = w ? [...new Set(w.days)].sort((a, b) => a - b) : [];
+  if (w !== null && (!w || typeof w !== 'object' || !clockPattern.test(w.from) || !clockPattern.test(w.to) || w.from === w.to || !Array.isArray(w.days) || !days.length || days.some(d => !int(d, 1, 7)))) f.window = offerFieldMessages.window;
+  if (Object.keys(f).length) throw new OfferValidationError(f);
+  return { name: input.name.trim(), kind: input.kind, value: input.value, maxDiscountPaise: input.maxDiscountPaise, minOrderPaise: input.minOrderPaise, applyMode: input.applyMode, code: input.applyMode === 'code' ? code : null,
+    firstOrderOnly: input.firstOrderOnly === true, perCustomerLimit: input.perCustomerLimit, totalLimit: input.totalLimit, startsAt: starts === null ? null : new Date(starts).toISOString(), endsAt: ends === null ? null : new Date(ends).toISOString(),
+    window: w ? { from: w.from, to: w.to, days } : null };
+}
+/** A patch is either every term (an offer nobody has used yet) or only the name and end date (which stay editable). */
+export function validateOfferPatch(patch: OfferInput | OfferLockedPatch): OfferInput | OfferLockedPatch {
+  if (!patch || typeof patch !== 'object') throw new OfferValidationError({ name: offerFieldMessages.name });
+  const keys = Object.keys(patch).filter(key => (patch as Record<string, unknown>)[key] !== undefined);
+  if (keys.some(key => key !== 'name' && key !== 'endsAt')) return validateOffer(patch as OfferInput);
+  const f: Partial<Record<OfferField, string>> = {}, out: OfferLockedPatch = {};
+  if (keys.includes('name')) { if (nameProblem(patch.name)) f.name = offerFieldMessages.name; else out.name = (patch.name as string).trim(); }
+  if (keys.includes('endsAt')) {
+    const ends = patch.endsAt === null ? null : instant(patch.endsAt);
+    if (ends === null && patch.endsAt !== null) f.endsAt = 'Enter a valid end date and time.'; else out.endsAt = ends === null ? null : new Date(ends).toISOString();
+  }
+  if (!keys.length) f.name = offerFieldMessages.name;
+  if (Object.keys(f).length) throw new OfferValidationError(f);
+  return out;
+}
+/** Status from the stored terms and the number of non-cancelled uses, as the database evaluates them. */
+export function deriveOfferStatus(offer: { paused: boolean; startsAt: string | null; endsAt: string | null; totalLimit: number | null }, useCount: number, now: Date = new Date()): OfferStatus {
+  const t = now.getTime();
+  if (offer.endsAt !== null && Date.parse(offer.endsAt) <= t) return 'ended';
+  if (offer.totalLimit !== null && useCount >= offer.totalLimit) return 'used_up';
+  if (offer.paused) return 'paused';
+  if (offer.startsAt !== null && Date.parse(offer.startsAt) > t) return 'scheduled';
+  return 'active';
+}
+const offerSelect = 'id, business_id, name, kind, value, max_discount_paise, min_order_paise, apply_mode, code, first_order_only, per_customer_limit, total_limit, starts_at, ends_at, window_from, window_to, window_days, paused, created_at, version';
+const offerColumns = (v: OfferInput) => ({ name: v.name, kind: v.kind, value: v.value, max_discount_paise: v.maxDiscountPaise, min_order_paise: v.minOrderPaise, apply_mode: v.applyMode, code: v.code,
+  first_order_only: v.firstOrderOnly, per_customer_limit: v.perCustomerLimit, total_limit: v.totalLimit, starts_at: v.startsAt, ends_at: v.endsAt, window_from: v.window?.from ?? null, window_to: v.window?.to ?? null, window_days: v.window?.days ?? null });
+const offerConstraintFields: Record<string, OfferField> = { offer_name_valid: 'name', offer_kind_valid: 'kind', offer_value_valid: 'value', offer_max_discount_valid: 'maxDiscount', offer_min_order_valid: 'minOrder', offer_apply_mode_valid: 'applyMode',
+  offer_code_valid: 'code', offer_per_customer_limit_valid: 'perCustomerLimit', offer_total_limit_valid: 'totalLimit', offer_dates_valid: 'endsAt', offer_window_complete: 'window', offer_window_valid: 'window' };
+type OfferRow = Record<string, unknown>;
+function mapOwnerOffer(value: unknown, stat: { uses: number; given: number; redeemed: number } | undefined | 'unknown', now: Date): OwnerOffer {
+  const bad = () => { throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid offer.'); };
+  const row = value as OfferRow | null;
+  const nullableInt = (v: unknown) => v === null || Number.isSafeInteger(v);
+  const time = (v: unknown) => v === null ? null : typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : bad() as never;
+  if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !orderIdPattern.test(row.id) || typeof row.name !== 'string' || typeof row.kind !== 'string' || !offerKinds.has(row.kind) || !nullableInt(row.value) || !nullableInt(row.max_discount_paise) ||
+      !Number.isSafeInteger(row.min_order_paise) || (row.apply_mode !== 'automatic' && row.apply_mode !== 'code') || !(row.code === null || typeof row.code === 'string') || typeof row.first_order_only !== 'boolean' || !nullableInt(row.per_customer_limit) ||
+      !nullableInt(row.total_limit) || typeof row.paused !== 'boolean' || !Number.isSafeInteger(row.version) || (row.version as number) < 1 || typeof row.created_at !== 'string') return bad();
+  const clock = (v: unknown) => typeof v === 'string' && /^\d\d:\d\d/.test(v) ? v.slice(0, 5) : bad() as never;
+  const days = row.window_days;
+  const window = row.window_from === null || row.window_from === undefined ? null : { from: clock(row.window_from), to: clock(row.window_to), days: Array.isArray(days) && days.every(d => Number.isSafeInteger(d)) ? [...days as number[]].sort((a, b) => a - b) : bad() as never };
+  const base = { name: row.name, kind: row.kind as OfferKind, value: row.value as number | null, maxDiscountPaise: row.max_discount_paise as number | null, minOrderPaise: row.min_order_paise as number, applyMode: row.apply_mode as OfferApplyMode,
+    code: row.code as string | null, firstOrderOnly: row.first_order_only, perCustomerLimit: row.per_customer_limit as number | null, totalLimit: row.total_limit as number | null, startsAt: time(row.starts_at), endsAt: time(row.ends_at), window };
+  const usage = stat === 'unknown' ? undefined : stat, uses = usage?.uses ?? 0;
+  return { ...base, id: row.id, version: row.version as number, paused: row.paused, createdAt: new Date(row.created_at).toISOString(), status: deriveOfferStatus({ ...base, paused: row.paused }, uses, now), useCount: uses, discountGivenPaise: usage?.given ?? 0, termsLocked: (usage?.redeemed ?? 0) > 0, usageKnown: stat !== 'unknown' };
+}
+/** Map a failed offer write to a typed error with a stable code (check violations become field errors). */
+function offerWriteError(error: { message: string; code?: string; details?: string | null }): never {
+  if (error.code === 'PT409' && error.details === 'OFFER_LOCKED') throw new OwnerOfferError('OFFER_LOCKED', error);
+  if (error.code === '23505') throw new OwnerOfferError('OFFER_CODE_TAKEN', error);
+  if (error.code === '23514') {
+    const constraint = /constraint "([a-z_]+)"/.exec(`${error.message} ${error.details ?? ''}`)?.[1];
+    const field = constraint ? offerConstraintFields[constraint] : undefined;
+    throw field ? new OfferValidationError({ [field]: offerFieldMessages[field] }) : new ServiceError('INVALID_OFFER', 'Check the offer and try again.', error);
+  }
+  if (error.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before changing offers.', error);
+  fail(error, 'Could not save the offer');
+  throw new ServiceError('BACKEND_ERROR', 'Could not save the offer.', error);
+}
+const offerRetryable = (error: { code?: string } | null) => error?.code === '40P01' || error?.code === '40001';
+
 /** Only constructed after validating an explicit transactional no-order response. */
 export class PricingChangedError extends ServiceError {
   readonly pricing: PricingTerms;
@@ -1085,6 +1232,144 @@ export function createMarketServices(options: ServiceOptions) {
         ? { offerId: nudge.offer_id, name: nudge.name, kind: nudge.kind, value: typeof nudge.value === 'number' ? nudge.value : null, shortfallPaise: nudge.shortfall_paise as number } : null,
     };
   };
+  // ---- Owner offers (#182 slice B). Offers are never deleted: there is no delete method, and DELETE is revoked in the database.
+  // Every write below changes exactly ONE offer per statement (a bulk UPDATE could be chosen as a deadlock victim), and retries once on 40P01 or 40001.
+  type OfferDb = SupabaseClient;
+  /** Uses and discount come from offer_redemptions joined to the order; a cancelled order gives its use back but still locks the terms. Keyset-paged so a concurrent redemption cannot skip or repeat a row. */
+  const readOfferStats = async (db: OfferDb, businessId: string, offerId?: string) => {
+    const stats = new Map<string, { uses: number; given: number; redeemed: number }>();
+    let after: string | null = null;
+    for (let page = 0; page < 200; page++) {
+      let query = db.from('offer_redemptions').select('id, offer_id, orders!offer_redemptions_order_fk(status, discount_paise)').eq('business_id', businessId);
+      if (offerId) query = query.eq('offer_id', offerId);
+      if (after) query = query.gt('id', after);
+      const { data, error } = await query.order('id').limit(1000);
+      fail(error, 'Could not load offer usage');
+      if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
+      for (const row of data as { id: string; offer_id: string; orders: { status: string; discount_paise: number } | { status: string; discount_paise: number }[] | null }[]) {
+        const order = Array.isArray(row.orders) ? row.orders[0] : row.orders;
+        if (typeof row.id !== 'string' || typeof row.offer_id !== 'string' || !order || typeof order.status !== 'string' || !Number.isSafeInteger(order.discount_paise)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
+        const stat = stats.get(row.offer_id) ?? { uses: 0, given: 0, redeemed: 0 };
+        stat.redeemed++;
+        if (order.status !== 'cancelled') { stat.uses++; stat.given += order.discount_paise; }
+        stats.set(row.offer_id, stat);
+        after = row.id;
+      }
+      if (data.length === 0) return stats;
+    }
+    throw new ServiceError('OFFERS_TOO_LARGE', 'There are too many redemptions to total here. Ask your developer for a report.');
+  };
+  const listOffers = async (): Promise<OwnerOffer[]> => {
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const { data, error } = await db.from('offers').select(offerSelect).eq('business_id', business.id).order('created_at', { ascending: false }).order('id');
+    fail(error, 'Could not load offers');
+    if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offers.');
+    // Usage is a nice-to-have: if it cannot be read (or is too large to total here) the offers still list, without counts, and owners can still pause, resume and end them.
+    const stats = await readOfferStats(db, business.id).catch(() => 'unknown' as const);
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your offers.');
+    const now = new Date();
+    return data.map(row => mapOwnerOffer(row, stats === 'unknown' ? stats : stats.get((row as { id: string }).id), now));
+  };
+  /** Offers applied on one India-time day, from non-cancelled orders' own snapshots (no migration, no live offers table), plus, for today, the active offers not used yet. */
+  const getDayOffers = async (dateISO: string): Promise<DayOffers> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO) || new Date(`${dateISO}T00:00:00Z`).toISOString().slice(0, 10) !== dateISO) throw new ServiceError('INVALID_DATE', 'Choose a valid day.');
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const start = new Date(Date.parse(`${dateISO}T00:00:00Z`) - 330 * 60000), end = new Date(start.getTime() + 86400000);
+    const groups = new Map<string, DayOffer>();
+    let orderCount = 0, totalGivenPaise = 0, after: string | null = null, done = false;
+    for (let page = 0; page < 50 && !done; page++) {
+      let query = db.from('orders').select('id, offer_id, offer_name, offer_code, offer_kind, discount_paise').eq('business_id', business.id).not('offer_id', 'is', null).neq('status', 'cancelled').gte('created_at', start.toISOString()).lt('created_at', end.toISOString());
+      if (after) query = query.gt('id', after);
+      const { data, error } = await query.order('id').limit(1000);
+      fail(error, 'Could not load the day\'s offers');
+      if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid orders.');
+      if (data.length === 0) done = true;
+      for (const order of data as { id: string; offer_id: string; offer_name: string; offer_code: string | null; offer_kind: string; discount_paise: number }[]) {
+        if (typeof order.id !== 'string' || typeof order.offer_id !== 'string' || typeof order.offer_name !== 'string' || !offerKinds.has(order.offer_kind) || !Number.isSafeInteger(order.discount_paise)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid orders.');
+        const group = groups.get(order.offer_id) ?? { offerId: order.offer_id, name: order.offer_name, code: order.offer_code ?? null, kind: order.offer_kind as OfferKind, uses: 0, givenPaise: 0 };
+        group.uses++; group.givenPaise += order.discount_paise; groups.set(order.offer_id, group); orderCount++; totalGivenPaise += order.discount_paise; after = order.id;
+      }
+    }
+    if (!done) throw new ServiceError('OFFERS_TOO_LARGE', 'There are too many orders to total here.');
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload the day.');
+    const used = [...groups.values()].sort((a, b) => b.givenPaise - a.givenPaise || b.uses - a.uses || a.name.localeCompare(b.name));
+    let running: DayOffers['running'] = null;
+    if (dateISO === new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) {
+      const read = await db.from('offers').select(offerSelect).eq('business_id', business.id).eq('paused', false);
+      if (!read.error && Array.isArray(read.data)) {
+        const now = new Date();
+        try {
+          const candidates = read.data.map(row => mapOwnerOffer(row, 'unknown', now)).filter(offer => offer.status === 'active' && !groups.has(offer.id));
+          running = [];
+          for (const offer of candidates) {
+            // Usage was not read with the offers, so an offer with a total limit may be used up: check it, and say so honestly if that cannot be checked.
+            let state: 'running' | 'outside_window' | 'unconfirmed' = offerWindowOpen(offer.window, now) ? 'running' : 'outside_window';
+            if (offer.totalLimit !== null) {
+              const uses = await readOfferStats(db, business.id, offer.id).then(found => found.get(offer.id)?.uses ?? 0, () => null);
+              if (uses !== null && uses >= offer.totalLimit) continue;
+              if (uses === null && state === 'running') state = 'unconfirmed';
+            }
+            running.push({ id: offer.id, name: offer.name, code: offer.code, kind: offer.kind, state, window: offer.window });
+          }
+        } catch { running = null; }
+      }
+    } else running = [];
+    return { dateISO, used, orderCount, totalGivenPaise, running };
+  };
+  const reloadOffer = async (db: OfferDb, businessId: string, row: unknown): Promise<OwnerOffer> => {
+    // The write has already committed: reading usage afterwards is best effort and can never turn it into an error.
+    const id = (row as { id?: unknown } | null)?.id;
+    const stats = typeof id === 'string' ? await readOfferStats(db, businessId, id).then(found => found.get(id), () => 'unknown' as const) : undefined;
+    return mapOwnerOffer(row, stats, new Date());
+  };
+  const createOffer = async (input: OfferInput): Promise<OwnerOffer> => {
+    const valid = validateOffer(input);
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const write = () => db.from('offers').insert({ business_id: business.id, ...offerColumns(valid), paused: false }).select(offerSelect).single();
+    let result = await write();
+    if (offerRetryable(result.error)) result = await write();
+    if (result.error) { if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your offers to check what was saved.'); offerWriteError(result.error); }
+    // A new offer has no redemptions, so there is nothing to read back.
+    return mapOwnerOffer(result.data, undefined, new Date());
+  };
+  /** One offer, one statement, guarded by the version the owner loaded. No row back means the version moved (stale) or the offer is gone. */
+  const patchOffer = async (id: string, expectedVersion: number, columns: Record<string, unknown>): Promise<OwnerOffer> => {
+    if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new OfferValidationError({ expectedVersion: offerFieldMessages.expectedVersion });
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= 2147483647) throw new OfferValidationError({ expectedVersion: offerFieldMessages.expectedVersion });
+    const db = requireClient(), started = generation;
+    const business = await requireAdminBusiness();
+    const write = () => db.from('offers').update(columns).eq('id', id).eq('business_id', business.id).eq('version', expectedVersion).select(offerSelect);
+    let result = await write();
+    if (offerRetryable(result.error)) result = await write();
+    if (result.error) { if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your offers to check what was saved.'); offerWriteError(result.error); }
+    if (!Array.isArray(result.data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid offer.');
+    if (result.data.length === 0) {
+      const { data, error } = await db.from('offers').select('id').eq('id', id).eq('business_id', business.id).maybeSingle();
+      fail(error, 'Could not check the offer');
+      throw new OwnerOfferError(data ? 'OFFER_STALE' : 'OFFER_MISSING');
+    }
+    if (result.data.length !== 1) throw new ServiceError('INVALID_RESPONSE', 'The server changed more than one offer.');
+    return reloadOffer(db, business.id, result.data[0]);
+  };
+  /** Change every term (an offer nobody has used) or only the name and end date (always allowed). */
+  const updateOffer = async (id: string, expectedVersion: number, patch: OfferInput | OfferLockedPatch): Promise<OwnerOffer> => {
+    const valid = validateOfferPatch(patch);
+    const full = 'kind' in valid;
+    return patchOffer(id, expectedVersion, full ? offerColumns(valid as OfferInput) : { ...('name' in valid ? { name: valid.name } : {}), ...('endsAt' in valid ? { ends_at: valid.endsAt } : {}) });
+  };
+  const pauseOffer = (id: string, expectedVersion: number) => patchOffer(id, expectedVersion, { paused: true });
+  const resumeOffer = (id: string, expectedVersion: number) => patchOffer(id, expectedVersion, { paused: false });
+  /** Ends it now by the database's own clock ('now'), so a phone with a wrong clock cannot leave it running. An offer that has not started yet is cleared of its start too, since an end cannot come before a start. */
+  const endOffer = async (id: string, expectedVersion: number): Promise<OwnerOffer> => {
+    try { return await patchOffer(id, expectedVersion, { ends_at: 'now' }); }
+    catch (error) {
+      if (error instanceof OfferValidationError && error.fields.endsAt) return patchOffer(id, expectedVersion, { ends_at: 'now', starts_at: null });
+      throw error;
+    }
+  };
   const placeOrder = async (input: PlaceOrderInput): Promise<Order> => {
     const db = requireClient();
     if (input.lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
@@ -1229,7 +1514,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

@@ -75,7 +75,7 @@ function OwnerNameSection({ services, saved, onSaved }: { services: Market['serv
 
 // Owners' Settings (owners' screen p. 10). Restaurant details (#60) opens its screen; Owners (#59) and the
 // ring and test-alert controls (#54) are announced as coming soon and are not interactive.
-export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Market; onOpenRestaurantDetails?: () => void }) {
+export function OwnerSettings({ market, onOpenRestaurantDetails, onOpenOffers }: { market?: Market; onOpenRestaurantDetails?: () => void; onOpenOffers?: () => void }) {
   const { colors, name } = useMarketTheme();
   const fonts = useMarketFonts();
   // undefined while loading, so the card never flashes the contact before the name arrives.
@@ -128,6 +128,9 @@ export function OwnerSettings({ market, onOpenRestaurantDetails }: { market?: Ma
           <MarketRow roomy title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={<MarketIcon name="chevronRight" color={colors.muted} />} />
         </Pressable>
         : <MarketRow roomy title="Restaurant details" detail="Phone numbers, delivery fee, minimum order" end={soon} />}
+      {onOpenOffers ? <Pressable accessibilityRole="button" accessibilityLabel="Offers" accessibilityHint="Discounts and codes for customers" onPress={onOpenOffers} style={({ pressed }) => ({ backgroundColor: pressed ? colors.tint : 'transparent' })}>
+          <MarketRow roomy title="Offers" detail="Discounts and codes for customers" end={<MarketIcon name="chevronRight" color={colors.muted} />} />
+        </Pressable> : null}
       <MarketRow roomy title="Owners" detail={`Who can manage ${name}`} end={soon} />
     </MarketGroup>
     <MarketGroup inset title="New order alerts on this phone">
