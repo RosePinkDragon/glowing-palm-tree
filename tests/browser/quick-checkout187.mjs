@@ -164,7 +164,7 @@ async function run(slug, brand, { demo = false } = {}) {
     await field('Name').fill('Meera Joshi');
     // Tapping Place order here says so, takes the customer to Retry (not the picker, not a dead end) and places nothing.
     await button('Choose a delivery address').click(); await text('We couldn\'t load your addresses. Retry.').waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Retry addresses', 'Retry is focused');
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Retry addresses', null, { timeout: 5000 }); // Retry is focused
     assert.equal(await visible(page.getByRole('radiogroup', { name: 'Saved addresses' })).count(), 0, 'no picker opened'); assert.equal(await field('House, flat or floor').count(), 0);
     // 8. The list loads with zero addresses: now the form is inline, typed details and the cart are kept.
     listFails = false; await button('Retry addresses').click(); await field('House, flat or floor').waitFor();
@@ -174,7 +174,7 @@ async function run(slug, brand, { demo = false } = {}) {
     await shot('inline-address-390');
     // Place order with no address focuses the form's first empty field, and Save address clears the pinned bar when scrolled into place.
     await button('Add a delivery address').click(); await text('Add a delivery address first.').waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'House, flat or floor', 'the first empty field is focused');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'House, flat or floor', null, { timeout: 5000 }); // the first empty field is focused
     const gap = await page.evaluate(() => {
       const bar = Array.from(document.querySelectorAll('[role="button"]')).find(el => el.textContent === 'Add a delivery address').parentElement.getBoundingClientRect();
       document.getElementById('checkout-address-form').scrollIntoView({ block: 'end' });
