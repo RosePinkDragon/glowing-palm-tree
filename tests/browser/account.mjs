@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn } from './otp-login.mjs';
 
 // Actual exports → installed SDK → deterministic scoped HTTP fixture → drawer/detail.
@@ -367,6 +368,7 @@ try {
         assert.equal(url.origin, api, 'no third-party requests without consent');
         let heldOrderResponse = false;
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: heldOrderResponse ? { 'x-fixture-held-order': 'yes', 'access-control-expose-headers': 'x-fixture-held-order' } : undefined, body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/token') return json(fixture.authSession ?? session);
         if (url.pathname === '/auth/v1/user') return json(fixture.authSession?.user ?? user);
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });

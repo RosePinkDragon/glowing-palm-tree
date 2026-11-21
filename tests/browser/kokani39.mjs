@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { assertDishSheet, backdropCloseDishSheet, closeDishSheet } from './dish-sheet.mjs';
 
 // #39 slice 3: Kokani Dine Inn menu (signature carousel on the dark header, text a la carte list with dotted price leaders).
@@ -40,6 +41,7 @@ const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
       if (url.origin === server.url) return route.fallback();
       assert.equal(url.origin, api, 'no unconfigured third-party calls');
       const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname.startsWith('/storage/v1/object/public/menu-images/')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: photo });
       if (url.pathname === '/rest/v1/businesses') return json(business);
       if (url.pathname === '/rest/v1/menu_items') return json(fixtureMenu);

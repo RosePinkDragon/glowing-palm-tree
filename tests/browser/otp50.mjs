@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 
 // #50-B customer phone and code screens, both brands, against the real exports and the installed Supabase SDK.
 // GoTrue (/auth/v1/otp, /auth/v1/verify) is mocked; no Turnstile site key is set in this build, so CAPTCHA is skipped.
@@ -33,6 +34,7 @@ try {
         if (url.hostname === '127.0.0.1') return route.fallback();
         if (url.origin !== api) { fixture.external.push(url.href); return route.abort(); }
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         const reply = r => r ? json(r.body, r.status) : json({});
         const item = { id: '50d00000-0000-4000-8000-000000000001', name: 'OTP fixture meal', description: 'Synthetic', category_id: '50d00000-0000-4000-8000-000000000002', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
         if (url.pathname === '/auth/v1/otp') { fixture.otp.push(request.postDataJSON()); return reply(fixture.otpReply); }
