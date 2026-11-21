@@ -3,11 +3,11 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { BusinessSlug, CartLine, MenuItem, Order } from '@market/core';
 import { cartKey, CartReviewRequiredError, CustomerCartStore, importCart, reconcileCart, type CartLock } from './cart-state';
-
-const emptyDetails = { name: '', phone: '' };
+import { activeContact, chooseMode, editActive, emptyContact, emptyRecipient, ownNameKey, parseOwnName, prefillOwn, restoreDelivery, serializeOwnName, type Contact, type RecipientMode, type RecipientState } from './recipient-model';
 
 /** The draft has its own key and lifecycle; submitted checkout snapshots are separate. */
-export function useCustomerCart(businessId: BusinessSlug, userId: string | null, authReady: boolean, identityVersion: number, menu: MenuItem[], catalogReady: boolean) {
+/** `prefill` is off on the demo menu, which must not read or store anyone's contact details (#187). */
+export function useCustomerCart(businessId: BusinessSlug, userId: string | null, authReady: boolean, identityVersion: number, menu: MenuItem[], catalogReady: boolean, prefill: { enabled: boolean; phone: string | null | undefined } = { enabled: false, phone: null }) {
   const store = useMemo(() => {
     const lock: CartLock | undefined = Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.locks
       ? (key, work) => navigator.locks.request(key, work) : undefined;
@@ -22,17 +22,35 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
   const activeMenu = freshCatalog?.base === menu && freshCatalog.identityVersion === identityVersion && freshCatalog.userId === userId ? freshCatalog.menu : menu;
   const previousIdentity = useRef({ userId, identityVersion });
   const leavingIdentity = previousIdentity.current.userId !== null && (previousIdentity.current.userId !== userId || previousIdentity.current.identityVersion !== identityVersion);
-  const [details, setDetails] = useState<{ name: string; phone: string }>(emptyDetails);
+  // Who the order is for and their details (#187). `live` is the latest state, so a late async prefill reads what was just typed.
+  const [recipient, setRecipientState] = useState<RecipientState>(emptyRecipient), live = useRef<RecipientState>(emptyRecipient), prefillRun = useRef(0);
+  live.current = recipient;
+  const update = useCallback((change: (state: RecipientState) => RecipientState) => { const next = change(live.current); live.current = next; setRecipientState(next); }, []);
+  const setDetails = useCallback((next: Contact) => update(state => editActive(state, next)), [update]);
+  const setMode = useCallback((mode: RecipientMode) => update(state => chooseMode(state, mode)), [update]);
+  const restoreRecipient = useCallback((delivery: Contact) => update(state => restoreDelivery(state, delivery)), [update]);
+  const clearDetails = () => { prefillRun.current++; live.current = emptyRecipient; setRecipientState(emptyRecipient); };
   const [receiptState, setReceiptState] = useState<{ userId: string | null; order: Order | null }>({ userId, order: null });
   const setReceipt = (order: Order | null) => setReceiptState({ userId, order });
 
   useEffect(() => { if (authReady) void store.setIdentity(userId, identityVersion).catch(() => {}); }, [store, userId, authReady, identityVersion]);
   useEffect(() => {
     if (previousIdentity.current.userId !== null && (previousIdentity.current.userId !== userId || previousIdentity.current.identityVersion !== identityVersion)) {
-      setReceiptState({ userId, order: null }); setDetails(emptyDetails);
+      setReceiptState({ userId, order: null }); clearDetails();
     }
     previousIdentity.current = { userId, identityVersion };
   }, [userId, identityVersion]);
+  // Fill the account holder's own Mobile (the verified login number) and Name (remembered on this device) without ever overwriting typing.
+  const sessionPhone = prefill.phone;
+  useEffect(() => {
+    const run = ++prefillRun.current;
+    if (!prefill.enabled || !authReady || !userId) return;
+    update(state => prefillOwn(state, null, sessionPhone));
+    AsyncStorage.getItem(ownNameKey(userId)).then(raw => parseOwnName(raw), () => null).then(name => {
+      if (prefillRun.current !== run || currentIdentity.current.userId !== userId || currentIdentity.current.identityVersion !== identityVersion) return;
+      update(state => prefillOwn(state, name, sessionPhone));
+    });
+  }, [userId, authReady, identityVersion, prefill.enabled, sessionPhone, update]);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onStorage = (event: StorageEvent) => { if (event.key === null || event.key === cartKey(businessId)) void store.refresh().catch(() => {}); };
@@ -76,14 +94,21 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     setFreshCatalog({ base: menu, menu: options.menu, identityVersion: started.identityVersion, userId: started.userId });
   }, [store, menu, businessId]);
   const clearForSignOut = () => {
-    setReceiptState({ userId: null, order: null }); setDetails(emptyDetails);
+    setReceiptState({ userId: null, order: null }); clearDetails();
     // Do not hold signing out hostage to storage or a lock in another window.
     void store.reset().catch(() => {});
   };
+  /** After an order placed as "Me": keep only the customer's own name for next time. Best effort; never blocks or fails the order. */
+  // This is device-only for now; it moves to the shared profile when #45 is built.
+  const rememberOwnName = async (forUser: string, name: string) => {
+    if (!prefill.enabled) return;
+    try { await AsyncStorage.setItem(ownNameKey(forUser), serializeOwnName(name)); } catch { /* the next order simply asks for the name again */ }
+  };
   return {
     cart, menu: activeMenu, setCart, changeCart, importLines, ready, saving: snapshot.saving, cartError: snapshot.error,
-    retryCart: store.refresh, resetCart: store.reset, clearForSignOut,
-    details: leavingIdentity ? emptyDetails : details, setDetails,
+    retryCart: store.refresh, resetCart: store.reset, clearForSignOut, rememberOwnName,
+    details: leavingIdentity ? emptyContact : activeContact(recipient), setDetails,
+    recipient: leavingIdentity ? { ...emptyRecipient, setMode, own: emptyContact } : { ...recipient, setMode }, restoreRecipient,
     receipt: userId && receiptState.userId === userId ? receiptState.order : null, setReceipt,
   };
 }

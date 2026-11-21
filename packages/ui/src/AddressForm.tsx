@@ -13,7 +13,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
  * Add or edit one saved address (#48). The delivery pin comes from the phone's location for now
  * (map pin and place search are #49); saving is blocked until a pin is set.
  */
-export function AddressForm({ editing, save, close }: { editing: SavedAddress | null; save: (draft: AddressDraft) => Promise<void>; close: () => void }) {
+export function AddressForm({ editing, save, close, inline = false }: { editing: SavedAddress | null; save: (draft: AddressDraft) => Promise<void>; close: () => void; /** Render in place (the cart's first-address card, #187) instead of as a full-screen panel. Same fields, checks and location step. */ inline?: boolean }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const [form, setForm] = useState<FormState>(editing ? formFromAddress(editing) : emptyAddressForm);
@@ -42,11 +42,11 @@ export function AddressForm({ editing, save, close }: { editing: SavedAddress | 
   };
   const pinText = form.location ? (form.location.source === 'gps' ? 'Delivery pin set from your phone\'s location.' : 'Delivery pin is set on the map.') : 'No delivery pin yet.';
   const locationProblem = locationError || errors.location;
-  return <AccessiblePanel fullScreen title={editing ? 'Edit address' : 'Add address'} onClose={close} closeDisabled={saving}
-    footer={<>
+  const footer = <>
       {saveError ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 22 }}>{saveError}</Text> : null}
       <MarketButton label={saving ? 'Saving…' : 'Save address'} disabled={saving || locating} onPress={() => void submit()} />
-    </>}>
+    </>;
+  const body = <>
     <Pressable accessibilityRole="button" accessibilityLabel="Use my current location" accessibilityState={{ disabled: locating, busy: locating }} disabled={locating} onPress={() => void locate()}
       style={({ pressed }) => ({ minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: locationProblem ? colors.danger : colors.border, backgroundColor: colors.surface, opacity: locating ? 0.6 : pressed ? 0.85 : 1 })}>
       <MarketIcon name="locate" color={colors.primary} size={22} />
@@ -66,5 +66,7 @@ export function AddressForm({ editing, save, close }: { editing: SavedAddress | 
       </View>
     </View>
     {form.label === 'other' ? <MarketField label="Name this address (optional)" placeholder="e.g. Aai's place" value={form.customLabel} maxLength={40} error={errors.customLabel} onChangeText={customLabel => set({ customLabel })} /> : null}
-  </AccessiblePanel>;
+  </>;
+  if (inline) return <View style={{ gap: 14 }}>{body}{footer}</View>;
+  return <AccessiblePanel fullScreen title={editing ? 'Edit address' : 'Add address'} onClose={close} closeDisabled={saving} footer={footer}>{body}</AccessiblePanel>;
 }
