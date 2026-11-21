@@ -52,7 +52,10 @@ test('delivery validation trims fields and normalizes Indian mobile numbers', ()
     name: 'Neha', phone: '+919876543210', addressLine: '12 Main Street, Pune',
   });
   assert.deepEqual(validateDeliveryDetails({ name: 'Aarav', phone: '9876543210', addressLine: 'Flat 4, Park Road' }).phone, '+919876543210');
-  assert.throws(() => validateDeliveryDetails({ name: 'A', phone: '12345', addressLine: 'Short' }), (error: unknown) => {
+  assert.equal(validateDeliveryDetails({ name: ' A ', phone: '9876543210', addressLine: 'Flat 4, Park Road' }).name, 'A', 'one trimmed character is a valid name (#187, matches #45 and place_order)');
+  assert.equal(validateDeliveryDetails({ name: 'N'.repeat(120), phone: '9876543210', addressLine: 'Flat 4, Park Road' }).name.length, 120);
+  for (const name of ['', '   ', 'N'.repeat(121)]) assert.throws(() => validateDeliveryDetails({ name, phone: '9876543210', addressLine: 'Flat 4, Park Road' }), (error: unknown) => error instanceof DomainValidationError && Object.keys(error.fields).join() === 'name', JSON.stringify(name.length));
+  assert.throws(() => validateDeliveryDetails({ name: ' ', phone: '12345', addressLine: 'Short' }), (error: unknown) => {
     assert.ok(error instanceof DomainValidationError);
     assert.deepEqual(Object.keys(error.fields).sort(), ['addressLine', 'name', 'phone']);
     return true;

@@ -32,6 +32,6 @@
     "react-native": "0.88.1"
   },
   "scripts": {
-    "test": "node --import ../services/src/test-loader.mjs --test --test-isolation=none src/checkout-state.test.ts src/address-model.test.ts src/admin-model.test.ts src/cart-state.test.ts src/menu-model.test.ts src/order-history.test.ts src/support-model.test.ts src/owner-navigation.test.ts src/brand-logos.test.ts src/today-model.test.ts src/theme-tokens.test.ts src/restaurant-details-model.test.ts src/owner-name-model.test.ts src/notification-inbox.test.ts src/offer-model.test.ts"
+    "test": "node --import ../services/src/test-loader.mjs --test --test-isolation=none src/checkout-state.test.ts src/address-model.test.ts src/admin-model.test.ts src/cart-state.test.ts src/menu-model.test.ts src/order-history.test.ts src/support-model.test.ts src/owner-navigation.test.ts src/brand-logos.test.ts src/today-model.test.ts src/theme-tokens.test.ts src/restaurant-details-model.test.ts src/owner-name-model.test.ts src/notification-inbox.test.ts src/offers-model.test.ts src/offer-model.test.ts"
   }
 }

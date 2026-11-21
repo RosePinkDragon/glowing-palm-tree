@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 
 // #60 owners' Restaurant details screen, through each built brand's real admin and customer exports.
 // Installed SDK, synthetic HTTP only; the realtime socket is answered with empty joins.
@@ -40,6 +41,7 @@ try {
         if ([admin.url, customer.url].includes(origin)) return route.fallback();
         assert.equal(origin, api, 'no unconfigured third-party requests');
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(new URL(request.url()), json); if (offerMock) return offerMock;
         if (path === '/auth/v1/token') return json(session(user));
         if (path === '/auth/v1/user') return json(user);
         if (path === '/rest/v1/businesses') { assert.equal(request.method(), 'GET', 'owners never update business columns directly'); return json(business); }

@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, setCartItemQuantity, type BusinessSlug, type CartLine, type LocationFix, type MenuItem, type Order, type SavedAddress } from '@market/core';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
-import { CheckoutAddressDialogs, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
+import { CheckoutAddressDialogs, focusAddressStep, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
 import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, phoneFixTimeoutMs, validateContact, withTimeout, type OrderConfirmation } from './checkout-model';
 import { MarketFontsProvider, useMarketTheme } from './theme';
 import { useBrandFonts } from './brand-fonts';
@@ -56,7 +56,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   useEffect(() => { setSelectedDish(null); }, [businessId, market.identityVersion]);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null); const viewportListener = useRef<((viewport: MenuViewport) => void) | null>(null);
   const navigation = useRef<{ go: (path: string) => void; login: (next: string) => void } | null>(null);
-  const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading);
+  const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
+  const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading, { enabled: !demo && !!market.business && !market.loading, phone: market.session?.user.phone });
   const currentDish = selectedDish && sameIdentity(selectedDish.identity, market.identity.current) ? draft.menu.find(item => item.id === selectedDish.id) : undefined;
   const [reorder, setReorder] = useState<{ order: Order; restoreFocus: () => void; identity: typeof market.identity.current } | null>(null);
   const [cartMessage, setCartMessage] = useState('');
@@ -68,7 +69,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const currentReorder = reorder && sameIdentity(reorder.identity, market.identity.current) ? reorder : null;
   const { cart, setCart, details, setDetails, receipt, setReceipt } = draft;
   const [busy, setBusy] = useState(false); const [localError, setLocalError] = useState('');
-  const sending = useRef(false), placeTrigger = useRef<HTMLElement | null>(null);
+  const sending = useRef(false), placedAsMe = useRef(false), placeTrigger = useRef<HTMLElement | null>(null);
   const [confirming, setConfirming] = useState<{ address: SavedAddress; fix: LocationFix | null; confirmation: Exclude<OrderConfirmation, { kind: 'direct' }>; totalPaise: number } | null>(null);
   // A sheet quotes the total it was opened with: if the cart changes while it is open, close it so a stale total is never confirmed.
   const cartSignature = JSON.stringify([market.business?.deliveryFeePaise, market.business?.minOrderPaise, cart.map(line => [line.item.id, line.quantity, line.item.pricePaise])]);
@@ -85,7 +86,6 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     window.addEventListener('storage', changed);
     return () => window.removeEventListener('storage', changed);
   }, [businessId]);
-  const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
   // Addresses are only read once there is something to order; the top bar shows the selected one from then on.
   const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady && cart.length > 0);
   const refused = !!closedRefusal && closedRefusal.business === market.business && sameIdentity(closedRefusal.identity, market.identity.current);
@@ -114,6 +114,10 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       const order = await traced('checkout_submit', () => market.services.placeOrder(orderInput(saved)));
       if (!sameIdentity(started, market.identity.current)) return;
       market.preferences.fireOnce('order_completed', order.id);
+      // Only the account holder's own name is remembered, and only when this order was placed as "Me"; a recipient is never stored.
+      const remember = placedAsMe.current; placedAsMe.current = false;
+      if (remember) void draft.rememberOwnName(saved.userId, saved.delivery.name); // best effort; it never delays the receipt
+      if (!sameIdentity(started, market.identity.current)) return;
       setReceipt(order); await draft.resetCart(); if (!sameIdentity(started, market.identity.current)) return; navigation.current?.go(`/orders/${order.id}`);
       try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); }
       catch { setLocalError('Your order was confirmed, but this device could not clear its saved attempt. Retry recovery before placing another order.'); }
@@ -151,7 +155,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
         if (closed) setClosedRefusal({ business: ordering.current.business, identity: started });
-        try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; setDetails({ name: saved.delivery.name, phone: saved.delivery.phone });
+        try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; draft.restoreRecipient(saved.delivery);
           if (changed) addrs.refresh();
           if (outside) { addrs.select(null); addrs.refresh(); }
           setLocalError(closed ? '' : changed ? addressChangedMessage : outside ? outsideAreaMessage : `${messageOf(e)} Please check your details and try again.`); if (closed) market.load(); } }
@@ -180,9 +184,11 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   };
   const submit = (address: SavedAddress, fix: LocationFix | null) => guarded(async () => {
     const { userId, contact, pricing, offerCode } = validateOrder();
+    const asMe = draft.recipient.mode === 'me';
     const result = await prepareAttempt(AsyncStorage, businessId, () => { requireOrdering(); return freezeAttempt({ businessId, userId, idempotencyKey: Crypto.randomUUID(), lines: cart, pricing, offerCode, delivery: contact, savedAddress: { id: address.id, version: address.version }, location: fix }); });
     market.setAttempt(result.attempt);
     if (result.existing) { setLocalError('An earlier order needs confirmation. Retry its recovery before placing another order.'); return; }
+    placedAsMe.current = asMe;
     await send(result.attempt);
   });
   const checkout = async () => {
@@ -190,7 +196,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!market.session) { navigation.current?.login('/cart'); setLocalError('Sign in before placing your order. Your cart will stay here.'); return; }
     const address = addrs.selected;
     placeTrigger.current = capturePanelFocus();
-    if (!address) { setLocalError(addrs.addresses?.length ? 'Choose a delivery address first.' : 'Add a delivery address first.'); addrs.open(); return; }
+    if (!address) {
+      // A failed list also reads as [] in useCheckoutAddresses, so tell "none saved" from "could not load" (#187).
+      const none = addrs.addresses?.length === 0 && !addrs.error;
+      if (addrs.error) { setLocalError('We couldn\'t load your addresses. Retry.'); setTimeout(() => focusAddressStep('retry'), 0); }
+      else if (none) { setLocalError('Add a delivery address first.'); setTimeout(() => focusAddressStep('form'), 0); }
+      else { setLocalError('Choose a delivery address first.'); addrs.open(); }
+      return;
+    }
     sending.current = true; setBusy(true); setLocalError('');
     let next: { fix: LocationFix | null; confirmation: OrderConfirmation; totalPaise: number } | null = null;
     try {
@@ -226,7 +239,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!current) return;
     await setCart(revisedLines(current));
     if (!sameIdentity(current.identity, market.identity.current)) return;
-    setRevision(null); setDetails({ name: current.original.delivery.name, phone: current.original.delivery.phone });
+    setRevision(null); draft.restoreRecipient(current.original.delivery);
     if (current.original.savedAddress) addrs.select(current.original.savedAddress.id);
   }); };
   const retry = () => { void guarded(async () => {
@@ -275,8 +288,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Menu' && !demo && !market.session && market.authReady ? <OfferBanner offers={offers.active} /> : null}
     {page === 'Menu' ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <MenuBody variant={menuLayout} facts={facts} businessId={businessId} {...menuProps} bleed={edge} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} />) : null}
     {page === 'Cart' ? <CartPage demo={demo} cartMessage={cartMessage} ready={draft.ready} cartError={draft.cartError} cart={cart} locked={locked} orderingAllowed={orderingAllowed} hasUnavailable={unavailable}
-      subtotalPaise={subtotal} deliveryFeePaise={fee} minOrderPaise={minOrder} discountPaise={billing.discountPaise} details={details} setDetails={setDetails} addrs={addrs}
-      placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? 'Choose a delivery address' : 'Place order'}
+      subtotalPaise={subtotal} deliveryFeePaise={fee} minOrderPaise={minOrder} discountPaise={billing.discountPaise} details={details} setDetails={setDetails} recipient={draft.recipient} addrs={addrs}
+      placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? addrs.addresses?.length === 0 && !addrs.error ? 'Add a delivery address' : 'Choose a delivery address' : 'Place order'}
       offerSlot={demo ? null : <CartOffer signedIn={signedIn} offers={offers.active} pricing={offers.quote?.pricing ?? null} nudge={offers.quote?.nudge ?? null} code={offers.code} message={offers.message} applying={offers.applying} disabled={locked || busy}
         onApply={code => void offers.apply(code)} onRemove={offers.remove} onSignIn={() => navigation.current?.login('/cart')} />}
       placeDisabled={busy || locked || offers.pending || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}

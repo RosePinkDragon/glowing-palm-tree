@@ -220,7 +220,7 @@ export function validateDeliveryDetails(input: DeliveryDetails): DeliveryDetails
   const addressLine = input.addressLine.trim();
   const digits = input.phone.replace(/\s/g, '').replace(/^\+91/, '');
   const fields: DomainFieldErrors = {};
-  if (name.length < 2 || name.length > 80) fields.name = 'Enter a name from 2 to 80 characters.';
+  if (name.length < 1 || name.length > 120) fields.name = 'Enter a name from 1 to 120 characters.';
   if (!/^\+?\d+$/.test(input.phone.replace(/\s/g, '')) || !/^[6-9]\d{9}$/.test(digits)) {
     fields.phone = 'Enter a valid 10-digit Indian mobile number.';
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn, ownerOtpSignIn } from './otp-login.mjs';
 import { assertDishSheet } from './dish-sheet.mjs';
 
@@ -64,6 +65,7 @@ try {
       if ([customer.url, owner.url].includes(url.origin)) return route.fallback();
       if (url.origin !== origin) { external.push(url.href); return route.abort(); }
       const json = (data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname === '/auth/v1/token') return json(session);
       if (url.pathname === '/auth/v1/user') return json(user);
       if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name: brand ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });

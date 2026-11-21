@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn } from './otp-login.mjs';
 
 const fixture = 'https://market-fixture.supabase.co';
@@ -78,6 +79,7 @@ try {
     if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
     if (url.pathname === '/rest/v1/businesses') return json(businesses.find(b => url.searchParams.get('slug') === `eq.${b.slug}`));
     if (url.pathname === '/rest/v1/menu_items') return json(menus[ids.indexOf(url.searchParams.get('business_id')?.replace('eq.', ''))]);
+    const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
     if (url.pathname === '/rest/v1/rpc/list_addresses') return json([{ id: '48200000-0000-4000-8000-000000000001', label: 'home', custom_label: null, house: 'Flat 3', street_area: 'Bharne Naka', landmark: null, latitude: 0.5, longitude: 0.5, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 1200 }]);
     if (url.pathname === '/rest/v1/orders') {
       if (url.searchParams.has('id') && orderLoadFails) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Synthetic saved-order load failure' }) });
@@ -93,8 +95,6 @@ try {
       return json({ outcome: 'placed', id: pricingOrder.id });
     }
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
-    if (url.pathname === '/rest/v1/rpc/list_active_offers') return json([]); // #182: no offers here
-    if (url.pathname === '/rest/v1/rpc/quote_order') return json({ outcome: 'quoted', pricing: null, offer_error: null, nudge: null }); // #182: an unusable quote, so the cart prices itself
     if (url.pathname === '/rest/v1/customer_businesses') return json([]);
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });

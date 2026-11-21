@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { assertDishSheet, closeDishSheet } from './dish-sheet.mjs';
 
 // #39 slice 2: Ammu Sammu photo-grid menu (search, Today's special, add -> stepper, category chips) plus a Kokani sanity pass (its menu is tested in kokani39.mjs).
@@ -39,6 +40,7 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       if (url.origin === server.url) return route.fallback();
       assert.equal(url.origin, api, 'no unconfigured third-party calls');
       const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname.startsWith('/storage/v1/object/public/menu-images/')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: photo });
       if (url.pathname === '/rest/v1/businesses') return json(business);
       if (url.pathname === '/rest/v1/menu_items') return json(fixtureMenu);

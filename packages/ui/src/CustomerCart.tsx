@@ -1,8 +1,10 @@
 import { useRef, type ComponentRef } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, removeCartItem, setCartItemQuantity, MAX_QUANTITY, type CartLine } from '@market/core';
-import { MarketButton, MarketField, MarketStatus } from './components';
+import { MarketButton, MarketStatus } from './components';
+import { CheckoutRecipient } from './CheckoutRecipient';
 import { CheckoutAddressSummary, type CheckoutAddresses } from './CheckoutAddress';
+import type { RecipientMode } from './recipient-model';
 import { DietMark } from './DietMark';
 import { MarketIcon } from './MarketIcons';
 import { ReorderNotice } from './ReorderPanel';
@@ -21,7 +23,7 @@ export type CartPageProps = {
   subtotalPaise: number; deliveryFeePaise: number; minOrderPaise: number;
   /** #182: what the server's offer takes off, and the offer row (CartOffer) shown above the bill. */
   discountPaise?: number; offerSlot?: React.ReactNode;
-  details: { name: string; phone: string }; setDetails: (details: { name: string; phone: string }) => void;
+  details: { name: string; phone: string }; setDetails: (details: { name: string; phone: string }) => void; recipient: { mode: RecipientMode; setMode: (mode: RecipientMode) => void };
   addrs: CheckoutAddresses; placeLabel: string; placeDisabled: boolean; localError: string;
   change: (fn: (lines: CartLine[]) => CartLine[], adding?: boolean) => void; onPlace: () => void; onBrowse: () => void;
 };
@@ -111,11 +113,7 @@ export function CartPage(p: CartPageProps) {
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}
     {!p.ready && !p.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : empty ? <MarketStatus kind="empty" title="Your cart is empty" message="Explore the menu to get started." /> : <>
       <CheckoutAddressSummary ctrl={p.addrs} />
-      <Card>
-        <Eyebrow>Delivery details</Eyebrow>
-        <MarketField label="Name" value={p.details.name} editable={!p.locked} onChangeText={value => p.setDetails({ ...p.details, name: value })} />
-        <MarketField label="Mobile number" value={p.details.phone} editable={!p.locked} keyboardType="phone-pad" onChangeText={value => p.setDetails({ ...p.details, phone: value })} />
-      </Card>
+      <CheckoutRecipient mode={p.recipient.mode} setMode={p.recipient.setMode} details={p.details} setDetails={p.setDetails} locked={p.locked} />
       <Card gap={14}>
         <Eyebrow>{voice === 'we' ? 'Dishes' : 'Your items'}</Eyebrow>
         {p.cart.map((line, index) => <View key={line.item.id} style={{ borderTopWidth: index ? 1 : 0, borderTopColor: colors.border, paddingTop: index ? 14 : 0 }}>
