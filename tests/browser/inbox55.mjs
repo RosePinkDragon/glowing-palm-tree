@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 
 // #55 notifications inbox: list, paging, unread -> read, badge, empty, error + retry, signed out; both brands.
 // Real customer exports and the installed SDK, with deterministic synthetic RPC responses.
@@ -55,6 +56,7 @@ try {
         if (url.origin === server.url) return route.fallback();
         assert.equal(url.origin, api, 'no third-party requests');
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/token') return json(session);
         if (url.pathname === '/auth/v1/user') return json(user);
         if (url.pathname === '/rest/v1/businesses') return json(business);

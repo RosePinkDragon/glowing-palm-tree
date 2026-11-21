@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn } from './otp-login.mjs';
 
 // Real customer exports and installed SDK; synthetic HTTP/Phoenix fixtures only.
@@ -47,6 +48,7 @@ try {
       if (url.origin === server.url) return route.fallback();
       assert.equal(url.origin, api, 'no unconfigured third-party calls');
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname === '/auth/v1/token') return json(session);
       if (url.pathname === '/auth/v1/user') return json(user);
       if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn } from './otp-login.mjs';
 
 // #52 customer screen slice: "Leave [restaurant]" in Account settings, in both brands. Real customer exports and the
@@ -51,6 +52,7 @@ try {
       if (url.hostname === '127.0.0.1') return route.fallback();
       assert.equal(url.origin, api, 'no third-party requests');
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       const rpc = url.pathname.replace('/rest/v1/rpc/', ''), method = request.method();
       if (url.pathname === '/auth/v1/token') return json(session);
       if (url.pathname === '/auth/v1/user') return json(user);
