@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { ownerOtpSignIn } from './otp-login.mjs';
 
 // Installed SDK and real owner/customer exports, with synthetic HTTP/Phoenix only.
@@ -54,6 +55,7 @@ try {
         if ([admin.url, customer.url].includes(url.origin)) return route.fallback();
         assert.equal(url.origin, api, 'no unconfigured third-party requests');
         const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/token') { const input = request.postDataJSON(); return json(session(users.find(value => value.email === input.email || value.id === input.refresh_token) ?? users[0])); }
         if (url.pathname === '/auth/v1/user') return json(users.find(value => value.id === who) ?? users[0]);
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });

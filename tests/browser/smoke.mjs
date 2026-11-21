@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn, ownerOtpSignIn } from './otp-login.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
@@ -62,6 +63,7 @@ await context.route('**/*', async route => {
 await context.route(origin + '/**', async route => {
   const req = route.request(), url = new URL(req.url());
   const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+  const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
   if (url.pathname === '/auth/v1/token') return json(session);
   if (url.pathname === '/auth/v1/user') return json(user);
   if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
@@ -419,6 +421,7 @@ const prepareCart = async (page, add = true) => {
         if (url.hostname === '127.0.0.1') return route.fallback();
         if (url.origin !== origin) throw new Error('Unexpected diet fixture external request: ' + url.href);
         const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/user') return json(activeUser);
         if (url.pathname === '/auth/v1/token') { activeUser = request.postDataJSON().email === otherUser.email ? otherUser : user; return json(sessionFor(activeUser)); }
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
@@ -1152,6 +1155,7 @@ async function tracking47() {
       await ctx.route(origin + '/**', async route => {
         const url = new URL(route.request().url());
         const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/token') return json(session);
         if (url.pathname === '/auth/v1/user') return json(user);
         if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name: brandName, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true, contact_phone: contactPhone });

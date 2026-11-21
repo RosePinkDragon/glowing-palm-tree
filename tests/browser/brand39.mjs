@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 
 // #39 slice 1: first-launch welcome -> dismissed for good -> branded top bar, for both restaurants. Synthetic fixtures only.
 // Set SHOTS_DIR to also write screenshots.
@@ -37,6 +38,7 @@ try {
         if (url.origin === server.url) return route.fallback();
         assert.equal(url.origin, api, 'no unconfigured third-party calls');
         const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+        const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
         if (url.pathname === '/auth/v1/user') return json(user);
         if (url.pathname === '/rest/v1/businesses') return json(business);
         if (url.pathname === '/rest/v1/menu_items') return json([item]);
