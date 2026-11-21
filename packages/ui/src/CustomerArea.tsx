@@ -36,8 +36,7 @@ import { CustomerAddresses } from './CustomerAddresses';
 import { CustomerNotifications } from './CustomerNotifications';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { CartPage } from './CustomerCart';
-import { CartOffer, OfferBanner } from './CartOffer';
-import { useOfferQuote } from './useOfferQuote';
+import { CartOffer, OfferBanner, useOfferQuote } from './CartOffer';
 import { billTotals, quoteSignature, quotedOffer } from './offer-model';
 
 const money = formatINRFromPaise;
