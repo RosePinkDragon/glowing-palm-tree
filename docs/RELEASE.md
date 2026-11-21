@@ -536,3 +536,16 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
 - `orders.offer_id` is a composite foreign key `(business_id, offer_id)` to `offers (business_id, id)`, so an order can only name an offer
   of its own restaurant.
 - Offer tables are not in any Realtime publication. `tests/database/offers.sql` and `offers-races.sh` cover the above.
+
+### Offers, owners' app (#182, slice B)
+
+Screens and services only: no migration, no customer screens, no dish-level offers. Owners reach **Offers** from Settings.
+
+- `listOffers` reads the restaurant's `offers` and keyset-pages `offer_redemptions` joined to each order (RLS applies, so only an owner sees them). Uses and
+  "given" count non-cancelled orders only. Terms are shown locked once ANY redemption exists, even on a since-cancelled order, because that is what the
+  trigger locks on. Status is derived as ended, used up, paused, scheduled, active, in that order.
+- Writes (`createOffer`, `updateOffer`, `pauseOffer`, `resumeOffer`, `endOffer`) each touch exactly one offer per statement, are guarded by `version = expectedVersion`
+  (no row back is `OFFER_STALE`, or `OFFER_MISSING` if the offer is gone), and retry once on 40P01 or 40001. There is no delete method; DELETE is revoked.
+- Error codes: a check violation becomes an `OfferValidationError` with the field named by the constraint; PT409 `OFFER_LOCKED` is `OFFER_LOCKED`; 23505 is `OFFER_CODE_TAKEN`.
+- Ending sends `ends_at = 'now'`, so the database clock decides, not the phone's. An offer that has not started also has its start cleared, since an end cannot precede it.
+- Times are typed and shown in India time (`YYYY-MM-DD HH:MM`). `tests/browser/owner-offers182.mjs` runs in the `inbox-leave` shard.
