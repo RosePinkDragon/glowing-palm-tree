@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { addressLine, addressTitle, businesses, type AddressDraft, type SavedAddress } from '@market/core';
 import { MarketButton, MarketStatus } from './components';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
@@ -50,6 +50,20 @@ export function useCheckoutAddresses(market: Market, enabled: boolean) {
   return { enabled, addresses, error, selected, selectedId, dialog, notice, open, close, setDialog, saveNew, select: setSelectedId, refresh: () => setReload(value => value + 1) };
 }
 
+/**
+ * Place order was tapped with no usable address and the answer is on the cart page itself (#187): scroll to it and focus it.
+ * 'form' is the inline first-address form (its first empty field); 'retry' is the Retry button after a failed address list.
+ */
+export function focusAddressStep(kind: 'form' | 'retry') {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  const root = document.getElementById(kind === 'form' ? 'checkout-address-form' : 'checkout-address');
+  if (!root) return;
+  const target = kind === 'form'
+    ? Array.from(root.querySelectorAll<HTMLInputElement>('input, textarea')).find(field => !field.value) ?? root.querySelector<HTMLElement>('[role="button"]')
+    : Array.from(root.querySelectorAll<HTMLElement>('[role="button"]')).find(button => button.textContent === 'Retry addresses');
+  target?.scrollIntoView({ block: 'center' }); target?.focus({ preventScroll: true });
+}
+
 /** One row of the picker, or the summary line. */
 function useRowStyle() {
   const { colors } = useMarketTheme(); const fonts = useMarketFonts();
@@ -66,15 +80,16 @@ export function CheckoutAddressSummary({ ctrl }: { ctrl: CheckoutAddresses }) {
   if (!ctrl.enabled) return <View style={card}><Text style={muted}>Sign in to choose a delivery address.</Text></View>;
   const band = statusHeader === 'band';
   const icon: MarketIconName = selected ? rowIcon(selected) : 'pin';
-  return <View style={card}>
+  return <View nativeID="checkout-address" style={card}>
     <Text accessibilityRole="header" aria-level={2} style={{ color: colors.muted, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', ...bold }}>Delivery address</Text>
     {error ? <><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 22 }}>{error}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={ctrl.refresh} /></> : null}
     {addresses === null && !error ? <Text accessibilityRole="progressbar" style={muted}>Loading your saved addresses…</Text> : null}
     {/* A customer with no saved address gets the add-address form right here (#187): same form, checks and location step as the dialog. */}
-    {addresses && !addresses.length && !error ? <>
+    {/* Bottom padding keeps Save address clear of the pinned Place order bar at phone widths. */}
+    {addresses && !addresses.length && !error ? <View nativeID="checkout-address-form" style={{ gap: 12, paddingBottom: 96 }}>
       <Text style={muted}>Add where we should deliver. It is saved for next time, in both restaurant apps.</Text>
       <AddressForm inline editing={null} save={ctrl.saveNew} close={() => {}} />
-    </> : null}
+    </View> : null}
     {addresses?.length ? <>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
         <View aria-hidden style={{ width: 44, height: 44, borderRadius: band ? 22 : 14, alignItems: 'center', justifyContent: 'center', backgroundColor: band ? colors.band : colors.tint }}>

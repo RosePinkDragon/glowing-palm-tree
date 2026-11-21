@@ -162,12 +162,26 @@ async function run(slug, brand, { demo = false } = {}) {
     assert.equal(await field('House, flat or floor').count(), 0, 'an address-list error does not show the inline form');
     assert.equal(await button('Use my current location').count(), 0); assert.equal(await button('Save address').count(), 0);
     await field('Name').fill('Meera Joshi');
+    // Tapping Place order here says so, takes the customer to Retry (not the picker, not a dead end) and places nothing.
+    await button('Choose a delivery address').click(); await text('We couldn\'t load your addresses. Retry.').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Retry addresses', 'Retry is focused');
+    assert.equal(await visible(page.getByRole('radiogroup', { name: 'Saved addresses' })).count(), 0, 'no picker opened'); assert.equal(await field('House, flat or floor').count(), 0);
     // 8. The list loads with zero addresses: now the form is inline, typed details and the cart are kept.
     listFails = false; await button('Retry addresses').click(); await field('House, flat or floor').waitFor();
     assert.deepEqual(await values(), { name: 'Meera Joshi', phone: '9123456780' }, 'typed details kept when the form appears');
     assert.equal(await button('Add a new address').count(), 0); assert.equal(await text('No saved addresses yet').count(), 0);
     assert.equal(await visible(page.getByRole('heading', { name: 'Add address', exact: true })).count(), 0, 'inline, not a panel');
     await shot('inline-address-390');
+    // Place order with no address focuses the form's first empty field, and Save address clears the pinned bar when scrolled into place.
+    await button('Add a delivery address').click(); await text('Add a delivery address first.').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'House, flat or floor', 'the first empty field is focused');
+    const gap = await page.evaluate(() => {
+      const bar = Array.from(document.querySelectorAll('[role="button"]')).find(el => el.textContent === 'Add a delivery address').parentElement.getBoundingClientRect();
+      document.getElementById('checkout-address-form').scrollIntoView({ block: 'end' });
+      const save = Array.from(document.querySelectorAll('[role="button"]')).find(el => el.textContent === 'Save address').getBoundingClientRect();
+      return bar.top - save.bottom;
+    });
+    assert.ok(gap >= 0, `Save address is not covered by the pinned bar (gap ${gap}px)`);
     await button('Save address').click(); assert.ok(await visible(page.getByRole('alert')).count() > 0, 'the same validation as the dialog');
     assert.equal(rows[users[1].id].length, 0, 'an invalid form saves nothing');
     await field('House, flat or floor').fill('Flat 7'); await field('Street and area').fill('Market Road');

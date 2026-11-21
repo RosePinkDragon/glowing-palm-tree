@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { addCartItem, cartSubtotalPaise, formatINRFromPaise, removeCartItem, setCartItemQuantity, type BusinessSlug, type CartLine, type LocationFix, type MenuItem, type Order, type SavedAddress } from '@market/core';
 import { MarketButton, MarketCard, MarketStatus, MarketText } from './components';
-import { CheckoutAddressDialogs, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
+import { CheckoutAddressDialogs, focusAddressStep, OrderConfirmationSheet, useCheckoutAddresses } from './CheckoutAddress';
 import { addressChangedMessage, confirmationCopy, confirmationFor, outsideAreaMessage, phoneFixTimeoutMs, validateContact, withTimeout, type OrderConfirmation } from './checkout-model';
 import { MarketFontsProvider, useMarketTheme } from './theme';
 import { useBrandFonts } from './brand-fonts';
@@ -105,7 +105,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       market.preferences.fireOnce('order_completed', order.id);
       // Only the account holder's own name is remembered, and only when this order was placed as "Me"; a recipient is never stored.
       const remember = placedAsMe.current; placedAsMe.current = false;
-      if (remember) await draft.rememberOwnName(saved.userId, saved.delivery.name);
+      if (remember) void draft.rememberOwnName(saved.userId, saved.delivery.name); // best effort; it never delays the receipt
       if (!sameIdentity(started, market.identity.current)) return;
       setReceipt(order); await draft.resetCart(); if (!sameIdentity(started, market.identity.current)) return; navigation.current?.go(`/orders/${order.id}`);
       try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); }
@@ -174,7 +174,14 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     if (!market.session) { navigation.current?.login('/cart'); setLocalError('Sign in before placing your order. Your cart will stay here.'); return; }
     const address = addrs.selected;
     placeTrigger.current = capturePanelFocus();
-    if (!address) { setLocalError(addrs.addresses?.length ? 'Choose a delivery address first.' : 'Add a delivery address first.'); if (addrs.addresses?.length !== 0) addrs.open(); /* with none saved the form is already in the cart */ return; }
+    if (!address) {
+      // A failed list also reads as [] in useCheckoutAddresses, so tell "none saved" from "could not load" (#187).
+      const none = addrs.addresses?.length === 0 && !addrs.error;
+      if (addrs.error) { setLocalError('We couldn\'t load your addresses. Retry.'); setTimeout(() => focusAddressStep('retry'), 0); }
+      else if (none) { setLocalError('Add a delivery address first.'); setTimeout(() => focusAddressStep('form'), 0); }
+      else { setLocalError('Choose a delivery address first.'); addrs.open(); }
+      return;
+    }
     sending.current = true; setBusy(true); setLocalError('');
     let next: { fix: LocationFix | null; confirmation: OrderConfirmation; totalPaise: number } | null = null;
     try {

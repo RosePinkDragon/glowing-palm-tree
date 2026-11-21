@@ -49,6 +49,8 @@ export function prefillOwn(state: RecipientState, rememberedName: string | null,
  * Show a saved order attempt's delivery details again (a declined order, or editing a revised quote). Those are exactly what was
  * sent: if they are the account holder's, "Me" shows them; otherwise "Someone else" does, and the account holder's own details are left alone.
  */
+// Trade-off (#187): with a matching phone and no own name known yet, details restore as "Me" even if they were for someone else who shares
+// that number. What was sent is shown unchanged; only the label can differ.
 export function restoreDelivery(state: RecipientState, delivery: Contact): RecipientState {
   const shown = { name: delivery.name, phone: mobileFieldValue(delivery.phone) || delivery.phone };
   const isOwn = shown.phone === state.own.phone && (!state.own.name || shown.name === state.own.name);
@@ -57,6 +59,7 @@ export function restoreDelivery(state: RecipientState, delivery: Contact): Recip
 }
 
 /** The remembered own name, kept on this device per signed-in account until the shared profile exists (#45). */
+// Trade-off (#187): this key is not cleared on sign-out. It is per user, so the same person gets their name back; another account never reads it.
 export const ownNameKey = (userId: string) => `market:own-name:${encodeURIComponent(userId)}`;
 /** A stored value as a name, or null when it is missing, unreadable or not a usable name. */
 export function parseOwnName(raw: string | null): string | null {
