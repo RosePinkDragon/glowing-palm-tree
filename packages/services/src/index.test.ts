@@ -368,6 +368,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
   const token = `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'user1', session_id: 'owner-session-1', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
   let business: Record<string, unknown> = { id: 'tenant-id', slug, name: 'Business', delivery_fee_paise: 0, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
   let admin = true;
+  let sessionEnded = false;
   const rpcs: { name: string; body: Record<string, unknown> }[] = [];
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -378,6 +379,7 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     if (url.pathname.includes('/rpc/')) {
       const name = url.pathname.split('/').pop()!;
       rpcs.push({ name, body: JSON.parse(String(init?.body)) });
+      if (name === 'set_accepting_orders' && sessionEnded) return Response.json({ code: '42501', message: 'invalid session', details: 'INVALID_SESSION', hint: null }, { status: 403 });
       if (name === 'set_accepting_orders') return Response.json({ business_id: 'tenant-id', accepting_orders: false });
       if (name === 'place_order') return Response.json({ code: 'PT409', message: 'restaurant is not accepting orders', details: null, hint: null }, { status: 409 });
     }
@@ -392,9 +394,12 @@ test('open/closed is read, changed only by owners, and a closed refusal has its 
     assert.equal(await owner.setAcceptingOrders(false), false);
     assert.deepEqual(rpcs[0], { name: 'set_accepting_orders', body: { p_business_slug: slug, p_accepting: false } });
     await assert.rejects(owner.setAcceptingOrders('no' as never), (e: unknown) => e instanceof ServiceError && e.code === 'INVALID_VALUE');
+    sessionEnded = true;
+    await assert.rejects(owner.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'SIGN_IN_REQUIRED', 'a revoked or expired session asks the owner to sign in again (#213)');
+    sessionEnded = false;
     admin = false;
     await assert.rejects(owner.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
-    assert.equal(rpcs.length, 1); owner.dispose();
+    assert.equal(rpcs.length, 2); owner.dispose();
 
     const customer = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
     await assert.rejects(customer.setAcceptingOrders(true), (e: unknown) => e instanceof ServiceError && e.code === 'ADMIN_REQUIRED');
@@ -782,6 +787,8 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
     const sent = requests.at(-1)?.body as Record<string, unknown>;
     assert.deepEqual(sent.p_delivery, { name: 'Priya', phone: '+919876543210', address_id: id, address_version: 3 }, 'no typed address with a saved one');
     assert.equal(sent.p_location, null, 'no phone fix is fine');
+    placeError = { code: '42501', message: 'invalid session', details: 'INVALID_SESSION', hint: null };
+    await assert.rejects(customer.placeOrder(input), (e: unknown) => e instanceof ServiceError && e.code === 'SIGN_IN_REQUIRED', 'a revoked or expired session asks the customer to sign in again (#213)');
     placeError = { code: '22023', message: 'delivery unavailable', details: null, hint: null };
     await assert.rejects(customer.placeOrder({ ...input, location: { latitude: 17.71, longitude: 73.41, accuracy: 900, capturedAtISO: '2026-11-16T10:00:00Z' } }), (e: unknown) => e instanceof ServiceError && e.code === 'DELIVERY_UNAVAILABLE');
     assert.deepEqual((requests.at(-1)?.body as Record<string, unknown>).p_location, { latitude: 17.71, longitude: 73.41, accuracy: 900, captured_at: '2026-11-16T10:00:00Z' }, 'phone fix is sent as-is');

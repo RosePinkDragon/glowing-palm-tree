@@ -97,6 +97,7 @@ select set_config('request.jwt.claim.sub','46000000-0000-4000-8000-000000000012'
 select set_config('request.jwt.claims','{"session_id":"46000000-0000-4000-8000-000000000012"}',false);
 select public.save_restaurant_settings('ammu-sammu','+919876543210',null,2000,20000,settings_version) from public.businesses where slug='ammu-sammu';
 select set_config('request.jwt.claim.sub','46000000-0000-4000-8000-000000000013',false);
+select set_config('request.jwt.claims','',false);
 do $$ declare items jsonb := '[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]';
  delivery jsonb := '{"name":"Settings customer","phone":"9876543210","address_id":"76000000-0000-4000-8000-000000000001","address_version":1}';
  quote jsonb := '{"lines":[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1,"unit_price_paise":15000,"line_total_paise":15000}],"delivery_fee_paise":2000,"min_order_paise":0,"subtotal_paise":15000,"total_paise":17000}';

@@ -22,7 +22,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
-self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers)
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers active-session)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
 shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
@@ -176,6 +176,7 @@ SQL
   source tests/database/customer-relationships-races.sh
   source tests/database/leave-business-races.sh
   source tests/database/offers-races.sh
+  source tests/database/active-session-races.sh
   # #50: owner code claims. Committed fixtures and real concurrent sessions: simultaneous requests cannot all
   # pass a limit, and a request waits behind an open claim for the same phone. No remote connections.
   ol_sql() { docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" "$@"; }

@@ -483,6 +483,12 @@ function lifecycleError(error: { code?: string; details?: string | null } | null
   if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'Your account is being updated. Retry when it finishes.', error);
 }
 
+// An unexpired JWT whose Auth session was deleted or has expired is refused by the database (#213): 42501 with detail
+// INVALID_SESSION. Nothing was written; the person must sign in again.
+function inactiveSessionError(error: { code?: string; details?: string | null } | null): void {
+  if (error?.code === '42501' && error.details === 'INVALID_SESSION') throw new ServiceError('SIGN_IN_REQUIRED', 'Your session ended. Sign in again.', error);
+}
+
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
   return `market:${encodeURIComponent(url.replace(/\/+$/, ''))}:${slug}:${audience}`;
@@ -1376,6 +1382,7 @@ export function createMarketServices(options: ServiceOptions) {
     // The code is sent only when there is one, so a cart without a code calls exactly the contract older clients use.
     const code = typeof input.offerCode === 'string' && input.offerCode.trim() ? { p_offer_code: input.offerCode.trim().toUpperCase() } : {};
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing, ...code });
+    inactiveSessionError(error);
     lifecycleError(error);
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
@@ -1446,6 +1453,7 @@ export function createMarketServices(options: ServiceOptions) {
   const transitionOrder = async (orderId: string, status: OrderStatus, expectedVersion: number): Promise<Order> => {
     await loadOrder(orderId); // Reject orders outside the active business before mutating.
     const { data, error } = await requireClient().rpc('transition_order', { p_order_id: orderId, p_status: status, p_expected_version: expectedVersion });
+    inactiveSessionError(error);
     fail(error, 'Could not update order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (typeof data.id !== 'string') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
@@ -1478,6 +1486,7 @@ export function createMarketServices(options: ServiceOptions) {
     // Pin this request after verification: a later auth change cannot attribute
     // the initiating owner's action to the next account during fetch dispatch.
     const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting }).setHeader('Authorization', `Bearer ${token}`);
+    inactiveSessionError(error);
     fail(error, 'Could not change whether the restaurant is taking orders');
     if (typeof data?.accepting_orders !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the change.');
     return data.accepting_orders;
