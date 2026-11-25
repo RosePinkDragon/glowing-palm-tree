@@ -3,9 +3,15 @@
 export const POLICY_FILE = 'supabase/migration-policy.json';
 export const MODES = ['pre-release-open', 'pre-release-baseline', 'frozen'];
 const MIGRATION = /^supabase\/migrations\/[\s\S]+$/i;
+const CANONICAL_PREFIX = /^supabase\/migrations\//;
 const NESTED = /^supabase\/migrations\/[\s\S]*\//i;
 const TIMESTAMPED = /^supabase\/migrations\/(\d{14})_[a-z0-9][a-z0-9_]*\.sql$/;
 const timestampMatch = path => path.replace(/^supabase\/migrations\//i, 'supabase/migrations/').match(TIMESTAMPED);
+const validTimestamp = value => {
+  const iso = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T${value.slice(8, 10)}:${value.slice(10, 12)}:${value.slice(12, 14)}.000Z`;
+  const date = new Date(iso);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === iso;
+};
 export const BASELINE_VERSION = /^\d{14}$/;
 export const COMMIT_SHA = /^[a-f0-9]{40}$/;
 const OVERRIDE = /^Migration-Policy-Override:[ \t]*(\S.*?)[ \t]*$/m;
@@ -40,11 +46,15 @@ export function checkMigrationPolicy({ mode, files, override = '', baselineVersi
     if (typeof baselineVersion !== 'string' || !BASELINE_VERSION.test(baselineVersion)) {
       errors.push('Frozen: baseline version must be a 14-digit timestamp.');
     }
+    const wrongCase = added.filter(path => !CANONICAL_PREFIX.test(path));
+    if (wrongCase.length) errors.push(`Frozen: migration paths must use the exact lowercase supabase/migrations/ prefix (${wrongCase.join(', ')}).`);
     const nested = changes.filter(change => NESTED.test(change.path)).map(change => change.path);
     if (nested.length) errors.push(`Frozen: nested migration paths are not allowed (${nested.join(', ')}).`);
     // Forward-only: a new migration needs a timestamped name that sorts after the frozen baseline.
     const unnamed = added.filter(path => !NESTED.test(path) && !timestampMatch(path));
     if (unnamed.length) errors.push(`Frozen: new migrations must be named <14-digit timestamp>_<name>.sql (${unnamed.join(', ')}).`);
+    const invalidDates = added.filter(path => timestampMatch(path) && !validTimestamp(timestampMatch(path)[1]));
+    if (invalidDates.length) errors.push(`Frozen: migration timestamps must be valid UTC calendar dates (${invalidDates.join(', ')}).`);
     const early = typeof baselineVersion === 'string' && BASELINE_VERSION.test(baselineVersion)
       ? added.filter(path => timestampMatch(path) && timestampMatch(path)[1] <= baselineVersion) : [];
     const futureLimit = new Date(now);
