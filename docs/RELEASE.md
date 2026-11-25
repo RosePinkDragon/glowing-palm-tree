@@ -539,9 +539,10 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
 
 ### Offers, owners' app (#182, slice B)
 
-Screens and services only: no migration, no customer screens, no dish-level offers. Owners reach **Offers** from Settings.
+Screens and services, plus one later migration: no customer screens, no dish-level offers. Owners reach **Offers** from Settings.
 
-- `listOffers` reads the restaurant's `offers` and keyset-pages `offer_redemptions` joined to each order (RLS applies, so only an owner sees them). Uses and
+- `listOffers` reads the restaurant's `offers`, then usage in one call to `offer_usage_stats` (migration `20261125000000_offer_usage_stats.sql`, #186):
+  a security-invoker aggregate per offer, so RLS still means only an owner sees any rows, backed by the index `offer_redemptions (business_id, offer_id)`. Uses and
   "given" count non-cancelled orders only. Terms are shown locked once ANY redemption exists, even on a since-cancelled order, because that is what the
   trigger locks on. Status is derived as ended, used up, paused, scheduled, active, in that order.
 - Writes (`createOffer`, `updateOffer`, `pauseOffer`, `resumeOffer`, `endOffer`) each touch exactly one offer per statement, are guarded by `version = expectedVersion`

@@ -20,3 +20,6 @@ as $$
 $$;
 revoke all on function public.offer_usage_stats(uuid, uuid) from public, anon;
 grant execute on function public.offer_usage_stats(uuid, uuid) to authenticated;
+
+-- Lets the aggregate find one restaurant's redemptions without scanning every restaurant's (#186 review).
+create index offer_redemptions_business_offer_idx on public.offer_redemptions (business_id, offer_id);

@@ -58,17 +58,17 @@ try {
         }
         if (path === '/rest/v1/rpc/daily_summary') { const date = request.postDataJSON().p_date ?? new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return json({ date, collected_paise: 0, delivered_count: 0, outstanding_paise: 0, outstanding_count: 0, placed_count: 0, cancelled_count: 0, top_dishes: [] }); }
         if (path === '/rest/v1/rpc/offer_usage_stats') {
-          assert.equal(method, 'POST');
-          const { p_business_id, p_offer_id } = request.postDataJSON();
-          assert.equal(p_business_id, businessId);
           if (failUsage) return fail('XX000', 'usage view unavailable', 500);
-          const groups = new Map();
-          for (const r of redemptions.filter(r => !p_offer_id || r.offer_id === p_offer_id)) {
-            const stat = groups.get(r.offer_id) ?? { offer_id: r.offer_id, uses: 0, discount_given_paise: 0, any_redemption: true };
-            if (r.status !== 'cancelled') { stat.uses++; stat.discount_given_paise += r.discount; }
-            groups.set(r.offer_id, stat);
+          const { p_business_id: business, p_offer_id: offer } = request.postDataJSON();
+          assert.equal(business, businessId);
+          // Mirrors the SQL aggregate (#186): one row per redeemed offer; cancelled orders give the use back but still lock the terms.
+          const rows = new Map();
+          for (const r of redemptions.filter(r => !offer || r.offer_id === offer)) {
+            const row = rows.get(r.offer_id) ?? { offer_id: r.offer_id, uses: 0, discount_given_paise: 0, any_redemption: true };
+            if (r.status !== 'cancelled') { row.uses++; row.discount_given_paise += r.discount; }
+            rows.set(r.offer_id, row);
           }
-          return json([...groups.values()]);
+          return json([...rows.values()]);
         }
         if (path === '/rest/v1/offers') {
           assert.equal(who, owner.id, 'only the owner reaches offers');

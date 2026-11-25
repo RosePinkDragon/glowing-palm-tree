@@ -358,6 +358,7 @@ select public.test_assert(public.offer_usage_stats('10000000-0000-4000-8000-0000
 select public.t_login(3);
 select public.test_assert(public.offer_usage_stats('10000000-0000-4000-8000-000000000001')='[]'::jsonb, 'customer cannot read aggregate usage');
 reset role;
+select public.test_assert(not has_function_privilege('anon', 'public.offer_usage_stats(uuid, uuid)', 'execute'), 'signed-out callers cannot run the usage aggregate');
 
 -- 10. Rate limit on code lookups -----------------------------------------------------------------------------
 select public.t_clear();
