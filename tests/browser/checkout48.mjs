@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 
 // #48 checkout slice: address picker, direct / remote / no-location confirmation, rejections and idempotent retry,
 // in both brands. Real customer exports and the installed SDK, with deterministic synthetic HTTP.
@@ -51,6 +52,7 @@ try {
       if (url.pathname === '/rest/v1/menu_items') return json([item]);
       if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
       if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? fixture.placed : fixture.placed ? [fixture.placed] : []);
+      const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname === '/rest/v1/rpc/list_addresses') { fixture.listCalls++; return json(fixture.rows); }
       if (url.pathname === '/rest/v1/customer_addresses' && method === 'POST') {
         const body = request.postDataJSON(), row = { ...body, id: addressId(20), version: 1, updated_at: new Date().toISOString(), in_area: true, distance_m: 900 };

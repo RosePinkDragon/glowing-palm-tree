@@ -21,6 +21,8 @@ export type CartPageProps = {
   demo: boolean; cartMessage: string; ready: boolean; cartError: string; cart: CartLine[];
   locked: boolean; orderingAllowed: boolean; hasUnavailable: boolean;
   subtotalPaise: number; deliveryFeePaise: number; minOrderPaise: number;
+  /** #182: what the server's offer takes off, and the offer row (CartOffer) shown above the bill. */
+  discountPaise?: number; offerSlot?: React.ReactNode;
   details: { name: string; phone: string }; setDetails: (details: { name: string; phone: string }) => void; recipient: { mode: RecipientMode; setMode: (mode: RecipientMode) => void };
   addrs: CheckoutAddresses; placeLabel: string; placeDisabled: boolean; localError: string;
   change: (fn: (lines: CartLine[]) => CartLine[], adding?: boolean) => void; onPlace: () => void; onBrowse: () => void;
@@ -88,7 +90,8 @@ export function CartPage(p: CartPageProps) {
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   const count = p.cart.reduce((n, line) => n + line.quantity, 0);
   const noun = voice === 'we' ? (count === 1 ? 'dish' : 'dishes') : (count === 1 ? 'item' : 'items');
-  const total = p.subtotalPaise + p.deliveryFeePaise;
+  const discount = p.discountPaise ?? 0;
+  const total = p.subtotalPaise + p.deliveryFeePaise - discount;
   const band = statusHeader === 'band';
   const empty = p.cart.length === 0;
   const bar = useRef<ComponentRef<typeof View>>(null);
@@ -121,15 +124,18 @@ export function CartPage(p: CartPageProps) {
           <Text style={{ color: colors.primary, fontSize: 15, ...bold }}>{voice === 'we' ? 'Add more dishes' : 'Add more items'}</Text>
         </Pressable>
       </Card>
+      {p.offerSlot}
       <Card gap={8}>
         <Eyebrow>{band ? 'Bill' : 'Bill summary'}</Eyebrow>
         <BillRow label={p.hasUnavailable ? (voice === 'we' ? 'Dishes (available only)' : 'Item total (available only)') : voice === 'we' ? 'Dishes' : 'Item total'} value={money(p.subtotalPaise)} />
         <BillRow label="Delivery fee" value={money(p.deliveryFeePaise)} />
+        {discount > 0 ? <BillRow label="Discount" value={`\u2212${money(discount)}`} /> : null}
         {p.minOrderPaise > 0 ? <BillRow muted label="Minimum order" value={money(p.minOrderPaise)} /> : null}
         <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 12, marginTop: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <Text style={{ color: colors.ink, fontSize: 16, ...bold }}>To pay</Text>
           <Text style={{ color: colors.ink, fontSize: band ? 24 : 20, lineHeight: 30, ...(band && fonts.heading ? { fontFamily: fonts.heading } : bold) }}>{money(total)}</Text>
         </View>
+        {discount > 0 ? <Text style={{ color: colors.primary, fontSize: 14, lineHeight: 20, ...bold }}>{`You saved ${money(discount)}`}</Text> : null}
         <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 19 }}>This is the final amount. You pay it in cash when the food arrives. Any price changes need your OK before you order.</Text>
       </Card>
       <Card>

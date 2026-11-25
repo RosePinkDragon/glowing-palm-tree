@@ -549,3 +549,9 @@ Screens and services only: no migration, no customer screens, no dish-level offe
 - Error codes: a check violation becomes an `OfferValidationError` with the field named by the constraint; PT409 `OFFER_LOCKED` is `OFFER_LOCKED`; 23505 is `OFFER_CODE_TAKEN`.
 - Ending sends `ends_at = 'now'`, so the database clock decides, not the phone's. An offer that has not started also has its start cleared, since an end cannot precede it.
 - Times are typed and shown in India time (`YYYY-MM-DD HH:MM`). `tests/browser/owner-offers182.mjs` runs in the `inbox-leave` shard.
+
+### Offers, customer cart (#182, slice C)
+
+- Signed in, the cart is priced by the server: `quote_order` (debounced) supplies the discount, offer and nudge, and `capturePricing` copies the server's `discount_paise` and `offer` into the accepted pricing. Without them `place_order` answers `pricing_changed` for every cart an automatic offer applies to.
+- A refused code is dropped and never re-sent (each rejected lookup counts toward 10 per 10 minutes). The saved attempt keeps the code, so recovery replays the same request. `OFFER_CHANGED` / `OFFER_RATE_LIMITED` release the spent attempt, show the reason and repriced total, and wait for another tap on Place order.
+- Signed-out visitors see the active automatic offer on the menu and in the cart ("Sign in to apply"); there is no code entry. Order receipts and the owners' order details show the discount; "Collect in cash" is the discounted `total_paise`.

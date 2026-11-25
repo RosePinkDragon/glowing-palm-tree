@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { offerRpcMock } from './offer-mocks.mjs';
 import { otpSignIn } from './otp-login.mjs';
 
 // #187 quicker checkout, both brands: the order is for "Me" (Mobile from the verified login phone, Name from the customer's own remembered
@@ -48,6 +49,7 @@ async function run(slug, brand, { demo = false } = {}) {
     if (url.pathname === '/rest/v1/menu_items') return json([item]);
     if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
     if (url.pathname === '/rest/v1/orders') return json(url.searchParams.has('id') ? placed : placed ? [placed] : []);
+    const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
     if (url.pathname === '/rest/v1/rpc/list_addresses') return listFails ? json({ code: 'XX000', message: 'fixture address failure', details: null, hint: null }, 500) : json(rows[who] ?? []);
     if (url.pathname === '/rest/v1/customer_addresses' && request.method() === 'POST') { const row = addressRow(newId, { ...request.postDataJSON(), distance_m: 900 }); rows[who].push(row); return json({ id: newId, version: 1 }, 201); }
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0);

@@ -9,6 +9,7 @@ import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './Accessi
 import { callLink, canCancel, clockTime, filterForStatus, historyLine, historyNewestFirst, mapsUrl, nextAction, orderReference, pinCheckLine, placedLabel, statusLabel } from './admin-model';
 import { ownerReference, RemoteOrderFlag, type OwnerOrdersState } from './OwnerOrders';
 import { MarketIcon } from './MarketIcons';
+import { discountLabel, minus } from './offer-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 type Tone = 'primary' | 'secondary' | 'danger';
@@ -89,6 +90,7 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: 'dashed', paddingTop: 10, gap: 4 }}>
         <MarketLine left="Items" right={formatINRFromPaise(order.subtotalPaise)} />
         <MarketLine left="Delivery" right={formatINRFromPaise(order.deliveryFeePaise)} />
+        {order.discountPaise ? <MarketLine left={discountLabel(order.offer)} right={minus(order.discountPaise)} /> : null}
       </View>
       <View style={{ padding: 12, borderRadius: 12, backgroundColor: colors.tint }}><MarketLine bold left="Collect in cash" right={<Text style={{ color: colors.ink, fontSize: 22, lineHeight: 28, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{formatINRFromPaise(order.totalPaise)}</Text>} /></View>
     </MarketSection>
