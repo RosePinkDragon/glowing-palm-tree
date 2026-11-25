@@ -174,7 +174,7 @@ test('every metadata request explicitly uses the validated github.com origin hos
 function withPolicy(f, mode) {
   mkdirSync(join(f.upstream, 'supabase/migrations'), { recursive: true });
   writeFileSync(join(f.upstream, 'supabase/migrations/20260101000000_base.sql'), 'select 1;\n');
-  writeFileSync(join(f.upstream, 'supabase/migration-policy.json'), JSON.stringify({ mode }));
+  writeFileSync(join(f.upstream, 'supabase/migration-policy.json'), JSON.stringify({ mode, baseline: { version: '20261117000000' } }));
   f.git(['add', '.'], f.upstream);
   f.git(['commit', '-m', 'policy'], f.upstream);
   f.git(['fetch', 'origin', 'main']);
