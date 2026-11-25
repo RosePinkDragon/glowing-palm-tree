@@ -26,7 +26,7 @@ function SignatureCard({ item, controls, width }: { item: MenuItem; controls: Co
     </Pressable>
     <View style={{ padding: 14, gap: 6, flex: 1 }}>
       <Text numberOfLines={1} style={{ color: colors.bandAccent, letterSpacing: 1.2, textTransform: 'uppercase', ...f.semi(12, 18) }}>{item.category}{item.isDemo ? ' · Example' : ''}</Text>
-      <DishTitle item={item} controls={controls} level={3} containerStyle={{ flex: 1 }} style={{ color: '#FFFFFF', ...f.heading(21, 30) }} />
+      <View style={{ flex: 1 }}><DishTitle item={item} controls={controls} level={3} style={{ color: '#FFFFFF', ...f.heading(21, 30) }} /></View>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 4, position: 'relative', zIndex: 1 }}>
         <Text accessibilityLabel={priceLabel(item)} style={{ color: '#FFFFFF', ...f.heading(20, 28) }}>{formatINRFromPaise(item.pricePaise)}</Text>
         <View style={{ minWidth: 112 }}><DishAction item={item} controls={controls} onDark /></View>
