@@ -64,11 +64,13 @@ const reducedMotion = () => Platform.OS === 'web' && typeof window !== 'undefine
  * `carta` is Kokani Dine Inn's: the signature carousel lives in CartaHeader above the notices; here are the facts line,
  * the same sticky chips and cart-limit alert, and the text à la carte list. No search (the design has none).
  */
-export function MenuBody({ variant, facts, businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, onAdd, onRemove, onOpen }: {
+export function MenuBody({ variant, facts, businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, undoSlot, onAdd, onRemove, onOpen }: {
   variant: 'photo-grid' | 'carta'; facts?: string; businessId: BusinessSlug; items: readonly MenuItem[]; cart: readonly CartLine[]; contentWidth: number; bleed: number; orderingAllowed: boolean; demo: boolean; locked: boolean; viewportRevision: number;
   scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>; viewportListener: MutableRefObject<((viewport: MenuViewport) => void) | null>;
   /** Cart error from the last add/remove (e.g. the 20-dish limit), shown with the sticky chips so it is seen wherever the customer is in the grid. */
   message: string; onDismissMessage: () => void;
+  /** #204: Undo notice for a removed dish, shown with the sticky chips. */
+  undoSlot?: React.ReactNode;
   onAdd: (item: MenuItem) => void; onRemove: (item: MenuItem) => void; onOpen: (item: MenuItem) => void;
 }) {
   const { colors } = useMarketTheme();
@@ -143,6 +145,7 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
           <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ flex: 1, paddingVertical: 8, color: colors.danger, ...f.semi(14, 20) }}>{message}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={onDismissMessage} style={{ width: chipTarget, minHeight: chipTarget, alignItems: 'center', justifyContent: 'center' }}><MarketIcon name="close" color={colors.ink} size={18} /></Pressable>
         </View> : null}
+        {undoSlot ? <View style={{ marginTop: 8 }}>{undoSlot}</View> : null}
       </View>
       {carta ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 6 }}>
         <View aria-hidden style={{ flex: 1, height: 1, backgroundColor: colors.border }} />

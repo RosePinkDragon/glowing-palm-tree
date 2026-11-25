@@ -62,6 +62,7 @@ jobs:
               node tests/browser/checkout48.mjs
           - shard: inbox-leave
             commands: |
+              node tests/browser/cart-undo204.mjs
               node tests/browser/inbox55.mjs
               node tests/browser/leave52.mjs
               node tests/browser/otp50.mjs

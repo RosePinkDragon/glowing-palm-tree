@@ -25,6 +25,8 @@ export type CartPageProps = {
   discountPaise?: number; offerSlot?: React.ReactNode;
   details: { name: string; phone: string }; setDetails: (details: { name: string; phone: string }) => void; recipient: { mode: RecipientMode; setMode: (mode: RecipientMode) => void };
   addrs: CheckoutAddresses; placeLabel: string; placeDisabled: boolean; localError: string;
+  /** #204: the Undo notice for a removed dish, kept in view at the top, away from the pinned Place order bar. */
+  undoSlot?: React.ReactNode;
   change: (fn: (lines: CartLine[]) => CartLine[], adding?: boolean) => void; onPlace: () => void; onBrowse: () => void;
 };
 
@@ -109,6 +111,7 @@ export function CartPage(p: CartPageProps) {
   const stick = Platform.OS === 'web' ? ({ position: 'sticky', bottom: 12, zIndex: 2 } as object) : {};
   return <View onFocus={keepAboveBar} style={{ gap: 16, width: '100%', maxWidth: 640, alignSelf: 'center' }}>
     <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{p.demo ? 'Sample cart' : empty ? name : `${name} · ${count} ${noun}`}</Text>
+    {p.undoSlot ? <View style={Platform.OS === 'web' ? ({ position: 'sticky', top: 8, zIndex: 3 } as object) : undefined}>{p.undoSlot}</View> : null}
     {p.cartMessage ? <ReorderNotice message={p.cartMessage} /> : null}
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}
     {!p.ready && !p.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : empty ? <MarketStatus kind="empty" title="Your cart is empty" message="Explore the menu to get started." /> : <>

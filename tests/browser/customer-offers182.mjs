@@ -159,6 +159,16 @@ try {
       await text('Offer applied: Flat 50').waitFor(); await text('Code SAVE50').waitFor(); await text('−₹50').waitFor(); await text('₹470').first().waitFor();
       assert.equal(lastQuote().p_offer_code, 'SAVE50');
       await focusedIs('Offer applied: Flat 50'); // focus lands on the applied-offer text, not on the vanished Apply button
+      // #204: remove the only dishes with the code applied, press Undo: the re-quote carries the code and the discount returns; then add the second dish back.
+      await button('Remove one Offer fixture meal').click(); await text('₹270').first().waitFor();
+      await button('Remove one Offer fixture meal').click();
+      await text('Your cart is empty').waitFor();
+      await button('Undo removing Offer fixture meal').waitFor();
+      await button('Undo removing Offer fixture meal').click();
+      await text('Offer applied: Flat 50').waitFor(); await text('−₹50').waitFor(); await text('₹220').first().waitFor();
+      assert.equal(lastQuote().p_offer_code, 'SAVE50', 'the re-quote after Undo carries the code'); assert.equal(lastQuote().p_items[0].quantity, 1);
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Add one Offer fixture meal');
+      await button('Add one Offer fixture meal').click(); await text('₹470').first().waitFor();
       await button('Remove code SAVE50').click();
       await text('Offer applied: Launch offer').waitFor(); await text('₹420').first().waitFor();
       await focusedIs('Have a code?'); // and after Remove, on the way to enter another
