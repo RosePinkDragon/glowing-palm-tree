@@ -1,6 +1,6 @@
 # Test inventory and assertion-quality baseline
 
-Baseline: `d6edc07dca24e929d8803629f1bff2032885dc3c` (main, 2026-11-25). This is an audit, not a coverage or mutation score. No test was removed or rewritten. Measurements are a single run on a shared Linux machine; durations are observations, not budgets.
+Baseline: `d6edc07dca24e929d8803629f1bff2032885dc3c` (main, 2026-11-25). This is an audit, not a coverage or mutation score. No test was removed or rewritten. Measurements are individual runs and stated retries on a shared Linux machine; durations are observations, not budgets.
 
 ## Reproduce and interpret
 
@@ -57,7 +57,35 @@ Findings here are **static inspection**, not mutation-tested proof. The suggeste
 
 ## SQL file and sourced race timings
 
-A second, successful run used `BASH_ENV=/tmp/issue205-trace-env bash -x tests/database/run.sh`, with `PS4` set to `'+$(date +%s%3N) ${BASH_SOURCE}:${LINENO} '`. The elapsed intervals below run from each top-level `sql_file` or `source` call to the next top-level shell command; they include Docker/psql overhead and tracing, and are not case counts. Fresh and existing columns are the two layouts, in order. The first untraced full-run time above includes all fixtures, migrations, inline races and setup, not just the entries here. Timings are affected by browser runs in parallel.
+A second, successful run used `BASH_ENV=/tmp/issue205-trace-env bash -x tests/database/run.sh`, with `PS4` set to `'+$(date +%s%3N) ${BASH_SOURCE}:${LINENO} '`. To reproduce the table, save the trace and run the extraction below. The elapsed intervals run from each top-level `sql_file` or `source` call to the next top-level shell command; they include Docker/psql overhead and tracing, and are not case counts. Fresh and existing columns are the two layouts, in order. The first untraced full-run time above includes all fixtures, migrations, inline races and setup, not just the entries here. Timings are affected by browser runs in parallel.
+
+```sh
+printf "%s\n" "PS4='+\$(date +%s%3N) \${BASH_SOURCE}:\${LINENO} '" > /tmp/issue205-trace-env
+BASH_ENV=/tmp/issue205-trace-env bash -x tests/database/run.sh > /tmp/issue205-database-trace.log 2>&1
+python3 - /tmp/issue205-database-trace.log <<'PYTRACE'
+import re, sys
+from collections import defaultdict
+
+events = []
+with open(sys.argv[1]) as trace:
+    for line in trace:
+        match = re.match(r'^\+(\d+) tests/database/run.sh:(\d+) (.*)', line)
+        if match:
+            events.append((int(match[1]), int(match[2]), match[3].strip()))
+values = defaultdict(list)
+for i, (start, _, command) in enumerate(events):
+    match = re.fullmatch(r'(?:sql_file tests/database/([^ ]+\.sql)|source tests/database/([^ ]+-races\.sh))', command)
+    if not match or match[1] in ('fixture.sql', 'final-fixture.sql', 'helpers.sql'):
+        continue
+    end = next((t for t, line, _ in events[i+1:] if not (match[1] and line == 16)), None)
+    if end is not None:
+        values[match[1] or match[2]].append((end - start) / 1000)
+for name, seconds in values.items():
+    print(name, *(f'{value:.3f}' for value in seconds))
+PYTRACE
+```
+
+Line 16 is the `docker exec` inside `sql_file` at this baseline; if `run.sh` changes, update the extraction against its new trace. A successful run must complete both layouts before interpreting the two columns.
 
 | Suite under `tests/database/` | Fresh (s) | Existing (s) |
 | --- | ---: | ---: |
@@ -113,4 +141,4 @@ Each entry is a single invocation, timed from process start to exit with `date +
 | inbox-leave | `owner-offers182.mjs` | passed | 69.758 |
 | inbox-leave | `dish-title203.mjs` | passed | 15.254 |
 
-The first `photos.mjs` run under system Chromium failed after 5.791 seconds at line 116: an offscreen image request was observed before scrolling. A full Chromium 141 retry failed the same assertion. The 76.491-second retry above used Playwright’s CI headless shell and passed. Browser lazy-loading heuristics and browser mode affect this oracle; investigate before treating it as a product regression. The headless-shell quick checkout is a separate measurement, not an additional CI shard. The local smoke and quick-checkout measurements together exceed the workflow’s 10-minute shard timeout; different hardware, browser modes and concurrent load prevent inferring CI duration. Profile that shard in CI before deciding whether to rebalance it.
+The measurement harness continued to subsequent scripts after a failure, unlike the CI shard’s fail-fast shell. The first `photos.mjs` run under system Chromium failed after 5.791 seconds at line 116: an offscreen image request was observed before scrolling. A full Chromium 141 retry failed the same assertion. The 76.491-second retry above used Playwright’s CI headless shell and passed. Browser lazy-loading heuristics and browser mode affect this oracle; investigate before treating it as a product regression. The headless-shell quick checkout is a separate measurement, not an additional CI shard. The local smoke and quick-checkout measurements together exceed the workflow’s 10-minute shard timeout; different hardware, browser modes and concurrent load prevent inferring CI duration. Profile that shard in CI before deciding whether to rebalance it.
