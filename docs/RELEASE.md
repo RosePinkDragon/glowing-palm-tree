@@ -8,19 +8,19 @@ This is the one ordered checklist for a web-only launch on your own Supabase pro
 
 Before you start: the customer and owners' WhatsApp sign-in screens (#50 slices B and C) are on `main`; deploy from a `main` commit that includes them, because the apps cannot sign in without them.
 
-**Never run `supabase config push` for this repository.** It would push CAPTCHA off, a local hook address and fictional test OTPs (valid code `123456`) to the hosted project. Configure hosted Auth in the dashboard only.
+**Never run `supabase config push` for this repository.** Configure hosted Auth in the dashboard only. Since #212 the committed `supabase/config.toml` is production-safe by default (no test OTP numbers, CAPTCHA on, the send_sms hook disabled) and the check `npm run check:hosted-auth` runs in App CI (it becomes a required gate once #215, branch protection, is configured), but the dashboard remains the source of truth for hosted Auth: the check cannot see the hosted project. Local fixtures are in the [appendix](#appendix-local-development-fixtures-212).
 
 ### 1. Create the Supabase project and push the database
 
 1. In the Supabase dashboard create a new, empty project. Note the project ref, the Project URL (**Connect**) and the publishable (or legacy `anon`) key (**Project Settings → API Keys**). Never use or expose the service-role key in Vercel.
 2. From a trusted machine: `supabase login`, then `supabase link --project-ref <project-ref>`. Check the printed ref is the new project and not another one (the two `dukan-dar` projects are unrelated Prisma databases and must never be linked).
-3. Run `supabase db push`. On an empty project this applies only `supabase/migrations/20261117000000_baseline.sql` (schema, no data). Do not use `supabase/seed.sql`; it is demonstration data.
+3. Run `supabase db push`. On an empty project this applies only `supabase/migrations/20261117000000_baseline.sql` (schema, no data). Do not use `supabase/seed.sql`; it is demonstration data. Unverified CLI behavior: the CLI may complain that `SUPABASE_AUTH_CAPTCHA_SECRET` (or another `env()` value in `supabase/config.toml`) is not set; if so, export a placeholder value for that one command only. `db push` and `functions deploy` do not push Auth config.
 4. Create the two businesses and set kitchen points and the 12 km delivery radius with the SQL in [Supabase and launch data](#supabase-and-launch-data), step 5. `order_prefix` cannot be changed afterwards. Leave `ordering_enabled` false until the staging checks in step 9 pass, then enable ordering per business (**confirm in dashboard** or SQL editor; this is the existing owner setting).
 5. Migrations are now forward-only: see [Migration policy](#migration-policy-frozen). Any later schema change is a new timestamped file.
 
 ### 2. Deploy the Edge Functions
 
-From the same linked machine:
+From the same linked machine (if the CLI complains about a missing `env()` value such as `SUPABASE_AUTH_CAPTCHA_SECRET`, export a placeholder for the command only; unverified CLI behavior, and `functions deploy` does not push Auth config):
 
 ```
 supabase functions deploy request-owner-code
@@ -164,6 +164,7 @@ Do these on the deployed domains before enabling ordering for real customers. Us
 3. An owner's number receives a code in the owners' app; a non-owner number sees the identical screen and no message appears in the MSG91 log.
 4. A number that is not on WhatsApp gets the "could not deliver" error (customer only).
 5. CAPTCHA works: with it on, a request without a valid token is refused and a normal one succeeds.
+5a. One-time manual verification of the hosted project's Auth settings (#212; evidence goes to #64 hosted provider setup and the #15 release gate; not done yet because no hosted project exists): in the dashboard confirm there are **no test OTP numbers** (Authentication → Providers → Phone), **CAPTCHA is on** with the real Turnstile secret, the send_sms hook points at the project's own `send-sms-hook` function, and the Site URL and redirect URLs are the intended production domains only (https, no localhost). Record who checked, when and the project ref.
 6. Place an order end to end on each brand (Ammu Sammu and Kokani Dine Inn): sign in, add to cart, checkout inside the delivery area, see it in that brand's admin app, move it through the order statuses. Confirm an address outside 12 km is refused.
 7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
 8. For each brand, an owner uploads a dish photo in the owners' app and it appears on the customer menu.
@@ -204,7 +205,7 @@ A formal GitHub approval requires a distinct eligible reviewer; agent review rep
 ## Supabase and launch data
 
 1. Create one Supabase project for the intended environment. In the dashboard, use **Connect** for the Project URL and **Project Settings → API Keys** for the publishable key (the legacy `anon` key also works). Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in all four Vercel projects. These are public client values; never expose the service-role key.
-2. From a trusted machine, authenticate the Supabase CLI, link the intended project with `supabase link --project-ref <project-ref>`, review the target and migrations, then run `supabase db push`. On a fresh project this applies the single baseline, `supabase/migrations/20261117000000_baseline.sql`. It creates the schema and no data: no restaurant, menu, kitchen point or delivery area rows. Both businesses share this database; verify row-level security and cross-business isolation with appropriate accounts. `supabase/seed.sql` is demonstration data, not a production catalog or verified boundary; don't use it as launch data. Keep business and menu `is_demo` flags consistent with real, reviewed data.
+2. From a trusted machine, authenticate the Supabase CLI, link the intended project with `supabase link --project-ref <project-ref>`, review the target and migrations, then run `supabase db push`. On a fresh project this applies the single baseline, `supabase/migrations/20261117000000_baseline.sql`. It creates the schema and no data: no restaurant, menu, kitchen point or delivery area rows. Both businesses share this database; verify row-level security and cross-business isolation with appropriate accounts. `supabase/seed.sql` is demonstration data, not a production catalog or verified boundary; don't use it as launch data. Keep business and menu `is_demo` flags consistent with real, reviewed data. (If the CLI complains that `SUPABASE_AUTH_CAPTCHA_SECRET` or another `env()` value is missing, export a placeholder for that command only; unverified CLI behavior, and this command does not push Auth config.)
 3. Configure **Supabase Auth** and its implemented sign-in method. In Authentication → URL Configuration, add the four exact production domain roots to Redirect URLs; add only current trusted preview roots if previews need authentication. A separate staging project is preferable for previews. Set the Site URL appropriately and verify sign-in and callback on each app. Avoid broad preview wildcards.
 4. Through a trusted administrative database setup, create the appropriate `business_memberships` for authenticated admin users and verify each admin can access only their business. Do not distribute service credentials to clients.
 5. Create the real launch restaurant rows, then confirm each business's delivery area before enabling ordering. A fresh project has no restaurant rows, so checkout fails closed until trusted setup supplies them. From a trusted administrative connection (the Supabase SQL editor runs as `postgres`), insert the minimal rows. Only `slug`, `name` and `order_prefix` have no default; `is_demo`, `ordering_enabled` and `accepting_orders` default to false and `id` is generated:
@@ -322,7 +323,7 @@ is an admin member: access still comes from `business_memberships`, checked on t
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in all four Vercel projects and redeploy (the screens, slices B and C, send a token as `captchaToken`
    only when this variable is set). The **secret key** goes in both places below. The two sides must agree: with the site key set,
    enable CAPTCHA in Auth and set `TURNSTILE_SECRET_KEY`; with no site key the screens send no token, so CAPTCHA must stay off in
-   Auth (as it is in the local `supabase/config.toml`) or every code request is refused.
+   Auth (as it is in the local overlay `supabase/config.local.toml`, not in the committed config) or every code request is refused.
 
 ### Secrets (names only; never in git, chat or a Vercel frontend variable)
 
@@ -343,7 +344,8 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 ### Enable it (hosted project)
 
 1. Deploy: `supabase functions deploy send-sms-hook` and `supabase functions deploy request-owner-code` (both have JWT verification
-   off in `supabase/config.toml`; each authenticates itself).
+   off in `supabase/config.toml`; each authenticates itself). If the CLI complains that `SUPABASE_AUTH_CAPTCHA_SECRET` or another
+   `env()` value is missing, export a placeholder for that command only (unverified CLI behavior; this command does not push Auth config).
 2. Authentication → **Hooks** → Send SMS: HTTPS, the URL of `send-sms-hook`, generate the secret, and store it as `SEND_SMS_HOOK_SECRET`.
    **Enable the hook and store the secret in the same sitting**: a hook that is enabled before the function has its secret (or a secret
    that no longer matches) makes every code request fail. Auth signs every call (Standard Webhooks) and the function rejects anything unsigned or older than five minutes.
@@ -353,10 +355,11 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 4. Authentication → **Bot and Abuse Protection**: enable CAPTCHA with Turnstile and the same secret (only together with
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, see provider setup step 4). The customer screens send a token with each code request. Auth skips its own CAPTCHA check for the service-role call that `request-owner-code`
    makes, because that function has already verified the token itself.
-5. `supabase/config.toml` carries the same settings for the local stack (OTP expiry 600, resend interval 30 seconds, hook, CAPTCHA
-   off by default with Cloudflare's test keys documented in the file, two fictional test numbers that skip the hook and accept `123456`). **Never run `supabase config push` for this repository**: it would push
-   CAPTCHA off, the local hook address and the fictional test OTPs (making those codes valid on the hosted project). Configure hosted
-   Auth in the dashboard only. For local functions, put `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
+5. `supabase/config.toml` carries the same settings in a production-safe form (OTP expiry 600, resend interval 30 seconds, CAPTCHA on with
+   `env(SUPABASE_AUTH_CAPTCHA_SECRET)`, no test numbers, the send_sms hook disabled). The local-only values (two fictional test numbers that skip the hook
+   and accept `123456`, CAPTCHA off, the local hook address) are in `supabase/config.local.toml` and reach only a generated, git-ignored local
+   workdir. **Never run `supabase config push` for this repository** and configure hosted Auth in the dashboard only. For local functions, put
+   `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
 6. Verify on staging before launch: a customer code arrives and logs in a new number; a number that is not on WhatsApp gets the
    "could not deliver" error (customer only); an owner's number receives a code from the owners' app; a non-owner's number
    gets the identical screen and **no message appears in the MSG91 log**; response times look alike. If owners never receive a
@@ -539,9 +542,10 @@ widens the `kind` check). Nothing here is applied to a remote project by agents.
 
 ### Offers, owners' app (#182, slice B)
 
-Screens and services only: no migration, no customer screens, no dish-level offers. Owners reach **Offers** from Settings.
+Screens and services, plus one later migration: no customer screens, no dish-level offers. Owners reach **Offers** from Settings.
 
-- `listOffers` reads the restaurant's `offers` and keyset-pages `offer_redemptions` joined to each order (RLS applies, so only an owner sees them). Uses and
+- `listOffers` reads the restaurant's `offers`, then usage in one call to `offer_usage_stats` (migration `20261125000000_offer_usage_stats.sql`, #186):
+  a security-invoker aggregate per offer, so RLS still means only an owner sees any rows, backed by the index `offer_redemptions (business_id, offer_id)`. Uses and
   "given" count non-cancelled orders only. Terms are shown locked once ANY redemption exists, even on a since-cancelled order, because that is what the
   trigger locks on. Status is derived as ended, used up, paused, scheduled, active, in that order.
 - Writes (`createOffer`, `updateOffer`, `pauseOffer`, `resumeOffer`, `endOffer`) each touch exactly one offer per statement, are guarded by `version = expectedVersion`
@@ -555,3 +559,20 @@ Screens and services only: no migration, no customer screens, no dish-level offe
 - Signed in, the cart is priced by the server: `quote_order` (debounced) supplies the discount, offer and nudge, and `capturePricing` copies the server's `discount_paise` and `offer` into the accepted pricing. Without them `place_order` answers `pricing_changed` for every cart an automatic offer applies to.
 - A refused code is dropped and never re-sent (each rejected lookup counts toward 10 per 10 minutes). The saved attempt keeps the code, so recovery replays the same request. `OFFER_CHANGED` / `OFFER_RATE_LIMITED` release the spent attempt, show the reason and repriced total, and wait for another tap on Place order.
 - Signed-out visitors see the active automatic offer on the menu and in the cart ("Sign in to apply"); there is no code entry. Order receipts and the owners' order details show the discount; "Collect in cash" is the discounted `total_paise`.
+
+## Appendix: local development fixtures (#212)
+
+The committed `supabase/config.toml` is what any tool reading this repository sees, so it carries only production-safe values. Local fixtures
+live in `supabase/config.local.toml`: test numbers `919999900001` and `919999900002` that accept `123456` and skip the hook, CAPTCHA off, and the
+send_sms hook enabled at `host.docker.internal`. To run the local stack with them:
+
+1. Put `SUPABASE_AUTH_HOOK_SEND_SMS_SECRET=v1,whsec_<base64>` in `supabase/.env.local` (git-ignored). Pass the same value as `SEND_SMS_HOOK_SECRET` to `supabase functions serve --env-file`.
+2. `npm run supabase:local-config` merges the overlay over the committed file into `.supabase-local/supabase/config.toml` (git-ignored, with a "GENERATED, LOCAL ONLY" header) and links `migrations`, `functions`, `seed.sql` and `.env.local` beside it.
+3. `supabase start --workdir .supabase-local` (confirm your CLI supports `--workdir` with `supabase start --help`; unverified here, and CI does not run the CLI).
+
+Never link or push the generated workdir. `npm run check:hosted-auth` runs in App CI and fails if the committed config: has entries in
+`[auth.sms.test_otp]`; does not enable CAPTCHA with `env(SUPABASE_AUTH_CAPTCHA_SECRET)`; enables any `[auth.hook.*]` (the send_sms hook must be
+`enabled = false`); sets `site_url` or `additional_redirect_urls` to a non-https, localhost, 127.x or `host.docker.internal` value; or uses TOML
+this strict checker does not understand (multi-line or single-quoted strings, inline tables, dotted keys, `[[arrays]]`, duplicates, reserved names).
+The check inspects the committed file only and cannot see a hosted project's dashboard settings; hosted Auth URLs are otherwise covered by launch
+step 5a. It is a required merge gate only once branch protection (#215) is configured.

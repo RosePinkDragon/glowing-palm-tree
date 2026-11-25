@@ -16,6 +16,8 @@
     "export:native": "node scripts/workspaces.mjs export:native",
     "typecheck": "tsc --noEmit",
     "pr:preflight": "node .github/scripts/pr-preflight.mjs",
+    "supabase:local-config": "node .github/scripts/hosted-auth-config.mjs local",
+    "check:hosted-auth": "node .github/scripts/hosted-auth-config.mjs check",
     "test:core": "npm test --workspace @market/core",
     "test:packages": "node scripts/test-packages.mjs",
     "test:web-export": "node --test --test-isolation=none scripts/export-web.test.mjs",
