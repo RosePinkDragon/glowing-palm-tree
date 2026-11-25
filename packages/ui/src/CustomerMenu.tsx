@@ -3,7 +3,7 @@ import { Platform, Pressable, ScrollView, Text, TextInput, View, type LayoutChan
 import { formatINRFromPaise, type BusinessSlug, type CartLine, type MenuItem } from '@market/core';
 import { MarketButton, MarketStatus } from './components';
 import { DietMark } from './DietMark';
-import { DishAction, chipTarget, menuControls, useFamilies, type Controls } from './DishAction';
+import { DishAction, DishTitle, chipTarget, menuControls, photoOpener, useFamilies, type Controls } from './DishAction';
 import { CartaSection } from './CustomerCarta';
 import { DishPhoto } from './DishPhoto';
 import { MarketIcon } from './MarketIcons';
@@ -17,7 +17,7 @@ function NameAndPrice({ item, controls, size }: { item: MenuItem; controls: Cont
   const { colors } = useMarketTheme();
   const f = useFamilies();
   return <>
-    <Text accessibilityRole="header" aria-level={3} onPress={() => controls.onOpen(item)} style={{ color: colors.ink, ...f.heading(size, size + 6) }}>{item.name}</Text>
+    <DishTitle item={item} controls={controls} level={3} style={{ color: colors.ink, ...f.heading(size, size + 6) }} />
     {item.isDemo ? <Text style={{ color: colors.primary, letterSpacing: 1, textTransform: 'uppercase', ...f.semi(11, 16) }}>Example</Text> : null}
     <Text style={{ color: colors.ink, ...f.semi(16, 22) }}>{item.isDemo ? 'Example price: ' : ''}{formatINRFromPaise(item.pricePaise)}</Text>
   </>;
@@ -26,7 +26,7 @@ function NameAndPrice({ item, controls, size }: { item: MenuItem; controls: Cont
 function DishCard({ item, controls, width }: { item: MenuItem; controls: Controls; width: number }) {
   const { colors } = useMarketTheme();
   return <View style={{ width, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => controls.onOpen(item)}>
+    <Pressable {...photoOpener} onPress={() => controls.onOpen(item)}>
       <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} height={width < 200 ? 118 : 150} viewportRevision={controls.viewportRevision} />
     </Pressable>
     <View style={{ padding: 12, gap: 6, flex: 1 }}>
@@ -42,7 +42,7 @@ function SpecialCard({ item, controls, width, label }: { item: MenuItem; control
   const f = useFamilies();
   return <View style={{ width: width as number, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 22, overflow: 'hidden' }}>
     <Text accessibilityRole="header" aria-level={2} style={{ position: 'absolute', top: 12, left: 12, zIndex: 1, overflow: 'hidden', borderRadius: 10, backgroundColor: colors.surface, color: colors.primary, paddingHorizontal: 10, paddingVertical: 4, letterSpacing: 1.2, textTransform: 'uppercase', ...f.semi(12, 18) }}>{label}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => controls.onOpen(item)}>
+    <Pressable {...photoOpener} onPress={() => controls.onOpen(item)}>
       <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} height={190} viewportRevision={controls.viewportRevision} />
     </Pressable>
     <View style={{ padding: 16, gap: 6, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>

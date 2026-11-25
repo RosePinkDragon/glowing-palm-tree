@@ -101,7 +101,9 @@ try {
         await page.getByRole('heading', { name: 'Photo dish', exact: true }).first().waitFor();
         const open = async name => {
           const button = page.getByRole('button', { name: `View details for ${name}`, exact: true }).first();
-          await button.focus(); await page.keyboard.press('Enter');
+          // A focus restore from the dialog just closed can land a moment late; let it settle, then take focus and confirm it before pressing Enter.
+          await page.waitForTimeout(150); await button.focus();
+          await page.waitForFunction(label => document.activeElement?.getAttribute('aria-label') === label, `View details for ${name}`); await page.keyboard.press('Enter');
           await page.waitForFunction(expected => document.activeElement?.textContent === expected, name);
           return page.getByRole('dialog');
         };
