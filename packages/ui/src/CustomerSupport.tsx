@@ -8,7 +8,7 @@ import { brandPlace } from './CustomerBrand';
 import { MarketIcon } from './MarketIcons';
 import { useFamilies } from './DishAction';
 import { useMarketTheme } from './theme';
-import { supportConfig, supportLinks } from './support-model';
+import { businessContactLinks, supportConfig } from './support-model';
 import { useSupportOrders } from './useSupportOrders';
 import { orderName } from './CustomerOrderStatus';
 import { sameIdentity, type Identity } from './checkout-state';
@@ -29,10 +29,10 @@ function SupportHeading({ children, hidden = false }: { children: string; hidden
   }, [focused]);
   return <Text ref={heading} accessibilityRole="header" aria-level={1} {...(Platform.OS === 'web' ? { tabIndex: -1 } as object : {})} style={hidden ? srOnly : { color: colors.ink, fontSize: 30, lineHeight: 38, fontWeight: '700' }}>{children}</Text>;
 }
-function ContactActions({ businessId }: { businessId: BusinessSlug }) {
+function ContactActions({ business, loading }: { business: ReturnType<typeof useMarket>['business']; loading: boolean }) {
   const { colors } = useMarketTheme();
   const [error, setError] = useState('');
-  const links = supportLinks(supportConfig[businessId]);
+  const links = businessContactLinks(business);
   const open = async (url: string) => {
     setError('');
     try { await Linking.openURL(url); }
@@ -46,10 +46,10 @@ function ContactActions({ businessId }: { businessId: BusinessSlug }) {
   </Pressable>;
   return <View style={{ gap: 10 }}>
     <View nativeID="support-contacts" style={{ flexDirection: 'row', gap: 10 }}>
-      {action('Call restaurant', 'Call', 'phone', true, !links.call, () => { if (links.call) void open(links.call); })}
+      {links.call ? action('Call restaurant', 'Call', 'phone', true, false, () => void open(links.call!)) : null}
       {links.whatsapp ? action('WhatsApp restaurant', 'WhatsApp', 'chat', false, false, () => void open(links.whatsapp!)) : null}
     </View>
-    {!links.call ? <MarketText variant="muted">Contact number not available yet.</MarketText> : null}
+    {!links.call ? <MarketText variant="muted">{loading ? 'Loading contact details…' : 'Phone support isn\u2019t available right now'}</MarketText> : null}
     {error ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{error}</Text> : null}
   </View>;
 }
@@ -95,8 +95,7 @@ export function CustomerSupport({ businessId, market, go, orderReference }: { bu
         <MarketButton label="View selected order" variant="secondary" onPress={() => go(`/orders/${order.id}`)} />
       </View> : null}
       <MarketText>Questions about your order? Get in touch with {name}.</MarketText>
-      <ContactActions businessId={businessId} />
-      <MarketText variant="muted">{config.notice}</MarketText>
+      <ContactActions business={market.business?.slug === businessId ? market.business : null} loading={market.loading} />
       {market.session ? <MarketButton label="Refresh active orders" variant="secondary" disabled={support.loading || support.moreLoading} onPress={() => void support.refresh()} /> : null}
       {support.orders.length > 1 ? <View style={{ gap: 8 }}><MarketText variant="muted">Choose another active order</MarketText>{support.orders.map(candidate => <Pressable key={candidate.id} accessibilityRole="button" accessibilityLabel={`Select order reference ${orderName(candidate)}`} accessibilityState={{ selected: candidate.id === order?.id }} aria-pressed={candidate.id === order?.id} onPress={() => support.select(candidate.id)} style={{ minHeight: 48, padding: 12, borderWidth: 1, borderRadius: 12, borderColor: colors.primary, backgroundColor: candidate.id === order?.id ? colors.tint : colors.surface }}><Text style={{ color: colors.ink, fontWeight: '700' }}>{orderName(candidate)}</Text><MarketText variant="muted">{candidate.status.replaceAll('_', ' ')} · {formatINRFromPaise(candidate.totalPaise)}</MarketText></Pressable>)}</View> : null}
       {support.moreError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{support.moreError}</Text> : null}
