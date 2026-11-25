@@ -89,7 +89,9 @@ test('frozen rejects timestamps more than one year ahead', () => {
   const now = new Date('2026-11-25T12:00:00Z');
   const file = timestamp => [{ status: 'A', path: m(`${timestamp}_new`) }];
   assert.deepEqual(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files: file('20271125120000') }).errors, []);
-  assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files: file('99991231235959') }).errors.join(), /one year in the future/);
+  for (const timestamp of ['20271125120001', '99991231235959']) {
+    assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files: file(timestamp) }).errors.join(), /one year in the future/);
+  }
 });
 
 test('frozen detects migration paths containing newlines', () => {
