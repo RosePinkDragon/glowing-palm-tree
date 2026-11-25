@@ -78,6 +78,11 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
 
       const target = brand ? 'Chicken thali' : 'Misal pav';
       const titleButton = () => page.getByRole('button', { name: `View details for ${target}`, exact: true }).first();
+      // Tab from the title reaches the next control of the same card (Add), not a duplicate details button. Done before any dialog opens so no focus restore can race it.
+      await titleButton().scrollIntoViewIfNeeded(); await titleButton().focus(); await page.keyboard.press('Tab');
+      await page.waitForFunction(label => document.activeElement && document.activeElement.getAttribute('aria-label') !== label, `View details for ${target}`);
+      const next = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
+      assert.ok(next && !next.startsWith('View details for '), `Tab moves on to ${next}`);
       // Enter and Space open details from the keyboard; Escape returns focus to the title button.
       for (const key of ['Enter', 'Space']) {
         await titleButton().scrollIntoViewIfNeeded(); await titleButton().focus();
@@ -86,10 +91,6 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
         await assertDishSheet(page, target);
         await closeDishSheet(page, `View details for ${target}`);
       }
-      // Tab from the title reaches the next control of the same card (Add), not a duplicate details button.
-      await titleButton().focus(); await page.keyboard.press('Tab');
-      const next = await page.evaluate(() => document.activeElement?.getAttribute('aria-label'));
-      assert.ok(next && !next.startsWith('View details for '), `Tab moves on to ${next}`);
       // Pointer still works from the title and from the photo.
       await titleButton().click(); await assertDishSheet(page, target); await closeDishSheet(page, `View details for ${target}`);
       await page.locator(brand ? '#featured-menu img' : '#regular-menu img').first().click({ force: true });
