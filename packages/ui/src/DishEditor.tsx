@@ -69,7 +69,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
     try { await services.deleteMenuItem(latest.id); await onDeleted(latest.name); }
     catch (e) { setDeleteError(message(e)); } finally { setBusy(null); }
   };
-  const guard = useDiscardGuard(dishIsDirty(baseline, draft), onClose);
+  const guard = useDiscardGuard(dishIsDirty(baseline, draft), onClose, !!busy);
   const closeDelete = () => { setConfirmDelete(false); restorePanelFocus(trigger.current); };
   const closePhoto = () => { setPhotoOpen(false); restorePanelFocus(trigger.current); };
   const photo = latest?.imageUrl?.replace(/\/card\.webp$/, '/detail.webp');

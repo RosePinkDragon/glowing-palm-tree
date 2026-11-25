@@ -44,7 +44,7 @@ export function AddressForm({ editing, save, close, inline = false }: { editing:
     catch (error) { setSaveError(addressErrorMessage(error)); }
     finally { busy.current = false; setSaving(false); }
   };
-  const guard = useDiscardGuard(!inline && addressIsDirty(baseline, form), close);
+  const guard = useDiscardGuard(!inline && addressIsDirty(baseline, form), close, saving);
   const pinText = form.location ? (form.location.source === 'gps' ? 'Delivery pin set from your phone\'s location.' : 'Delivery pin is set on the map.') : 'No delivery pin yet.';
   const locationProblem = locationError || errors.location;
   const footer = <>

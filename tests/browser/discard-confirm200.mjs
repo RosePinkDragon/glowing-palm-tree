@@ -17,6 +17,9 @@ const visible = locator => locator.filter({ visible: true });
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir(shots, { recursive: true });
 const errors = [];
+// W200_CPU_RATE=4 repeats the journey on a slowed CPU (focus and history timing).
+const cpuRate = Number(process.env.W200_CPU_RATE ?? 1);
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
 async function newContext(slug, audience, user, server, handler) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
@@ -41,6 +44,7 @@ async function newContext(slug, audience, user, server, handler) {
     return handler(request, url, json);
   });
   const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
+  if (cpuRate !== 1) await (await context.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
   return { context, page };
 }
 /** The three things a leave can hit while dirty or clean, shared by every screen below. */
@@ -49,13 +53,18 @@ const helpers = page => {
   const button = name => visible(page.getByRole('button', { name, exact: true }));
   return {
     dialog, button,
+    // The guard's history entry is added after React commits the dirty state: wait for it before pressing Back, as a person always does.
+    guarded: () => eventually(async () => (await page.evaluate(() => !!history.state?.discardGuard))),
+    history: () => page.evaluate(() => ({ length: history.length, guard: !!history.state?.discardGuard, path: location.pathname })),
     focusedName: () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent),
     // Whether the page would ask before unloading: the same event a reload or tab close fires.
     asksBeforeUnload: () => page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; }),
     // Keep editing is the safe default: focus starts there, focus is kept inside, Escape keeps editing.
     async assertAsks() {
       await dialog().waitFor();
-      assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Keep editing', 'focus starts on Keep editing');
+      // The modal's own mount handling may touch focus first; it settles on Keep editing and stays there.
+      await eventually(async () => await page.evaluate(() => document.activeElement?.textContent) === 'Keep editing');
+      await page.waitForTimeout(800); assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Keep editing', 'focus starts on Keep editing and stays');
       await page.getByText('You have unsaved changes. If you leave now they will be lost.', { exact: true }).waitFor();
       for (let index = 0; index < 4; index++) { await page.keyboard.press('Tab'); assert.ok(await dialog().evaluate(node => node.contains(document.activeElement)), 'Tab stays inside the confirmation'); }
       await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Shift+Tab');
@@ -121,10 +130,15 @@ try {
         assert.equal(await price().inputValue(), '340');
         // Escape on the editor itself asks (the Android back button takes the same path).
         await price().focus(); await page.keyboard.press('Escape'); await h.assertAsks(); await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' });
+        // Dirty, clean again, dirty again: Back still asks (the removed guard entry must not swallow it).
+        await price().fill('320'); assert.equal(await h.asksBeforeUnload(), false); await price().fill('341'); assert.equal(await h.asksBeforeUnload(), true); await h.guarded();
+        await page.goBack(); await h.assertAsks(); await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' }); await price().fill('340');
         // Browser Back asks instead of leaving; asking again after Keep editing works.
         await page.goBack(); await h.assertAsks(); await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' });
         assert.equal(await price().inputValue(), '340');
-        await page.goBack(); await h.assertAsks();
+        // A second Back while the confirmation is open does not leave: the confirmation and the form stay.
+        await page.goBack(); await h.assertAsks(); await page.goBack(); await h.dialog().waitFor(); await heading('Edit dish').waitFor();
+        assert.equal(await price().inputValue(), '340');
         // Discard leaves, sends nothing and the next open shows the saved price.
         await button('Discard changes').click(); await heading('Edit dish').waitFor({ state: 'hidden' });
         assert.deepEqual(patches, [], 'discarding writes nothing'); assert.equal(await h.asksBeforeUnload(), false, 'closed editor no longer blocks reload');
@@ -159,17 +173,20 @@ try {
         await field('Delivery fee').fill('45'); await button('Save changes').click(); await visible(page.getByText('Restaurant details saved.', { exact: true })).waitFor();
         assert.equal(saves.length, 1); assert.equal(saves[0].p_delivery_fee_paise, 4500);
         assert.equal(await h.asksBeforeUnload(), false, 'saved values are not unsaved changes');
-        await button('Back to Settings').click(); await button('Log out').waitFor(); assert.equal(await dialog().count(), 0, 'no prompt after a save');
+        // Edit again after a save: Back asks (the guard entry from the first dirty period was removed cleanly).
+        await field('Delivery fee').fill('50'); await h.guarded(); await page.goBack(); await h.assertAsks(); await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' });
+        assert.equal(await field('Delivery fee').inputValue(), '50');
+        await field('Delivery fee').fill('45'); await button('Back to Settings').click(); await button('Log out').waitFor(); assert.equal(await dialog().count(), 0, 'no prompt once the values match the saved ones');
       }
       // ---- Customer: add and edit address ----
       const address = { id: uuid('5', 1), label: 'work', custom_label: null, house: 'Shop 12', street_area: 'Station Road', landmark: null, latitude: 17.73, longitude: 73.4, location_source: 'pin', version: 1, updated_at: '2026-11-15T10:00:00Z', in_area: true, distance_m: 2800 };
-      const writes = [];
+      const writes = []; let gate = null, gateArrived = null;
       const buyer = await newContext(slug, 'customer', users[1], customer, async (request, url, json) => {
         const method = request.method();
         if (url.pathname === '/rest/v1/businesses') return json({ id: businessId, slug, name, delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
         if (['/rest/v1/menu_items', '/rest/v1/menu_categories', '/rest/v1/orders'].includes(url.pathname)) return json([]);
         if (url.pathname === '/rest/v1/rpc/list_addresses') return json([address]);
-        if (url.pathname === '/rest/v1/customer_addresses' && method === 'POST') { const body = request.postDataJSON(); writes.push({ method, body }); return json({ id: uuid('5', 2), version: 1 }, 201); }
+        if (url.pathname === '/rest/v1/customer_addresses' && method === 'POST') { const body = request.postDataJSON(); writes.push({ method, body }); if (gate) { gateArrived.resolve(); await gate.promise; } return json({ id: uuid('5', 2), version: 1 }, 201); }
         if (url.pathname === '/rest/v1/customer_addresses' && method === 'PATCH') { writes.push({ method, body: request.postDataJSON() }); Object.assign(address, request.postDataJSON(), { version: 2 }); return json([{ id: address.id, version: 2 }]); }
         throw new Error(`Unexpected customer fixture ${method} ${url.pathname}`);
       });
@@ -183,13 +200,20 @@ try {
         // Add: clean close is immediate; typed text asks.
         await button('Add address').click(); await heading('Add address').waitFor(); assert.equal(await h.asksBeforeUnload(), false);
         await button('Close').click(); await heading('Add address').waitFor({ state: 'hidden' }); assert.equal(await dialog().count(), 0, 'no prompt for an untouched form');
-        await button('Add address').click(); await house().fill('Flat 7'); assert.equal(await h.asksBeforeUnload(), true);
+        await button('Add address').click(); await house().fill('F'); await house().fill(''); assert.equal(await h.asksBeforeUnload(), false);
+        await house().fill('Flat 7'); assert.equal(await h.asksBeforeUnload(), true); await h.guarded();
+        await page.goBack(); await h.assertAsks(); await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' });
         await button('Close').click(); await h.assertAsks(); await page.screenshot({ path: `${shots}/${slug}-discard-address.png` });
         await button('Keep editing').click(); await dialog().waitFor({ state: 'hidden' });
         assert.equal(await house().inputValue(), 'Flat 7', 'Keep editing keeps what was typed'); await eventually(async () => await h.focusedName() === 'Close');
         await page.goBack(); await h.assertAsks(); await page.keyboard.press('Escape'); await dialog().waitFor({ state: 'hidden' });
         await page.goBack(); await h.assertAsks();
+        const before = await h.history();
         await button('Discard changes').click(); await heading('Add address').waitFor({ state: 'hidden' });
+        // The guard leaves nothing behind: not the current entry, still on this page, and the Saved addresses page (not the drawer) is still showing.
+        await eventually(async () => !(await h.history()).guard);
+        const after = await h.history(); assert.equal(after.path, before.path, 'still on the same page'); assert.ok(after.length - before.length <= 1, 'no more than the one entry already taken by the guard');
+        await heading('Work').waitFor(); await button('Add address').waitFor();
         assert.deepEqual(writes, [], 'discarding sends nothing'); assert.equal(await h.asksBeforeUnload(), false);
         // Edit: unchanged is clean, changed asks and Discard restores the saved text on the next open.
         await button('Options for Work').click(); await button('Edit address').click(); await heading('Edit address').waitFor();
@@ -204,8 +228,15 @@ try {
         await context.grantPermissions(['geolocation']); await context.setGeolocation({ latitude: 17.7219, longitude: 73.3904, accuracy: 12 });
         await button('Add address').click(); await house().fill('Flat 7'); await visible(page.getByLabel('Street and area', { exact: true })).fill('Market Road');
         await button('Use my current location').click(); await visible(page.getByText('Delivery pin set from your phone\'s location.', { exact: true })).waitFor();
-        await button('Save address').click(); await visible(page.getByText('Address saved.', { exact: true })).waitFor(); assert.equal(await dialog().count(), 0, 'no prompt after saving a new address');
+        // While the save is in flight, Escape and Back are ignored: nothing asks and the form stays.
+        gate = deferred(); const arrived = deferred(); gateArrived = arrived;
+        await button('Save address').click(); await arrived.promise;
+        await page.keyboard.press('Escape'); await page.goBack(); await page.waitForTimeout(300);
+        assert.equal(await dialog().count(), 0, 'no prompt while saving'); await heading('Add address').waitFor();
+        gate.resolve();
+        await visible(page.getByText('Address saved.', { exact: true })).waitFor(); assert.equal(await dialog().count(), 0, 'no prompt after saving a new address');
         assert.equal(writes.length, 2);
+        await eventually(async () => !(await h.history()).guard); await heading('Work').waitFor(); await button('Add address').waitFor();
       }
       assert.deepEqual(errors, []);
       console.log(`PASS: ${slug} discard confirmation (#200): dish add/edit, restaurant details, address add/edit - clean leaves, dirty asks (button, Escape, browser Back, beforeunload), Keep editing keeps text and focus, Discard leaves, no prompt after save`);

@@ -100,7 +100,7 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
   };
 
   // Dirty means the typed fields differ from the settings last loaded or saved (#200); a save replaces that baseline, a failed one keeps it.
-  const guard = useDiscardGuard(load.kind === 'ready' && detailsAreDirty(formFromSettings(load.settings), form), onBack);
+  const guard = useDiscardGuard(load.kind === 'ready' && detailsAreDirty(formFromSettings(load.settings), form), onBack, saving);
   const disabled = load.kind !== 'ready' || saving || problem?.kind === 'conflict' || problem?.kind === 'denied';
   const readOnlyRow = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}><Text style={muted}>{label}</Text><Text style={{ ...body(14), ...bold, flexShrink: 1, textAlign: 'right' }}>{value}</Text></View>;
 
