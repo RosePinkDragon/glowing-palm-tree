@@ -22,6 +22,7 @@ Node 24.22.3, npm 11.19.1 and Deno 2.9.6; dependencies installed with `npm ci`. 
 | same / services | 115 passed, 0 failed, 0 skipped | 29.301 s runner |
 | same / UI | 143 passed, 0 failed, 0 skipped; excludes `recipient-model.test.ts` | 0.274 s runner |
 | Separate baseline check from `packages/ui`: `node --import ../services/src/test-loader.mjs --test --test-isolation=none src/recipient-model.test.ts` | 5 passed, 0 failed, 0 skipped; not part of the baseline CI invocation | 0.146 s wall |
+| After PR #227 merged: `npm test --workspace @market/ui` on main code `7da0fcf` | 148 passed, 0 failed, 0 skipped; includes the previously omitted file | 0.425 s runner |
 | App CI `tests`: the five `.github/scripts/` test files named by the workflow | 64 passed, 0 failed, 0 skipped | 3.783 s wall |
 | App CI `postgis-rls`: `tests/database/run.sh` | passed both layouts; case and skip totals unavailable | 323.674 s wall |
 | App CI `dispatcher`: `deno test supabase/functions/dispatch-notifications/dispatch_test.ts` | 7 passed, 0 failed | 1.952 s wall |
