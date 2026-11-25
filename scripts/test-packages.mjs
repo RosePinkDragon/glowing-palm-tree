@@ -1,8 +1,13 @@
-import { access, readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
+import { coverageArgs } from './coverage.mjs';
 
 const ignoredDirectories = new Set(['.expo', '.turbo', 'build', 'coverage', 'dist', 'node_modules']);
+// With COVERAGE_DIR set (npm run coverage), each package's tests also write an lcov file there. Node does not accept
+// --experimental-test-coverage through NODE_OPTIONS, so the flags are added to the package's own `node ... --test ...` script.
+const coverageDirectory = process.env.COVERAGE_DIR;
+const repositoryRoot = resolve(import.meta.dirname, '..');
 const packagesRoot = resolve(process.argv[2] ?? resolve(import.meta.dirname, '..', 'packages'));
 
 if (process.argv.length > 3) {
@@ -38,6 +43,13 @@ async function packageTests(directory) {
   return files.sort();
 }
 
+// Node writes source paths relative to the package; make them relative to the repository so suites can be merged.
+async function rebaseLcov(file, packageDirectory) {
+  let text;
+  try { text = await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  await writeFile(file, text.replace(/^SF:(.*)$/gm, (_, path) => `SF:${relative(repositoryRoot, resolve(packageDirectory, path))}`));
+}
+
 const packages = await packageDirectories(packagesRoot);
 let testedPackages = 0;
 let failed = false;
@@ -49,8 +61,13 @@ for (const packageDirectory of packages) {
   if (typeof testScript === 'string' && testScript.trim()) {
     testedPackages++;
     console.log(`Package test script: ${packageName}`);
-    const result = spawnSync('npm', ['run', 'test'], { cwd: packageDirectory, stdio: 'inherit' });
+    const lcovFile = coverageDirectory && /^node\s/.test(testScript.trim()) ? resolve(coverageDirectory, `${packageDirectory.split(/[\\/]/).pop()}.lcov`) : undefined;
+    if (coverageDirectory && !lcovFile) console.log(`Coverage skipped for ${packageName}: its test script does not start with node.`);
+    const result = lcovFile
+      ? spawnSync(`"${process.execPath}" ${coverageArgs(lcovFile).map(arg => `'${arg}'`).join(' ')} ${testScript.trim().replace(/^node\s+/, '')}`, { cwd: packageDirectory, stdio: 'inherit', shell: true })
+      : spawnSync('npm', ['run', 'test'], { cwd: packageDirectory, stdio: 'inherit' });
     if (result.error) throw result.error;
+    if (lcovFile) await rebaseLcov(lcovFile, packageDirectory);
     if (result.signal || result.status !== 0) failed = true;
     continue;
   }
@@ -62,11 +79,13 @@ for (const packageDirectory of packages) {
   }
   testedPackages++;
   console.log(`Package tests (${files.length}): ${packageName}`);
-  const result = spawnSync(process.execPath, ['--test', '--test-isolation=none', ...files], {
+  const lcovFile = coverageDirectory ? resolve(coverageDirectory, `${packageDirectory.split(/[\\/]/).pop()}.lcov`) : undefined;
+  const result = spawnSync(process.execPath, ['--test', '--test-isolation=none', ...(lcovFile ? coverageArgs(lcovFile) : []), ...files], {
     cwd: packageDirectory,
     stdio: 'inherit',
   });
   if (result.error) throw result.error;
+  if (lcovFile) await rebaseLcov(lcovFile, packageDirectory);
   if (result.signal || result.status !== 0) failed = true;
 }
 

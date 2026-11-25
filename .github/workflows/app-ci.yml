@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -12,8 +13,43 @@ concurrency:
 permissions:
   contents: read
 
+# #231: a cheap first job decides which jobs the change needs (pushes to main and manual runs run everything), the web
+# apps are built once and reused by every browser shard, and the single `ci` job at the end is the one check that
+# branch protection (#215) should require: it passes when jobs were skipped as unneeded and fails if any needed job did not pass.
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.detect.outputs.all }}
+      app: ${{ steps.detect.outputs.app }}
+      browser: ${{ steps.detect.outputs.browser }}
+      db: ${{ steps.detect.outputs.db }}
+      functions: ${{ steps.detect.outputs.functions }}
+      scripts: ${{ steps.detect.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # The pull request checkout is a merge commit; its diff against the current base tip is exactly what the PR changes.
+      # If the fetch or the diff fails, the script treats the change as unknown and runs everything.
+      - name: Fetch the pull request base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+      - name: Decide which jobs are needed
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/ci-changes.mjs
+
   quality:
+    name: quality
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -23,10 +59,33 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run check
-  export:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+      - name: Typecheck
+        if: needs.changes.outputs.app == 'true'
+        run: npm run typecheck
+      # Every Node test suite (packages, config, scripts and .github/scripts) runs once, with coverage. Report only.
+      - name: Node tests with coverage
+        run: npm run coverage
+      - name: Committed Supabase config is production-safe (#212)
+        run: npm run check:hosted-auth
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/*.lcov
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The four web apps are built once, with the fixture Supabase values the browser suites need, and every shard downloads
+  # this artifact. Before #231 App CI built them again without those values; the code compiled is identical.
+  build:
+    name: build
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,27 +94,92 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:web
-      - run: npm run export:native
       - uses: actions/upload-artifact@v4
         with:
-          name: web-exports
+          name: web-builds
           path: apps/*/dist/web
           if-no-files-found: error
+          retention-days: 1
 
-  tests:
+  export:
+    name: export
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      - run: node --test --test-isolation=none .github/scripts/delivery-policy.test.mjs .github/scripts/pr-preflight.test.mjs .github/scripts/migration-policy.test.mjs .github/scripts/trusted-migration-policy.test.mjs .github/scripts/validate-migration-policy.test.mjs .github/scripts/hosted-auth-config.test.mjs
-      - name: Committed Supabase config is production-safe (#212)
-        run: node .github/scripts/hosted-auth-config.mjs check
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run export:native
+
+  suites:
+    name: suites (${{ matrix.shard }})
+    needs: [changes, build]
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
+      options: --ipc=host
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: smoke
+            commands: |
+              npm run test:browser
+              node tests/browser/quick-checkout187.mjs
+          - shard: cart-photos
+            commands: |
+              node tests/browser/cart.mjs
+              node tests/browser/photos.mjs
+              node tests/browser/customer-offers182.mjs
+          - shard: brand-menu-kokani-checkout
+            commands: |
+              node tests/browser/brand39.mjs
+              node tests/browser/menu39.mjs
+              node tests/browser/kokani39.mjs
+              node tests/browser/checkout48.mjs
+          - shard: inbox-leave
+            commands: |
+              node tests/browser/cart-undo204.mjs
+              node tests/browser/inbox55.mjs
+              node tests/browser/leave52.mjs
+              node tests/browser/otp50.mjs
+              node tests/browser/owner-otp50.mjs
+              node tests/browser/owner-offers182.mjs
+              node tests/browser/dish-title203.mjs
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-builds
+          path: apps
+      - name: Run ${{ matrix.shard }} suites
+        run: ${{ matrix.commands }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence-${{ matrix.shard }}
+          path: dist/browser
+          if-no-files-found: ignore
 
   postgis-rls:
+    name: postgis-rls
+    needs: changes
+    if: needs.changes.outputs.db == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -64,6 +188,9 @@ jobs:
         run: tests/database/run.sh
 
   dispatcher:
+    name: dispatcher
+    needs: changes
+    if: needs.changes.outputs.functions == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -80,3 +207,34 @@ jobs:
       - name: Typecheck and test dish photo validation and lifecycle
         working-directory: supabase/functions/menu-photos
         run: deno test --frozen --allow-read photos_test.ts && deno check --frozen index.ts
+
+  # The one check to require. Always runs. A job skipped because the change did not need it passes; a needed job that
+  # failed, was cancelled or never ran (for example because the job it depends on failed) fails this check.
+  ci:
+    name: ci
+    if: always()
+    needs: [changes, quality, build, export, suites, postgis-rls, dispatcher]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+      APP: ${{ needs.changes.outputs.app }}
+      BROWSER: ${{ needs.changes.outputs.browser }}
+      DB: ${{ needs.changes.outputs.db }}
+      FUNCTIONS: ${{ needs.changes.outputs.functions }}
+      SCRIPTS: ${{ needs.changes.outputs.scripts }}
+    steps:
+      - name: Require every needed job to pass
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
+          if [[ -n "$bad" ]]; then echo "Not passing: $bad" >&2; exit 1; fi
+          result() { echo "$NEEDS" | jq -r --arg job "$1" '.[$job].result'; }
+          [[ "$(result changes)" == success ]] || { echo "Change detection did not succeed." >&2; exit 1; }
+          require() { [[ "$(result "$2")" == success ]] || { echo "$2 was needed ($1 changed) but its result is $(result "$2")." >&2; exit 1; }; }
+          [[ "$APP" == true || "$SCRIPTS" == true ]] && require "app or scripts" quality
+          [[ "$APP" == true ]] && require app export
+          [[ "$BROWSER" == true ]] && require browser build && require browser suites
+          [[ "$DB" == true ]] && require db postgis-rls
+          [[ "$FUNCTIONS" == true ]] && require functions dispatcher
+          echo "All needed jobs passed."
