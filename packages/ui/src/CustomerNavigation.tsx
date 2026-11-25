@@ -60,7 +60,7 @@ function AccountControl({ onPress, onDark = false }: { onPress: (node: Component
   return <Pressable ref={button} accessibilityRole="button" accessibilityLabel="Account" onPress={() => onPress(button.current)} style={{ minHeight: 48, paddingHorizontal: 18, justifyContent: 'center' }}><Text style={{ color: onDark ? '#FFFFFF' : colors.primary, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>Account</Text></Pressable>;
 }
 
-export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen, orderingAllowed, deliveryLine, welcome }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean; orderingAllowed: boolean; deliveryLine: string; welcome: ReactNode }) {
+export function CustomerNavigation({ market, render, controls, cartCount, signOut, onReorder, reorderOpen, deliveryLine, welcome }: { market: Market; render: (page: CustomerScreen, id?: string) => ReactNode; controls: RefObject<Controls | null>; cartCount: number; signOut: () => Promise<void>; onReorder: ReorderAction; reorderOpen: boolean; deliveryLine: string; welcome: ReactNode }) {
   const navigation = useNavigationContainerRef<Routes>();
   const { colors, name, statusHeader } = useMarketTheme();
   const fonts = useMarketFonts();
@@ -105,7 +105,7 @@ export function CustomerNavigation({ market, render, controls, cartCount, signOu
         {(['Menu', 'Cart', 'Orders', 'Order', 'Account', 'Login', 'Help', 'Privacy', 'Terms', 'Profile', 'Addresses', 'Notifications', 'NotFound'] as const).map(screen => <Stack.Screen key={screen} name={screen} component={CustomerRoute} />)}
       </Stack.Navigator>
     </NavigationContainer>
-    {cartCount && orderingAllowed && !onCart ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
+    {cartCount && !onCart ? <View style={{ padding: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border }}><MarketButton label={`Cart (${cartCount}) · View cart`} onPress={() => controls.current?.go('/cart')} /></View> : null}
     </View>
     <AccountDrawer open={drawer} close={closeDrawer} market={market} go={path => controls.current?.go(path)} signOut={signOut} onReorder={onReorder} covered={reorderOpen} />
   </Content.Provider></SafeAreaProvider>;
