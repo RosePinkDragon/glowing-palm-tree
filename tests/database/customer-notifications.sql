@@ -48,6 +48,8 @@ insert into feed_orders values ('other-business',public.test_feed_place(3,'kokan
 select set_config('request.jwt.claims','{"session_id":"55000000-0000-4000-8000-000000000001"}',true);
 select public.register_device_token('ammu-sammu','customer','feed-device-one');
 select public.register_device_token('ammu-sammu','customer','feed-device-two');
+-- Back to the fixture's implicit live session for whoever signs in next (#213: checkout now requires the caller's own session).
+select set_config('request.jwt.claims','',true);
 select set_config('request.jwt.claim.sub','55000000-0000-4000-8000-000000000002',true);
 insert into feed_orders values ('other-customer',public.test_feed_place(4));
 select set_config('request.jwt.claim.sub','55000000-0000-4000-8000-000000000005',true);
