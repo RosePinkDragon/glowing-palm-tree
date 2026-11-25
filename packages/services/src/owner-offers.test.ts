@@ -83,11 +83,16 @@ async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu') {
     const req: Req = { method, path: target.pathname.split('/').pop()!, query: target.searchParams, body: init?.body ? JSON.parse(String(init.body)) : undefined, accept: headers.get('accept') ?? '' };
     state.requests.push(req);
     assert.notEqual(method, 'DELETE', 'offers are never deleted');
-    if (req.path === 'offer_redemptions') {
+    if (req.path === 'offer_usage_stats') {
       if (state.statsFail) return Response.json({ code: 'XX000', message: 'boom', details: null, hint: null }, { status: 500 });
-      if (state.endless) { const from = state.requests.filter(r => r.path === 'offer_redemptions').length * 1000; return Response.json(Array.from({ length: 1000 }, (_, i) => ({ id: `e${String(from + i).padStart(8, '0')}`, offer_id: offerId, orders: { status: 'delivered', discount_paise: 1 } }))); }
-      const after = target.searchParams.get('id')?.replace('gt.', ''), offer = target.searchParams.get('offer_id')?.replace('eq.', '');
-      return Response.json(state.redemptions.filter(r => (!after || r.id > after) && (!offer || r.offer_id === offer)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(target.searchParams.get('limit'))));
+      const offer = (req.body as { p_offer_id: string | null }).p_offer_id;
+      const groups = new Map<string, { offer_id: string; uses: number; discount_given_paise: number; any_redemption: boolean }>();
+      for (const r of state.redemptions.filter(r => !offer || r.offer_id === offer)) {
+        const group = groups.get(r.offer_id) ?? { offer_id: r.offer_id, uses: 0, discount_given_paise: 0, any_redemption: true };
+        if (r.orders.status !== 'cancelled') { group.uses++; group.discount_given_paise += r.orders.discount_paise; }
+        groups.set(r.offer_id, group);
+      }
+      return Response.json([...groups.values()]);
     }
     if (req.path === 'orders') { const after = target.searchParams.get('id')?.replace('gt.', ''); return Response.json(state.dayOrders.filter(o => !after || o.id > after).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(target.searchParams.get('limit')))); }
     assert.equal(req.path, 'offers');
@@ -99,7 +104,7 @@ async function fixture(slug: 'ammu-sammu' | 'kokani-dine-inn' = 'ammu-sammu') {
   };
   const service = createMarketServices({ businessSlug: slug, audience: 'admin', config: { url: 'https://offers-owner.example.test', anonKey: 'sb_publishable_test' } });
   await service.auth.signIn('owner@example.test', 'password');
-  return { service, state, cleanup: () => { service.dispose(); globalThis.fetch = original; }, writes: () => state.requests.filter(r => r.method !== 'GET') };
+  return { service, state, cleanup: () => { service.dispose(); globalThis.fetch = original; }, writes: () => state.requests.filter(r => r.path === 'offers' && r.method !== 'GET') };
 }
 const dbError = (status: number, code: string, message: string, details: string | null = null) => () => Response.json({ code, message, details, hint: null }, { status });
 const rejects = (promise: Promise<unknown>, code: string) => assert.rejects(promise, (e: unknown) => e instanceof ServiceError && e.code === code && !e.message.includes('relation'));
@@ -121,19 +126,7 @@ test('listOffers derives status and totals from redemptions on non-cancelled ord
     assert.deepEqual([later.useCount, later.termsLocked, later.status], [0, false, 'paused'], 'paused wins over scheduled');
     assert.equal(dinner.code, 'DINNER20'); assert.deepEqual(dinner.window, { from: '18:00', to: '22:30', days: [1, 3, 5] }); assert.equal(dinner.startsAt, '2026-01-01T00:00:00.000Z');
     const [read, usage] = state.requests;
-    assert.equal(read.query.get('business_id'), 'eq.business'); assert.match(usage.query.get('select')!, /orders!offer_redemptions_order_fk\(status, ?discount_paise\)/); assert.equal(usage.query.get('business_id'), 'eq.business');
-    assert.equal(state.requests.every(r => r.method === 'GET'), true);
-  } finally { cleanup(); }
-});
-
-test('listOffers pages redemptions by key so nothing is skipped or counted twice', async () => {
-  const { service, state, cleanup } = await fixture();
-  try {
-    state.redemptions = Array.from({ length: 2500 }, (_, i) => ({ id: `r${String(i).padStart(5, '0')}`, offer_id: offerId, orders: { status: 'delivered', discount_paise: 10 } }));
-    const [offer] = await service.listOffers();
-    assert.deepEqual([offer.useCount, offer.discountGivenPaise], [2500, 25000]);
-    const pages = state.requests.filter(r => r.path === 'offer_redemptions');
-    assert.equal(pages.length, 4, 'paging ends on an empty page'); assert.equal(pages[3].query.get('id'), 'gt.r02499'); assert.equal(pages[0].query.get('id'), null); assert.equal(pages[1].query.get('id'), 'gt.r00999'); assert.equal(pages[2].query.get('id'), 'gt.r01999');
+    assert.equal(read.query.get('business_id'), 'eq.business'); assert.equal(usage.path, 'offer_usage_stats'); assert.deepEqual(usage.body, { p_business_id: 'business', p_offer_id: null });
   } finally { cleanup(); }
 });
 
@@ -261,7 +254,7 @@ test('a committed write is never reported as failed because the usage read-back 
     state.statsFail = true;
     const created = await service.createOffer(input);
     assert.deepEqual([created.id, created.useCount, created.termsLocked, created.usageKnown], [offerId, 0, false, true], 'a new offer has no usage to read');
-    assert.equal(state.requests.filter(r => r.path === 'offer_redemptions').length, 0, 'create reads nothing back');
+    assert.equal(state.requests.filter(r => r.path === 'offer_usage_stats').length, 0, 'create reads nothing back');
     state.writes.push(() => Response.json([row({ paused: true, version: 5 })]));
     const paused = await service.pauseOffer(offerId, 4);
     assert.deepEqual([paused.status, paused.version, paused.usageKnown, paused.termsLocked], ['paused', 5, false, false], 'the write resolves; usage is simply unknown');
@@ -273,17 +266,13 @@ test('a committed write is never reported as failed because the usage read-back 
   } finally { cleanup(); }
 });
 
-test('listOffers still lists offers, without usage, when usage cannot be read or is too large', async () => {
+test('listOffers still lists offers, without usage, when usage cannot be read', async () => {
   const { service, state, cleanup } = await fixture();
   try {
     state.statsFail = true;
     let [offer] = await service.listOffers();
     assert.deepEqual([offer.name, offer.usageKnown, offer.useCount, offer.discountGivenPaise, offer.termsLocked, offer.status], ['Dinner', false, 0, 0, false, 'active']);
-    state.statsFail = false; state.endless = true; const before = state.requests.filter(r => r.path === 'offer_redemptions').length;
-    [offer] = await service.listOffers();
-    assert.equal(offer.usageKnown, false, 'the 200-page cap degrades to unknown usage instead of failing the screen');
-    assert.equal(state.requests.filter(r => r.path === 'offer_redemptions').length - before, 200);
-    state.endless = false;
+    state.statsFail = false;
     [offer] = await service.listOffers();
     assert.equal(offer.usageKnown, true);
     // A failed offers read is still an error: there is nothing to show.

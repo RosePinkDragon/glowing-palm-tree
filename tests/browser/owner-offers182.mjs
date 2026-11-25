@@ -57,11 +57,18 @@ try {
           return json(dayOrders.filter(o => o.status !== 'cancelled' && o.created_at >= from && o.created_at < to && (!after || o.id > after)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))));
         }
         if (path === '/rest/v1/rpc/daily_summary') { const date = request.postDataJSON().p_date ?? new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return json({ date, collected_paise: 0, delivered_count: 0, outstanding_paise: 0, outstanding_count: 0, placed_count: 0, cancelled_count: 0, top_dishes: [] }); }
-        if (path === '/rest/v1/offer_redemptions') {
+        if (path === '/rest/v1/rpc/offer_usage_stats') {
           if (failUsage) return fail('XX000', 'usage view unavailable', 500);
-          const after = q.get('id')?.replace('gt.', ''), offer = q.get('offer_id')?.replace('eq.', '');
-          assert.equal(q.get('business_id'), `eq.${businessId}`);
-          return json(redemptions.filter(r => (!after || r.id > after) && (!offer || r.offer_id === offer)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))).map(r => ({ id: r.id, offer_id: r.offer_id, orders: { status: r.status, discount_paise: r.discount } })));
+          const { p_business_id: business, p_offer_id: offer } = request.postDataJSON();
+          assert.equal(business, businessId);
+          // Mirrors the SQL aggregate (#186): one row per redeemed offer; cancelled orders give the use back but still lock the terms.
+          const rows = new Map();
+          for (const r of redemptions.filter(r => !offer || r.offer_id === offer)) {
+            const row = rows.get(r.offer_id) ?? { offer_id: r.offer_id, uses: 0, discount_given_paise: 0, any_redemption: true };
+            if (r.status !== 'cancelled') { row.uses++; row.discount_given_paise += r.discount; }
+            rows.set(r.offer_id, row);
+          }
+          return json([...rows.values()]);
         }
         if (path === '/rest/v1/offers') {
           assert.equal(who, owner.id, 'only the owner reaches offers');
