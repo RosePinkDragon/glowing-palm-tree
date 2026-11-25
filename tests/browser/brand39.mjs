@@ -80,8 +80,13 @@ try {
         ({ context, page } = await open(true, viewport));
         await page.getByRole('button', { name: 'Browse the menu' }).click();
         await page.getByRole('button', { name: 'Add to cart' }).click(); // addresses are read only once the cart has something
-        const line = page.getByRole('button', { name: 'Delivery address: Home · Flat 3, Bharne Naka. Change', exact: true });
+        const line = page.getByRole('button', { name: 'Delivery address: Home · Flat 3, Bharne Naka. Manage saved addresses', exact: true });
         await line.waitFor();
+        assert.equal(await page.getByRole('button', { name: /\. Change$/ }).count(), 0, 'header no longer claims to change the destination');
+        await line.click();
+        await page.getByText('Choose where to deliver each order in your cart.', { exact: true }).first().waitFor();
+        assert.equal(new URL(page.url()).pathname, '/addresses');
+        await page.goBack(); await page.getByText('Brand fixture meal').first().waitFor();
         await page.getByText('Brand fixture meal').first().waitFor();
         if (shots) await page.screenshot({ path: `${shots}/${slug}-menu-topbar-${label}.png` });
         await context.close();

@@ -52,6 +52,7 @@ export function CustomerAddresses({ market }: { market: Market }) {
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
   return <View style={{ gap: 16 }}>
     <MarketText variant="heading">Saved addresses</MarketText>
+    <Text style={{ color: colors.muted, fontSize: 14, lineHeight: 21 }}>Choose where to deliver each order in your cart.</Text>
     <View style={{ flexDirection: 'row', gap: 10, padding: 12, borderRadius: 12, backgroundColor: colors.tint }}>
       <MarketIcon name="pin" color={colors.primary} size={18} nudge={2} />
       <Text style={{ flex: 1, color: colors.ink, fontSize: 14, lineHeight: 21 }}>We deliver in Khed and nearby villages. Addresses outside our area are shown but can't be used for an order.</Text>
