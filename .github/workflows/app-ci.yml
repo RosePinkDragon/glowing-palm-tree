@@ -153,6 +153,7 @@ jobs:
               node tests/browser/owner-otp50.mjs
               node tests/browser/owner-offers182.mjs
               node tests/browser/dish-title203.mjs
+              node tests/browser/discard-confirm200.mjs
     env:
       EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
