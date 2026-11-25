@@ -16,7 +16,7 @@ function fixture(mode = 'pre-release-baseline', options = {}) {
     }
     assert.equal(path, `/repos/${repository}/contents/${policyPath}?ref=${sha}`, 'only the policy at the resolved main commit may be read');
     if (options.fileError) throw Object.assign(new Error('contents API failure'), { status: options.fileError });
-    return { data: options.file ?? { type: 'file', path: policyPath, encoding: 'base64', content: Buffer.from(options.json ?? JSON.stringify({ mode })).toString('base64') } };
+    return { data: options.file ?? { type: 'file', path: policyPath, encoding: 'base64', content: Buffer.from(options.json ?? JSON.stringify({ mode, baseline: { version: '20261117000000' } })).toString('base64') } };
   };
   return { calls, request, run: (files = [], body = '') => evaluateTrustedMigrations({ repository, request, files, body }) };
 }
@@ -121,7 +121,7 @@ test('frozen policy from main requires new migrations to sort after the recorded
   const json = JSON.stringify({ mode: 'frozen', baseline: { version: '20261117000000', commit: 'b'.repeat(40) } });
   const add = name => [{ filename: migration(name), status: 'added' }];
   assert.deepEqual((await fixture('frozen', { json }).run(add('20261118000000_next'))).errors, []);
-  assert.equal((await fixture('frozen', { json }).run(add('20261116000000_older'))).errors.length, 1);
-  assert.equal((await fixture('frozen', { json }).run(add('20261117000000_same'))).errors.length, 1);
-  assert.equal((await fixture('frozen', { json }).run([{ filename: migration('20261117000000_baseline'), status: 'modified' }])).errors.length, 1);
+  assert.match((await fixture('frozen', { json }).run(add('20261116000000_older'))).errors.join(), /after the baseline/);
+  assert.match((await fixture('frozen', { json }).run(add('20261117000000_same'))).errors.join(), /after the baseline/);
+  assert.match((await fixture('frozen', { json }).run([{ filename: migration('20261117000000_baseline'), status: 'modified' }])).errors.join(), /frozen/i);
 });
