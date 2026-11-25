@@ -182,3 +182,14 @@ test('placeOrder passes the code, handles offer_changed and verifies the stored 
     await assert.rejects(service.placeOrder(request(discounted, 'SAVE20')), /does not match the accepted pricing/, 'the RPC result must agree on the discount too');
   });
 });
+
+test('quoteOrder gives up on a request that never answers, and aborts it (#193)', async () => {
+  const originalFetch = globalThis.fetch;
+  let aborted = false, calls = 0;
+  globalThis.fetch = (_input, init) => { calls++; return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => { aborted = true; reject(new DOMException('aborted', 'AbortError')); })); };
+  const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://offers.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} }, quoteTimeoutMs: 40 });
+  try {
+    await assert.rejects(service.quoteOrder(lines, 'SAVE20'), (e: unknown) => e instanceof ServiceError && e.code === 'QUOTE_TIMEOUT');
+    assert.equal(calls, 1); assert.equal(aborted, true, 'the hanging request is aborted, not left open');
+  } finally { service.dispose(); globalThis.fetch = originalFetch; }
+});

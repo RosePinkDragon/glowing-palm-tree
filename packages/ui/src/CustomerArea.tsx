@@ -179,6 +179,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     // The accepted pricing carries the server's discount and offer (capturePricing), or place_order would refuse any cart an offer applies to.
     if (offers.pending) throw new Error('Updating your offer. Try again in a moment.');
     if (offers.code && !offers.quote) throw new Error('Could not confirm your code. Remove it or try again.');
+    if (offers.blocked) throw new Error(offers.shortfall);
     return { userId, contact: validateContact(details), pricing: capturePricing(cart, market.business.deliveryFeePaise, market.business.minOrderPaise, offerTerms), offerCode: offers.code };
   };
   const submit = (address: SavedAddress, fix: LocationFix | null) => guarded(async () => {
@@ -288,10 +289,10 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Menu' ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <MenuBody variant={menuLayout} facts={facts} businessId={businessId} {...menuProps} bleed={edge} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} />) : null}
     {page === 'Cart' ? <CartPage demo={demo} cartMessage={cartMessage} ready={draft.ready} cartError={draft.cartError} cart={cart} locked={locked} orderingAllowed={orderingAllowed} hasUnavailable={unavailable}
       subtotalPaise={subtotal} deliveryFeePaise={fee} minOrderPaise={minOrder} discountPaise={billing.discountPaise} details={details} setDetails={setDetails} recipient={draft.recipient} addrs={addrs}
-      placeLabel={busy ? 'Please wait…' : market.session && !addrs.selected ? addrs.addresses?.length === 0 && !addrs.error ? 'Add a delivery address' : 'Choose a delivery address' : 'Place order'}
+      placeLabel={busy ? 'Please wait…' : offers.pending ? 'Updating your offer…' : market.session && !addrs.selected ? addrs.addresses?.length === 0 && !addrs.error ? 'Add a delivery address' : 'Choose a delivery address' : 'Place order'}
       offerSlot={demo ? null : <CartOffer signedIn={signedIn} offers={offers.active} pricing={offers.quote?.pricing ?? null} nudge={offers.quote?.nudge ?? null} code={offers.code} message={offers.message} applying={offers.applying} disabled={locked || busy}
-        onApply={code => void offers.apply(code)} onRemove={offers.remove} onSignIn={() => navigation.current?.login('/cart')} />}
-      placeDisabled={busy || locked || offers.pending || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
+        shortfall={offers.shortfall} checkFailed={offers.checkFailed} onRetry={offers.retry} onApply={code => void offers.apply(code)} onRemove={offers.remove} onSignIn={() => navigation.current?.login('/cart')} />}
+      placeDisabled={busy || locked || offers.pending || offers.checkFailed || offers.blocked || unavailable || demo || !market.business?.orderingEnabled || (!!market.session && addrs.addresses === null && !addrs.error)}
       localError={localError} change={changeCart} onPlace={() => void checkout()} onBrowse={() => navigation.current?.go('/')} /> : null}
     {page === 'Account' || page === 'Login' ? <AuthPanel onLegal={path => navigation.current?.go(path)} accountActions={page === 'Account' ? <LeaveRestaurant market={market} businessId={businessId} resetCart={draft.resetCart} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} onLeft={setLeftNotice} /> : null} market={{ ...market, preferences: { ...market.preferences, signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); } } }} /> : null}
     {page === 'Orders' ? <CustomerHistory market={market} go={path => navigation.current?.go(path)} onReorder={startReorder} /> : null}

@@ -44,7 +44,7 @@ const changedReason: Record<OfferReason, string> = {
 };
 /** Shown when place_order refuses because the quoted offer no longer applies. Nothing was ordered; the customer must tap Place order again. */
 export function offerChangedMessage(e: Rejection, totalPaise: number | null): string {
-  if (e.reason === 'rate_limited') return `${offerErrorMessage(e)}. Your total is now ${totalPaise === null ? 'updated' : money(totalPaise)}. Tap Place order to continue.`;
+  if (e.reason === 'rate_limited') return `Too many code tries, so we removed it. Your total is now ${totalPaise === null ? 'updated' : money(totalPaise)}. You can try a code again in ${retryMinutes(e.retryAfterSeconds)} min.`;
   return `Your offer changed: ${changedReason[e.reason] ?? changedReason.changed}. Your total is now ${totalPaise === null ? 'updated' : money(totalPaise)}. Tap Place order to confirm.`;
 }
 
@@ -67,3 +67,11 @@ export function discountLabel(offer: { name?: string; code?: string | null } | u
   return who ? `Discount (${who})` : 'Discount';
 }
 export const minus = (paise: number) => `−${money(paise)}`;
+/** "Discount (Launch offer): −₹100 → −₹50" on the revised-order screen, when either the old or the new quote has an offer; null when neither does. */
+export function revisedDiscountLine(old: Pick<PricingTerms, 'discount_paise' | 'offer'>, next: Pick<PricingTerms, 'discount_paise' | 'offer'>): string | null {
+  const given = (t: Pick<PricingTerms, 'discount_paise' | 'offer'>) => t.offer && t.discount_paise ? { paise: t.discount_paise, offer: t.offer } : null;
+  const before = given(old), after = given(next);
+  if (!before && !after) return null;
+  const side = (o: typeof before) => o ? minus(o.paise) : money(0);
+  return `${discountLabel((after ?? before)?.offer)}: ${side(before)} → ${side(after)}`;
+}
