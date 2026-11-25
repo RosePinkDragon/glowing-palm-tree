@@ -2,8 +2,10 @@
 // Pure logic: no I/O. `files` is [{ status: 'A'|'M'|'D'|'R', path, previous? }] for origin/main...HEAD.
 export const POLICY_FILE = 'supabase/migration-policy.json';
 export const MODES = ['pre-release-open', 'pre-release-baseline', 'frozen'];
-const MIGRATION = /^supabase\/migrations\/[^/]+$/;
+const MIGRATION = /^supabase\/migrations\/.+$/i;
+const NESTED = /^supabase\/migrations\/.*\//i;
 const TIMESTAMPED = /^supabase\/migrations\/(\d{14})_[a-z0-9][a-z0-9_]*\.sql$/;
+const timestampMatch = path => path.replace(/^supabase\/migrations\//i, 'supabase/migrations/').match(TIMESTAMPED);
 export const BASELINE_VERSION = /^\d{14}$/;
 export const COMMIT_SHA = /^[a-f0-9]{40}$/;
 const OVERRIDE = /^Migration-Policy-Override:[ \t]*(\S.*?)[ \t]*$/m;
@@ -15,6 +17,9 @@ export function parseOverride(text) {
 export function checkMigrationPolicy({ mode, files, override = '', baselineVersion = '' }) {
   const errors = [], warnings = [];
   if (!MODES.includes(mode)) return { errors: [`${POLICY_FILE}: mode must be one of ${MODES.join(', ')}.`], warnings };
+  if (files.some(file => [file.path, file.previous].some(path => typeof path === 'string' && path.toLowerCase() === POLICY_FILE))) {
+    warnings.push(`${POLICY_FILE} changes require explicit owner approval.`);
+  }
   // A rename is a delete of the old path plus an add of the new one.
   const changes = files.flatMap(file => file.status === 'R'
     ? [{ status: 'D', path: file.previous }, { status: 'A', path: file.path }]
@@ -32,11 +37,16 @@ export function checkMigrationPolicy({ mode, files, override = '', baselineVersi
     errors.push(`Migrations are frozen (forward-only): applied history must not be modified, deleted or renamed (${rewritten.join(', ')}). Append a new migration instead.`);
   }
   if (mode === 'frozen') {
+    if (typeof baselineVersion !== 'string' || !BASELINE_VERSION.test(baselineVersion)) {
+      errors.push('Frozen: baseline version must be a 14-digit timestamp.');
+    }
+    const nested = changes.filter(change => NESTED.test(change.path)).map(change => change.path);
+    if (nested.length) errors.push(`Frozen: nested migration paths are not allowed (${nested.join(', ')}).`);
     // Forward-only: a new migration needs a timestamped name that sorts after the frozen baseline.
-    const unnamed = added.filter(path => !TIMESTAMPED.test(path));
+    const unnamed = added.filter(path => !NESTED.test(path) && !timestampMatch(path));
     if (unnamed.length) errors.push(`Frozen: new migrations must be named <14-digit timestamp>_<name>.sql (${unnamed.join(', ')}).`);
-    const early = BASELINE_VERSION.test(baselineVersion)
-      ? added.filter(path => TIMESTAMPED.test(path) && path.match(TIMESTAMPED)[1] <= baselineVersion) : [];
+    const early = typeof baselineVersion === 'string' && BASELINE_VERSION.test(baselineVersion)
+      ? added.filter(path => timestampMatch(path) && timestampMatch(path)[1] <= baselineVersion) : [];
     if (early.length) errors.push(`Frozen: new migrations must have a timestamp after the baseline ${baselineVersion} (${early.join(', ')}).`);
   }
   return { errors, warnings };
