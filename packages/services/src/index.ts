@@ -333,6 +333,7 @@ function offerWriteError(error: { message: string; code?: string; details?: stri
     const field = constraint ? offerConstraintFields[constraint] : undefined;
     throw field ? new OfferValidationError({ [field]: offerFieldMessages[field] }) : new ServiceError('INVALID_OFFER', 'Check the offer and try again.', error);
   }
+  inactiveSessionError(error);
   if (error.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before changing offers.', error);
   fail(error, 'Could not save the offer');
   throw new ServiceError('BACKEND_ERROR', 'Could not save the offer.', error);
@@ -730,14 +731,14 @@ export function createMarketServices(options: ServiceOptions) {
     if (typeof id !== 'string' || !orderIdPattern.test(id)) throw new ServiceError('INVALID_NOTIFICATION_QUERY', 'Choose a valid notification.');
     const scope = await customerNotificationScope();
     const { data, error } = await scope.db.rpc('mark_customer_notification_read', { p_business_slug: slug, p_notification_id: id });
-    scope.ensureCurrent(); failNotification(error);
+    scope.ensureCurrent(); inactiveSessionError(error); failNotification(error);
     if (typeof data !== 'boolean') throw invalidNotificationResponse();
     return data;
   };
   const notificationCount = async (rpc: 'mark_all_customer_notifications_read' | 'customer_notification_unread_count'): Promise<number> => {
     const scope = await customerNotificationScope();
     const { data, error } = await scope.db.rpc(rpc, { p_business_slug: slug });
-    scope.ensureCurrent(); failNotification(error);
+    scope.ensureCurrent(); inactiveSessionError(error); failNotification(error);
     if (!Number.isSafeInteger(data) || data < 0 || data > 2147483647) throw invalidNotificationResponse();
     return data;
   };
@@ -1087,6 +1088,7 @@ export function createMarketServices(options: ServiceOptions) {
       : db.from('menu_categories').update(values).eq('id', input.id).eq('business_id', business.id);
     const { data, error } = await query.select('id, name, sort_order').maybeSingle();
     if (error?.code === '23505') throw new ServiceError('CATEGORY_DUPLICATE', 'A category with this name already exists. Choose another name.', error);
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
     fail(error, 'Could not save category');
     if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
@@ -1097,6 +1099,7 @@ export function createMarketServices(options: ServiceOptions) {
     const db = requireClient(); const business = await requireAdminBusiness();
     const { data, error } = await db.from('menu_categories').delete().eq('id', id).eq('business_id', business.id).select('id').maybeSingle();
     if (error?.code === '23503') throw new ServiceError('CATEGORY_IN_USE', 'Move all dishes to another category before deleting this category.', error);
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before managing categories.', error);
     fail(error, 'Could not delete category');
     if (!data) throw new ServiceError('NOT_FOUND', 'Category was not found. Reload the menu and try again.');
@@ -1120,6 +1123,7 @@ export function createMarketServices(options: ServiceOptions) {
       ? db.from('menu_items').insert({ ...values, business_id: business.id })
       : db.from('menu_items').update(values).eq('id', input.id).eq('business_id', business.id);
     const { data, error } = await query.select(menuSelect).single();
+    inactiveSessionError(error);
     if (error?.code === '23503') throw new ServiceError('CATEGORY_MISSING', 'This category is no longer available. Reload the menu and choose a category.', error);
     fail(error, 'Could not save menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
@@ -1129,6 +1133,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (typeof id !== 'string' || !id.trim()) throw new ServiceError('INVALID_MENU_ITEM', 'Choose a menu item to delete.');
     const db = requireClient(); const business = await requireAdminBusiness();
     const { data, error } = await db.from('menu_items').delete().eq('id', id).eq('business_id', business.id).select('id').maybeSingle();
+    inactiveSessionError(error);
     fail(error, 'Could not delete menu item');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business.');
   };
@@ -1137,6 +1142,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (typeof id !== 'string' || !id.trim() || typeof isAvailable !== 'boolean') throw new ServiceError('INVALID_MENU_ITEM', 'Choose a dish and whether it is available.');
     const db = requireClient(); const business = await requireAdminBusiness();
     const { data, error } = await db.from('menu_items').update({ available: isAvailable }).eq('id', id).eq('business_id', business.id).select(menuSelect).maybeSingle();
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
     fail(error, 'Could not change availability');
     if (!data) throw new ServiceError('NOT_FOUND', 'Menu item was not found in this business. Reload the menu.');
@@ -1147,6 +1153,7 @@ export function createMarketServices(options: ServiceOptions) {
     const db = requireClient(); await requireAdminBusiness();
     const { error } = await db.rpc(fn, { p_business_slug: slug, ...args });
     if (error?.code === '40001') throw new ServiceError('MENU_CHANGED', 'The menu changed on another device. It has been reloaded; arrange it again.', error);
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your admin access changed. Sign in again before changing the menu.', error);
     fail(error, 'Could not save the new order');
   };
@@ -1418,6 +1425,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (!error) return;
     if (error.code === '23514' && /saved address limit reached/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
     if (error.code === '23514' || error.code === '23502') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
+    inactiveSessionError(error);
     // Signed-out callers run as anon, which has no address access at all.
     if (error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
     fail(error, action);
