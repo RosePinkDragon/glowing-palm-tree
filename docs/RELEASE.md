@@ -245,7 +245,9 @@ The mode lives in `supabase/migration-policy.json` and is checked by `npm run pr
 | --- | --- | --- |
 | `pre-release-open` | Squash not yet done; feature PRs may still add migration files. | Warns on added migration files. |
 | `pre-release-baseline` | One baseline exists and is not yet applied anywhere persistent. Fold schema changes into it. | Fails when a PR adds a file under `supabase/migrations/`. Override with a `Migration-Policy-Override: <reason>` line in the PR body. |
-| `frozen` (current) | Baseline applied or about to be applied to a persistent environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file, including the baseline. A new file must be named `<14-digit timestamp>_<name>.sql` (lowercase letters, digits, underscores) with a timestamp after the baseline version. No override. |
+| `frozen` (current) | Baseline applied or about to be applied to a persistent environment. Forward-only. | Fails when a PR modifies, deletes or renames an existing migration file, including the baseline. A new file must sit directly under the exact lowercase `supabase/migrations/` prefix (nested paths and other casings are rejected) and be named `<14-digit timestamp>_<name>.sql` (lowercase letters, digits, underscores). The timestamp must be a real UTC calendar date and time (month 13, day 32 or hour 99 is rejected), after the baseline version, and no more than one year ahead. The trusted check also verifies, through the GitHub API at the PR head, that `supabase/migrations/<baseline.version>_*.sql` exists and that `baseline.commit` exists and is an ancestor of the head (no checkout depth involved). No override. |
+
+Repairing a bad policy: once frozen, a missing or malformed `baseline.version` or `baseline.commit` on `main` makes the trusted check fail for every PR, including the PR that would repair it. This is fail-closed by design, so the repair needs an owner/admin path, for example a direct fix on `main` by the repository owner.
 
 Rules:
 
