@@ -4,7 +4,7 @@ import { SvgXml } from 'react-native-svg';
 import { formatINRFromPaise, type CartLine, type MenuItem } from '@market/core';
 import { brandLogos } from './brand-logos';
 import { DietMark } from './DietMark';
-import { DishAction, menuControls, useFamilies, type Controls } from './DishAction';
+import { DishAction, DishTitle, menuControls, photoOpener, useFamilies, type Controls } from './DishAction';
 import { DishPhoto } from './DishPhoto';
 import { carouselCardWidth, featuredLabel, featuredMenuItems, type CustomerSection } from './menu-model';
 import { useMarketTheme } from './theme';
@@ -20,14 +20,14 @@ function SignatureCard({ item, controls, width }: { item: MenuItem; controls: Co
   const { colors } = useMarketTheme();
   const f = useFamilies();
   return <View {...revealOnFocus} style={{ width, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(198,172,112,0.45)', backgroundColor: 'rgba(255,255,255,0.07)' }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => controls.onOpen(item)}>
+    <Pressable {...photoOpener} onPress={() => controls.onOpen(item)}>
       <DishPhoto key={item.imageUrl ?? 'placeholder'} item={item} height={150} viewportRevision={controls.viewportRevision} />
       <View style={{ position: 'absolute', top: 10, left: 10, borderRadius: 6, backgroundColor: '#FFFFFF', padding: 3 }}><DietMark diet={item.diet} compact /></View>
     </Pressable>
     <View style={{ padding: 14, gap: 6, flex: 1 }}>
       <Text numberOfLines={1} style={{ color: colors.bandAccent, letterSpacing: 1.2, textTransform: 'uppercase', ...f.semi(12, 18) }}>{item.category}{item.isDemo ? ' · Example' : ''}</Text>
-      <Text accessibilityRole="header" aria-level={3} onPress={() => controls.onOpen(item)} style={{ flex: 1, color: '#FFFFFF', ...f.heading(21, 30) }}>{item.name}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+      <View style={{ flex: 1 }}><DishTitle item={item} controls={controls} level={3} style={{ color: '#FFFFFF', ...f.heading(21, 30) }} /></View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 4, position: 'relative', zIndex: 1 }}>
         <Text accessibilityLabel={priceLabel(item)} style={{ color: '#FFFFFF', ...f.heading(20, 28) }}>{formatINRFromPaise(item.pricePaise)}</Text>
         <View style={{ minWidth: 112 }}><DishAction item={item} controls={controls} onDark /></View>
       </View>
