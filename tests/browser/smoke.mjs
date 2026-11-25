@@ -1216,6 +1216,7 @@ async function tracking47() {
         await visible('Your food is being prepared').waitFor();
         await stage(/^Being prepared, now, .*12:05 pm$/).waitFor();
         await visible('Order details').waitFor(); await visible('₹170 cash on delivery').waitFor();
+        assert.equal(await page.getByText('Paid in cash').filter({ visible: true }).count(), 0, 'an active order is not yet paid');
         await visible(`Order ${reference}`).scrollIntoViewIfNeeded();
         await page.screenshot({ path: `dist/browser/${slug}-tracking-mobile.png`, fullPage: true });
         await page.setViewportSize({ width: 390, height: 1500 }); await page.screenshot({ path: `dist/browser/${slug}-tracking-diet-active.png` });

@@ -2,18 +2,17 @@ import type { BusinessSlug, Order } from '@market/core';
 
 type Question = { id: string; question: string; answer: string };
 type LegalSection = { heading: string; text: string };
-export type SupportConfig = { phone: string; whatsapp: string; notice: string; questions: Question[]; privacy: LegalSection[]; terms: LegalSection[] };
+export type SupportConfig = { questions: Question[]; privacy: LegalSection[]; terms: LegalSection[] };
 
-// Owner-editable interim content. Replace contacts and review legal copy before deployment.
+// Interim copy. Contact numbers are never stored here: they come from the restaurant's business data (see businessContactLinks).
 const draft = (restaurant: string): SupportConfig => ({
-  phone: '', whatsapp: '',
-  notice: 'Support information is a draft. Restaurant contact details will be added before launch.',
   questions: [
-    { id: 'delivery', question: 'Where do you deliver?', answer: `${restaurant} checks your device’s current location against its delivery area at checkout. Use “Check my delivery location” in your cart to run this check. Enter your delivery address separately in the cart.` },
+    { id: 'delivery', question: 'Which delivery address is used?', answer: 'Your delivery addresses are saved and shared across both restaurants. The cart picks the first eligible address, and you can change it at checkout.' },
     { id: 'payment', question: 'How can I pay?', answer: 'Current orders use cash on delivery. Check the total, including the delivery fee, in your cart before placing your order.' },
     { id: 'cancel', question: 'Can I cancel or change my order?', answer: 'Contact the restaurant as soon as possible to ask about a cancellation or change. This app does not currently offer customer cancellation or editing after an order is placed. A change is not confirmed until the restaurant agrees.' },
     { id: 'unavailable', question: 'What if a dish is unavailable?', answer: 'Unavailable dishes cannot be ordered. Remove them from your cart and choose another dish. Reorder skips dishes that are no longer available and shows what was skipped before you place a new order.' },
-    { id: 'code', question: 'Why have I not received a login code?', answer: 'Phone login codes are not available in this version. Sign in with your email and password. Use “Forgot password?” on the sign-in screen if you need to reset your password.' },
+    { id: 'code', question: 'Why have I not received a login code?', answer: 'Sign in with your mobile number; we send a 6-digit code on WhatsApp that works for 10 minutes.' },
+    { id: 'coupon', question: 'How do I use a coupon?', answer: 'Enter coupon codes in the cart.' },
     { id: 'delete', question: 'How do I delete my account?', answer: 'Account deletion is not yet available in the app. When verified restaurant contact details are available here, contact the restaurant to ask about your account and personal information. Signing out does not delete your account.' },
   ],
   privacy: [
@@ -43,9 +42,13 @@ export function indianPhone(value: string, mobileOnly = false): string | null {
   else if (number.length === 11 && number.startsWith('0')) number = number.slice(1);
   return (mobileOnly ? /^[6-9]\d{9}$/ : /^[1-9]\d{9}$/).test(number) ? `91${number}` : null;
 }
-export function supportLinks(config: Pick<SupportConfig, 'phone' | 'whatsapp'>) {
+export function supportLinks(config: { phone: string; whatsapp: string }) {
   const phone = indianPhone(config.phone), whatsapp = indianPhone(config.whatsapp, true);
   return { call: phone ? `tel:+${phone}` : null, whatsapp: whatsapp ? `https://wa.me/${whatsapp}` : null };
+}
+/** Call and WhatsApp links from the current restaurant's own business data; absent or invalid numbers yield null. */
+export function businessContactLinks(business: { contactPhone?: string | null; whatsappPhone?: string | null } | null | undefined) {
+  return supportLinks({ phone: business?.contactPhone ?? '', whatsapp: business?.whatsappPhone ?? '' });
 }
 export const isSupportOrder = (order: Order) => ['placed', 'accepted', 'preparing', 'out_for_delivery'].includes(order.status);
 export function selectedSupportOrder(orders: readonly Order[], selectedId: string | null): Order | null {

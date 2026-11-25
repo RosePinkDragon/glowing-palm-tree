@@ -70,3 +70,6 @@ export function statusCopy(order: Order, restaurant: string, header: 'pill' | 'b
       return { eyebrow: 'Cancelled', title: 'This order was cancelled', detail: `${restaurant} cancelled it${ended ? ` ${moment(ended)}` : ''}. You don't need to pay anything.` }; }
   }
 }
+
+/** Bill-row label: cash on delivery counts as paid only once delivered (#61); cancelled never implies payment (#198). */
+export const billLabel = (status: Order['status']) => status === 'cancelled' ? 'Total' : status === 'delivered' ? 'Paid in cash' : 'To pay · Cash on delivery';
