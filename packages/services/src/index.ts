@@ -82,7 +82,7 @@ export interface CustomerNotification {
 }
 export interface NotificationPageOptions { cursor?: OrderCursor | null; limit?: number }
 export interface NotificationPage { notifications: CustomerNotification[]; nextCursor: OrderCursor | null }
-export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage }
+export interface ServiceOptions { businessSlug: BusinessSlug; audience: AppAudience; config?: PublicConfig; storage?: SupportedStorage; /** How long quoteOrder waits before giving up (default 8 s). For tests. */ quoteTimeoutMs?: number }
 
 export interface LeaveBusinessReceipt {
   customerId: string; businessId: string; requestId: string; generation: string;
@@ -1220,7 +1220,14 @@ export function createMarketServices(options: ServiceOptions) {
     const db = requireClient();
     if (lines.some(line => line.item.businessId !== slug)) throw new ServiceError('BUSINESS_MISMATCH', 'All items must belong to this business.');
     const entered = typeof code === 'string' && code.trim() ? code.trim().toUpperCase() : null;
-    const { data, error } = await db.rpc('quote_order', { p_business_slug: slug, p_items: lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_offer_code: entered });
+    // A quote that hangs must not hold the cart forever (#193): abort after the timeout and fail, so the caller can fall back or offer a retry.
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => { timer = setTimeout(() => { abort.abort(); reject(new ServiceError('QUOTE_TIMEOUT', 'Checking your offer took too long.')); }, options.quoteTimeoutMs ?? 8000); });
+    let reply;
+    try { reply = await Promise.race([db.rpc('quote_order', { p_business_slug: slug, p_items: lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_offer_code: entered }).abortSignal(abort.signal), timedOut]); }
+    finally { clearTimeout(timer); }
+    const { data, error } = reply;
     if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to get your prices.', error);
     fail(error, 'Could not price the order');
     if (!data || data.outcome !== 'quoted') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid quote.');

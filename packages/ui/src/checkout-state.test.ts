@@ -1,5 +1,5 @@
 import type { PricingTerms } from '@market/services';
-import { bannerText, billTotals, discountLabel, nudgeText, offerChangedMessage, offerDescription, offerErrorMessage, quoteSignature, quotedOffer, retryMinutes } from './offer-model.ts';
+import { bannerText, billTotals, discountLabel, nudgeText, offerChangedMessage, offerDescription, offerErrorMessage, quoteSignature, revisedDiscountLine, quotedOffer, retryMinutes } from './offer-model.ts';
 import { capturePricing } from './pricing-model.ts';
 import type { CartLine as OfferCartLine, MenuItem } from '@market/core';
 import { webRedirectUrl } from './auth-callback.ts';
@@ -274,7 +274,17 @@ test('offer changed at place time names the reason and the repriced total', () =
   const text = offerChangedMessage({ reason: 'used_up' }, 62000);
   assert.match(text, /^Your offer changed: the offer has run out\./);
   assert.match(text, /₹620/); assert.match(text, /Tap Place order/);
-  assert.match(offerChangedMessage({ reason: 'rate_limited', retryAfterSeconds: 120 }, 62000), /Try again in 2 min/);
+  assert.equal(offerChangedMessage({ reason: 'rate_limited', retryAfterSeconds: 120 }, 62000), 'Too many code tries, so we removed it. Your total is now ₹620. You can try a code again in 2 min.');
+  assert.match(offerChangedMessage({ reason: 'rate_limited' }, 62000), /try a code again in 1 min\.$/);
+});
+
+test('the revised order shows the discount when either quote has an offer', () => {
+  const launch = { id: 'o1', name: 'Launch offer', code: null, kind: 'percent' as const }, flat = { id: 'o2', name: 'Flat 50', code: 'SAVE50', kind: 'flat' as const };
+  assert.equal(revisedDiscountLine({}, {}), null);
+  assert.equal(revisedDiscountLine({ discount_paise: 10000, offer: launch }, { discount_paise: 5000, offer: launch }), 'Discount (Launch offer): −₹100 → −₹50');
+  assert.equal(revisedDiscountLine({ discount_paise: 10000, offer: launch }, {}), 'Discount (Launch offer): −₹100 → ₹0');
+  assert.equal(revisedDiscountLine({}, { discount_paise: 5000, offer: flat }), 'Discount (Flat 50): ₹0 → −₹50');
+  assert.equal(revisedDiscountLine({ discount_paise: 10000, offer: launch }, { discount_paise: 5000, offer: flat }), 'Discount (Flat 50): −₹100 → −₹50', 'the new offer names the line');
 });
 
 test('the quote signature changes with quantities, prices and the fee', () => {
