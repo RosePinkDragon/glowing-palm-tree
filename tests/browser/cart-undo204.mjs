@@ -44,6 +44,7 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
   const undoButton = (page, dishName) => page.getByRole('button', { name: `Undo removing ${dishName}`, exact: true });
   const announcer = page => page.locator('[role="status"][aria-live="polite"]').filter({ hasText: /Removed|Restored/ }).filter({ visible: true });
   const add = async (page, count) => { for (let i = 0; i < count; i++) { await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click(); await page.waitForFunction(expected => JSON.parse(localStorage.getItem(`market:cart:${expected.slug}`) || '{"lines":[]}').lines.length === expected.n, { slug, n: i + 1 }); } };
+  const focusedOnStepper = (page, dishName) => page.waitForFunction(label => document.activeElement?.getAttribute('aria-label') === label, `Add one ${dishName}`);
   const menuRemove = async (page, dishName) => { await page.getByRole('button', { name: `Remove one ${dishName}`, exact: true }).first().click(); };
   try {
     const page = await open();
@@ -72,6 +73,8 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     await undoButton(page, B).focus(); await page.keyboard.press('Enter');
     await page.getByText(`Restored ${B} to your cart.`).waitFor({ state: 'attached' });
     await page.getByRole('group', { name: `${B} quantity` }).waitFor();
+    await focusedOnStepper(page, B); // focus moves to the restored dish's stepper, not <body>
+    assert.equal(await undoButton(page, B).count(), 0, 'the notice goes once the restore applied');
     await expectCart(page, [[B, 1]]);
     // Other cart changes are not overwritten: remove B, add A (first Add), then Undo B -> both, B back in its place.
     await menuRemove(page, B); await undoButton(page, B).waitFor();
@@ -80,7 +83,7 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     await page.waitForFunction(slugName => JSON.parse(localStorage.getItem(`market:cart:${slugName}`)).lines.length === 2, slug);
     assert.deepEqual((await saved(page)).map(([n]) => n).sort(), [A, B].sort());
     // Repeated remove and undo.
-    for (let i = 0; i < 3; i++) { await menuRemove(page, A); await undoButton(page, A).click(); await page.getByRole('group', { name: `${A} quantity` }).waitFor(); }
+    for (let i = 0; i < 3; i++) { await menuRemove(page, A); await announcer(page).filter({ hasText: `Removed ${A}` }).waitFor({ state: 'attached' }); await undoButton(page, A).click(); await page.getByRole('group', { name: `${A} quantity` }).waitFor(); await focusedOnStepper(page, A); await announcer(page).filter({ hasText: `Restored ${A}` }).waitFor({ state: 'attached' }); }
     assert.deepEqual((await saved(page)).map(([n, q]) => `${n}:${q}`).sort(), [`${A}:1`, `${B}:1`].sort());
     // A newer removal replaces the older notice.
     await menuRemove(page, A); await menuRemove(page, B);
@@ -110,11 +113,12 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     await announcer(page).filter({ hasText: `Removed ${A}` }).waitFor({ state: 'attached' });
     await undoButton(page, A).click();
     await page.getByRole('group', { name: new RegExp(`^${A}:`) }).waitFor();
+    await focusedOnStepper(page, A);
     assert.ok((await saved(page)).some(([n]) => n === A));
     // Emptying the cart: the notice stays in the empty state and brings the dish back.
     for (const dishName of [A, B]) { while (await quantity(dishName) > 0) { await page.getByRole('button', { name: `Remove one ${dishName}`, exact: true }).click(); await page.waitForTimeout(150); } }
     await page.getByText('Your cart is empty', { exact: true }).waitFor();
-    await undoButton(page, B).click(); await page.getByRole('group', { name: new RegExp(`^${B}:`) }).waitFor();
+    await undoButton(page, B).click(); await page.getByRole('group', { name: new RegExp(`^${B}:`) }).waitFor(); await focusedOnStepper(page, B);
     assert.ok((await saved(page)).some(([n, q]) => n === B && q >= 1));
     // Changing the restaurant scope (here: an order receipt would) is covered by the unit tests; a reload never offers Undo.
     await page.reload({ waitUntil: 'networkidle' });

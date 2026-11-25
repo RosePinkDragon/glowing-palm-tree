@@ -37,7 +37,7 @@ import { CustomerNotifications } from './CustomerNotifications';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { CartPage } from './CustomerCart';
 import { restoreLine, soleRemoval, type Removal } from './removal-model';
-import { RemovalAnnouncer, RemovalUndoBar, useRemovalUndo } from './RemovalUndo';
+import { RemovalAnnouncer, RemovalUndoBar, focusRestored, useRemovalUndo } from './RemovalUndo';
 import { CartOffer, OfferBanner, useOfferQuote } from './CartOffer';
 import { billTotals, quoteSignature, quotedOffer } from './offer-model';
 
@@ -111,7 +111,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   // #204: taking a dish's last unit offers Undo, only for this restaurant, account and (not yet ordered) cart.
   const removal = useRemovalUndo(`${businessId}:${market.session?.user.id ?? ''}:${market.identityVersion}:${receipt?.id ?? ''}`);
   const changeCart = (fn: (lines: CartLine[]) => CartLine[], adding = false, applied?: () => void) => { const taken: { removal: Removal | null } = { removal: null }; void draft.changeCart(lines => { if (adding) requireOrdering(); const next = fn(lines); taken.removal = soleRemoval(lines, next); return next; }).then(() => { setLocalError(''); if (taken.removal) removal.offer(taken.removal); applied?.(); }).catch(e => setLocalError(messageOf(e))); };
-  const undoRemoval = ({ line, index }: Removal) => { removal.dismiss(); changeCart(lines => { const dish = draft.menu.find(item => item.id === line.item.id); if (lines.some(current => current.item.id === line.item.id)) return lines; if (!dish || !dish.isAvailable) throw new Error(`${line.item.name} is no longer available.`); return restoreLine(lines, addCartItem(lines, dish, line.quantity).find(current => current.item.id === dish.id)!, index); }, true, () => removal.announce(`Restored ${line.item.name} to your cart.`)); };
+  const undoRemoval = ({ line, index }: Removal) => { changeCart(lines => { const dish = draft.menu.find(item => item.id === line.item.id); if (lines.some(current => current.item.id === line.item.id)) return lines; if (!dish || !dish.isAvailable) throw new Error(`${line.item.name} is no longer available.`); return restoreLine(lines, addCartItem(lines, dish, line.quantity).find(current => current.item.id === dish.id)!, index); }, true, () => { removal.dismiss(); removal.announce(`Restored ${line.item.name} to your cart.`); focusRestored(line.item.name); }); };
   const undoBar = removal.pending ? <RemovalUndoBar removal={removal.pending} disabled={locked} onUndo={() => undoRemoval(removal.pending!)} onPause={removal.setPaused} /> : null;
   const send = async (saved: CheckoutAttempt) => {
     if (market.identity.current.userId !== saved.userId) { navigation.current?.login('/cart'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;

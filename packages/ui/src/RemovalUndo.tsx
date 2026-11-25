@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { chipTarget, useFamilies } from './DishAction';
 import type { Removal } from './removal-model';
 import { useMarketTheme } from './theme';
@@ -15,15 +15,22 @@ export function useRemovalUndo(scope: string) {
   const [announcement, setAnnouncement] = useState('');
   const [paused, setPaused] = useState(false);
   const pending = state && state.scope === scope ? state.removal : null;
+  // The same sentence twice in a row is not re-announced, so each one alternates a trailing no-break space.
+  const say = useCallback((text: string) => setAnnouncement(previous => text + (previous.endsWith('\u00a0') ? '' : '\u00a0')), []);
   const dismiss = useCallback(() => { setState(null); setPaused(false); setAnnouncement(''); }, []);
+  useEffect(() => {
+    if (!announcement || pending) return;
+    const timer = setTimeout(() => setAnnouncement(''), 5000); // a confirmation does not linger for the next removal
+    return () => clearTimeout(timer);
+  }, [announcement, pending]);
   useEffect(() => { if (state && state.scope !== scope) dismiss(); }, [state, scope, dismiss]);
   useEffect(() => {
     if (!pending || paused) return;
     const timer = setTimeout(dismiss, UNDO_MS);
     return () => clearTimeout(timer);
   }, [pending, paused, dismiss]);
-  const offer = useCallback((removal: Removal) => { setState({ removal, scope }); setAnnouncement(`Removed ${removal.line.item.name} from your cart. Undo is available.`); }, [scope]);
-  return { pending, offer, dismiss, announce: setAnnouncement, announcement, setPaused };
+  const offer = useCallback((removal: Removal) => { setState({ removal, scope }); say(`Removed ${removal.line.item.name} from your cart. Undo is available.`); }, [scope, say]);
+  return { pending, offer, dismiss, announce: say, announcement, setPaused };
 }
 
 /** Polite live region, always mounted so the announcement is heard wherever the visible notice appears. */
@@ -43,4 +50,18 @@ export function RemovalUndoBar({ removal, disabled, onUndo, onPause }: { removal
       <Text accessible={false} style={{ color: colors.primary, ...f.semi(15, 22) }}>Undo</Text>
     </Pressable>
   </View>;
+}
+
+/** After Undo the notice (and the focus on it) is gone: put focus on the restored dish's stepper, or a stable control if it is not on screen yet. */
+export function focusRestored(name: string) {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  const shown = (node: Element) => !node.closest('[aria-hidden="true"]') && node.getClientRects().length > 0 && !(node as HTMLElement).hasAttribute('disabled') && node.getAttribute('aria-disabled') !== 'true';
+  const find = (match: (label: string) => boolean) => [...document.querySelectorAll<HTMLElement>('[aria-label]')].find(node => match(node.getAttribute('aria-label') ?? '') && shown(node));
+  let tries = 0;
+  const attempt = () => {
+    const target = find(label => label === `Add one ${name}`) ?? find(label => label === `Remove one ${name}`) ?? (tries >= 20 ? find(label => /^Cart\b/.test(label)) : undefined);
+    if (target) target.focus();
+    else if (tries++ < 20) setTimeout(attempt, 50);
+  };
+  attempt();
 }
