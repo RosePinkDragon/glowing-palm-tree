@@ -8,6 +8,8 @@ const everything = [
   /^\.github\/workflows\//,
   /^package(?:-lock)?\.json$/,
   /^\.nvmrc$/,
+  // The classifier itself: a PR that edits it could otherwise mark its own jobs as unneeded.
+  /^\.github\/scripts\/ci-changes(?:\.test)?\.mjs$/,
 ];
 const app = [
   /^apps\//, /^packages\//, /^config\//, /^scripts\//, /^tests\/fixtures\//,

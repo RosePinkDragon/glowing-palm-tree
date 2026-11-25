@@ -34,7 +34,12 @@ test('an app change runs the app and browser jobs but not the database or functi
 });
 
 test('mixed changes combine flags', () => {
-  assert.deepEqual(on(classify(['docs/WORKFLOW.md', 'supabase/migrations/20261201000000_x.sql', '.github/scripts/ci-changes.mjs'])), ['db', 'scripts']);
+  assert.deepEqual(on(classify(['docs/WORKFLOW.md', 'supabase/migrations/20261201000000_x.sql', '.github/scripts/pr-preflight.mjs'])), ['db', 'scripts']);
+});
+
+test('a change to the classifier itself runs everything', () => {
+  for (const file of ['.github/scripts/ci-changes.mjs', '.github/scripts/ci-changes.test.mjs']) assert.equal(classify([file]).all, true, file);
+  assert.equal(classify(['.github/scripts/pr-preflight.mjs']).all, false);
 });
 
 test('workflow, package and lockfile changes run everything', () => {
