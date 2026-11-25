@@ -39,6 +39,8 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
   });
   const open = async () => { const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message)); await page.goto(server.url, { waitUntil: 'networkidle' }); await page.getByRole('heading', { name, level: 1 }).waitFor(); return page; };
   const saved = page => page.evaluate(key => JSON.parse(localStorage.getItem(key) || '{"lines":[]}').lines.map(line => [line.item.name, line.quantity]), `market:cart:${slug}`);
+  // The cart is saved a moment after the tap, so wait for the expected contents before asserting them.
+  const expectCart = async (page, expected, message) => { let seen; for (let i = 0; i < 50; i++) { seen = await saved(page); if (JSON.stringify(seen) === JSON.stringify(expected)) break; await page.waitForTimeout(100); } assert.deepEqual(seen, expected, message); };
   const undoButton = (page, dishName) => page.getByRole('button', { name: `Undo removing ${dishName}`, exact: true });
   const announcer = page => page.locator('[role="status"][aria-live="polite"]').filter({ hasText: /Removed|Restored/ }).filter({ visible: true });
   const add = async (page, count) => { for (let i = 0; i < count; i++) { await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click(); await page.waitForFunction(expected => JSON.parse(localStorage.getItem(`market:cart:${expected.slug}`) || '{"lines":[]}').lines.length === expected.n, { slug, n: i + 1 }); } };
@@ -47,12 +49,12 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     const page = await open();
     // Menu: add two dishes, then take the last unit of the first away.
     await add(page, 2);
-    assert.deepEqual(await saved(page), [[A, 1], [B, 1]]);
+    await expectCart(page, [[A, 1], [B, 1]]);
     await page.getByRole('button', { name: `Add one ${A}`, exact: true }).click();
     await page.getByRole('button', { name: `Remove one ${A}`, exact: true }).click();
     assert.equal(await undoButton(page, A).count(), 0, 'a quantity above one is not a removal');
     await menuRemove(page, A);
-    assert.deepEqual(await saved(page), [[B, 1]]);
+    await expectCart(page, [[B, 1]]);
     const undo = undoButton(page, A); await undo.waitFor();
     const box = await undo.boundingBox(); assert.ok(box.width >= 44 && box.height >= 44, `Undo target ${box.width}x${box.height}`);
     await announcer(page).filter({ hasText: `Removed ${A}` }).waitFor({ state: 'attached' });
@@ -64,13 +66,13 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     assert.equal(await undo.count(), 1, 'no auto-dismiss while focused');
     await page.evaluate(() => document.activeElement?.blur()); await context.clock.fastForward(9000);
     await undo.waitFor({ state: 'detached' }); assert.equal(await announcer(page).count(), 0, 'announcement cleared with the notice');
-    assert.deepEqual(await saved(page), [[B, 1]], 'expiry changes nothing');
+    await expectCart(page, [[B, 1]], 'expiry changes nothing');
     // Undo by keyboard restores the dish where it was, with its quantity.
     await menuRemove(page, B); await undoButton(page, B).waitFor();
     await undoButton(page, B).focus(); await page.keyboard.press('Enter');
     await page.getByText(`Restored ${B} to your cart.`).waitFor({ state: 'attached' });
     await page.getByRole('group', { name: `${B} quantity` }).waitFor();
-    assert.deepEqual(await saved(page), [[B, 1]]);
+    await expectCart(page, [[B, 1]]);
     // Other cart changes are not overwritten: remove B, add A (first Add), then Undo B -> both, B back in its place.
     await menuRemove(page, B); await undoButton(page, B).waitFor();
     await add(page, 1);
@@ -93,7 +95,7 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     const before = await saved(other);
     await page.bringToFront(); await undoButton(page, B).click();
     await page.waitForTimeout(300);
-    assert.deepEqual(await saved(page), before, 'Undo does not add a second unit over the other tab');
+    await expectCart(page, before, 'Undo does not add a second unit over the other tab');
     await other.close();
 
     // Cart page: the notice sits with the dishes, never over the Place order button, and works there too.
