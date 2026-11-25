@@ -343,8 +343,9 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 
 ### Enable it (hosted project)
 
-1. Deploy: `supabase functions deploy send-sms-hook` and `supabase functions deploy request-owner-code` (both have JWT verification (If the CLI complains that `SUPABASE_AUTH_CAPTCHA_SECRET` or another `env()` value is missing, export a placeholder for that command only; unverified CLI behavior, and this command does not push Auth config.)
-   off in `supabase/config.toml`; each authenticates itself).
+1. Deploy: `supabase functions deploy send-sms-hook` and `supabase functions deploy request-owner-code` (both have JWT verification
+   off in `supabase/config.toml`; each authenticates itself). If the CLI complains that `SUPABASE_AUTH_CAPTCHA_SECRET` or another
+   `env()` value is missing, export a placeholder for that command only (unverified CLI behavior; this command does not push Auth config).
 2. Authentication → **Hooks** → Send SMS: HTTPS, the URL of `send-sms-hook`, generate the secret, and store it as `SEND_SMS_HOOK_SECRET`.
    **Enable the hook and store the secret in the same sitting**: a hook that is enabled before the function has its secret (or a secret
    that no longer matches) makes every code request fail. Auth signs every call (Standard Webhooks) and the function rejects anything unsigned or older than five minutes.
