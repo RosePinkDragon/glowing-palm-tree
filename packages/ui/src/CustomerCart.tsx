@@ -149,16 +149,16 @@ export function CartPage(p: CartPageProps) {
         </View>
       </Card>
       {p.localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{p.localError}</Text> : null}
-      {p.orderingAllowed ? <View ref={bar} style={{ ...stick, flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
+      {<View ref={bar} style={{ ...stick, flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
         <View style={{ paddingLeft: 4 }}>
           <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 16 }}>To pay</Text>
           <Text style={{ color: colors.ink, fontSize: 18, lineHeight: 24, ...bold }}>{money(total)}</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: p.placeDisabled }} disabled={p.placeDisabled} onPress={p.onPlace}
-          style={({ pressed }) => ({ flex: 1, minHeight: 52, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: p.placeDisabled ? 0.5 : pressed ? 0.85 : 1 })}>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: p.placeDisabled || !p.orderingAllowed }} disabled={p.placeDisabled || !p.orderingAllowed} onPress={p.onPlace}
+          style={({ pressed }) => ({ flex: 1, minHeight: 52, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: p.placeDisabled || !p.orderingAllowed ? 0.5 : pressed ? 0.85 : 1 })}>
           <Text style={{ color: colors.onPrimary, fontSize: 16, lineHeight: 22, ...bold }}>{p.placeLabel}</Text>
         </Pressable>
-      </View> : null}
+      </View>}
     </>}
   </View>;
 }
