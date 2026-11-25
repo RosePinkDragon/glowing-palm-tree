@@ -57,11 +57,18 @@ try {
           return json(dayOrders.filter(o => o.status !== 'cancelled' && o.created_at >= from && o.created_at < to && (!after || o.id > after)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))));
         }
         if (path === '/rest/v1/rpc/daily_summary') { const date = request.postDataJSON().p_date ?? new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10); return json({ date, collected_paise: 0, delivered_count: 0, outstanding_paise: 0, outstanding_count: 0, placed_count: 0, cancelled_count: 0, top_dishes: [] }); }
-        if (path === '/rest/v1/offer_redemptions') {
+        if (path === '/rest/v1/rpc/offer_usage_stats') {
+          assert.equal(method, 'POST');
+          const { p_business_id, p_offer_id } = request.postDataJSON();
+          assert.equal(p_business_id, businessId);
           if (failUsage) return fail('XX000', 'usage view unavailable', 500);
-          const after = q.get('id')?.replace('gt.', ''), offer = q.get('offer_id')?.replace('eq.', '');
-          assert.equal(q.get('business_id'), `eq.${businessId}`);
-          return json(redemptions.filter(r => (!after || r.id > after) && (!offer || r.offer_id === offer)).sort((a, b) => a.id.localeCompare(b.id)).slice(0, Number(q.get('limit'))).map(r => ({ id: r.id, offer_id: r.offer_id, orders: { status: r.status, discount_paise: r.discount } })));
+          const groups = new Map();
+          for (const r of redemptions.filter(r => !p_offer_id || r.offer_id === p_offer_id)) {
+            const stat = groups.get(r.offer_id) ?? { offer_id: r.offer_id, uses: 0, discount_given_paise: 0, any_redemption: true };
+            if (r.status !== 'cancelled') { stat.uses++; stat.discount_given_paise += r.discount; }
+            groups.set(r.offer_id, stat);
+          }
+          return json([...groups.values()]);
         }
         if (path === '/rest/v1/offers') {
           assert.equal(who, owner.id, 'only the owner reaches offers');
