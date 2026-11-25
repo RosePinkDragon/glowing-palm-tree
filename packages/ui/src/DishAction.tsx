@@ -1,5 +1,5 @@
-import { useEffect, useRef, type RefObject } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { Pressable, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { MAX_QUANTITY, type CartLine, type MenuItem } from '@market/core';
 import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
@@ -59,4 +59,23 @@ export function DishAction({ item, controls, wide = false, onDark = false }: { i
 export function menuControls(cart: readonly CartLine[], rest: Omit<Controls, 'quantity'>): Controls {
   const quantities = new Map(cart.map(line => [line.item.id, line.quantity]));
   return { ...rest, quantity: item => quantities.get(item.id) ?? 0 };
+}
+
+/**
+ * The photo is a convenience tap target; the dish title button is the one stop for keyboard and assistive technology,
+ * so the photo stays out of the tab order and the accessibility tree and nobody meets the same action twice.
+ */
+export const photoOpener = { focusable: false, tabIndex: -1, accessible: false, 'aria-hidden': true, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
+
+/**
+ * Dish title: the heading keeps its text, level and look; a real button lies over it (not inside it) and opens the dish.
+ * The button grows past a one-line title to the 44px minimum without moving anything, so the card looks as before.
+ */
+export function DishTitle({ item, controls, level, style, containerStyle }: { item: MenuItem; controls: Controls; level: number; style: StyleProp<TextStyle>; containerStyle?: StyleProp<ViewStyle> }) {
+  const [height, setHeight] = useState(chipTarget);
+  const grow = Math.max(0, (chipTarget - height) / 2);
+  return <View onLayout={event => setHeight(event.nativeEvent.layout.height)} style={containerStyle}>
+    <Text accessibilityRole="header" aria-level={level} style={style}>{item.name}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`View details for ${item.name}`} onPress={() => controls.onOpen(item)} style={{ position: 'absolute', top: -grow, bottom: -grow, left: 0, right: 0 }} />
+  </View>;
 }
