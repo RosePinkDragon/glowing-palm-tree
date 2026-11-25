@@ -6,7 +6,7 @@ import { MarketLine, MarketSection } from './MarketList';
 import { MarketIcon } from './MarketIcons';
 import { DietMark } from './DietMark';
 import { restorePanelFocus } from './AccessiblePanel';
-import { statusCopy, terminalTime, trackingTimeline } from './order-history';
+import { billLabel, statusCopy, terminalTime, trackingTimeline } from './order-history';
 import { discountLabel, minus } from './offer-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
@@ -120,7 +120,7 @@ function Lines({ order }: { order: Order }) {
     <MarketLine left={<Text style={{ color: colors.muted }}>Delivery</Text>} right={<Text style={{ color: colors.muted, fontSize: 15 }}>{formatINRFromPaise(order.deliveryFeePaise)}</Text>} />
     {order.discountPaise ? <MarketLine left={<Text style={{ color: colors.primary }}>{discountLabel(order.offer)}</Text>} right={<Text style={{ color: colors.primary, fontSize: 15 }}>{minus(order.discountPaise)}</Text>} /> : null}
     <View style={{ borderTopWidth: 1, borderTopColor: colors.border, borderStyle: receiptRule, paddingTop: 10 }}>
-      <MarketLine bold left={cancelled ? 'Total' : 'Paid in cash'} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
+      <MarketLine bold left={billLabel(order.status)} right={<Text style={{ color: cancelled ? colors.muted : colors.ink, fontSize: 17, fontWeight: '700', textDecorationLine: cancelled ? 'line-through' : 'none' }}>{formatINRFromPaise(order.totalPaise)}</Text>} />
     </View>
   </MarketSection>;
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Order } from '@market/core';
-import { deliveryMinutes, statusCopy, terminalTime, trackingTimeline, mergeHistory, readHistoryPages } from './order-history.ts';
+import { billLabel, deliveryMinutes, statusCopy, terminalTime, trackingTimeline, mergeHistory, readHistoryPages } from './order-history.ts';
 
 const order = (id: string, version = 1) => ({ id, version } as Order);
 test('append deduplicates boundaries and never regresses an observed order version', () => {
@@ -76,4 +76,9 @@ test('status copy follows the order, names the restaurant and says what is owed 
   assert.equal(copy({ status: 'cancelled', history: [{ status: 'cancelled', createdAtISO: '2026-11-16T06:40:00Z' }] }).detail, "Ammu Sammu cancelled it at 06:40. You don't need to pay anything.");
   assert.equal(copy({ status: 'cancelled' }).detail, "Ammu Sammu cancelled it. You don't need to pay anything.");
   assert.equal(copy({ status: 'cancelled', history: [{ status: 'cancelled', createdAtISO: '2026-11-15T06:40:00Z' }] }).detail, "Ammu Sammu cancelled it on 2026-11-15 at 06:40. You don't need to pay anything.", 'another day names the date');
+});
+
+test('bill label: only delivered orders read as paid; active ones are to pay; cancelled stays a plain total', () => {
+  const expected: Record<Order['status'], string> = { placed: 'To pay · Cash on delivery', accepted: 'To pay · Cash on delivery', preparing: 'To pay · Cash on delivery', out_for_delivery: 'To pay · Cash on delivery', delivered: 'Paid in cash', cancelled: 'Total' };
+  for (const [status, label] of Object.entries(expected)) assert.equal(billLabel(status as Order['status']), label, status);
 });
