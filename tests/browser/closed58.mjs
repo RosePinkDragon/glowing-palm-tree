@@ -143,10 +143,20 @@ try {
       await page.keyboard.press('Escape'); await cart().click();
       await field('Name').fill('Retained guest name');
       await setOpen(false);
-      assert.equal(await button(`Add one ${item.name}`).count(), 0); assert.equal(await button('Place order').count(), 0);
+      assert.equal(await button(`Add one ${item.name}`).count(), 0); assert.equal(await button('Place order').isDisabled(), true, 'closed cart keeps a disabled Place order');
       assert.equal(await field('Name').inputValue(), 'Retained guest name');
       assert.deepEqual(contents(await saved()), contents(guestCart));
       await setOpen(true); assert.equal(requests.length, 0, 'reopening never submits');
+      // #197: the cart shortcut stays discoverable while ordering is paused, and reopening never submits.
+      await page.goto(server.url, { waitUntil: 'networkidle' });
+      await cart().waitFor(); assert.equal(await cart().innerText().then(label => /Cart \(1\)/.test(label)), true, 'open: shortcut shows the item count');
+      await setOpen(false); await cart().waitFor(); assert.equal(await add().count(), 0);
+      assert.match(await cart().innerText(), /Cart \(1\)/, 'paused: shortcut keeps the item count');
+      await cart().click(); await closed().waitFor();
+      assert.equal(await button('Place order').isDisabled(), true, 'paused cart: Place order disabled with the closed reason shown');
+      assert.deepEqual(contents(await saved()), contents(guestCart));
+      await setOpen(true); await assertEventually(async () => (await button('Place order').isDisabled()) === false);
+      assert.equal(requests.length, 0, 'pause and resume never submit');
       const publicTopic = [...channels.keys()][0];
       await button('Account').click(); await otpSignIn(page, { email: user.email });
       await button('Sign out').waitFor();
