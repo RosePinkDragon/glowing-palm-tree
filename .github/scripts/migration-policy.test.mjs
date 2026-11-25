@@ -46,7 +46,7 @@ test('frozen forbids editing, deleting or renaming the recorded baseline file', 
   }
 });
 test('frozen cannot be overridden', () => {
-  assert.equal(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [edit], override: 'because' }).errors.length, 1);
+  assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [edit], override: 'because' }).errors.join(), /frozen/i);
 });
 test('a rename into migrations counts as an add in baseline mode', () => {
   const moved = { status: 'R', previous: 'old/x.sql', path: m('20270101000002_x') };
@@ -83,4 +83,18 @@ test('migration paths are case insensitive and frozen nested paths are rejected'
 });
 test('policy changes call out owner approval', () => {
   assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'M', path: 'supabase/migration-policy.json' }] }).warnings.join(), /explicit owner approval/);
+});
+
+test('frozen rejects timestamps more than one year ahead', () => {
+  const now = new Date('2026-11-25T12:00:00Z');
+  const file = timestamp => [{ status: 'A', path: m(`${timestamp}_new`) }];
+  assert.deepEqual(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files: file('20271125120000') }).errors, []);
+  assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files: file('99991231235959') }).errors.join(), /one year in the future/);
+});
+
+test('frozen detects migration paths containing newlines', () => {
+  for (const path of ['supabase/migrations/x\ny.sql', 'supabase/migrations/sub/x\ny.sql', 'supabase/migrations/sub\nx/y.sql']) {
+    assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'M', path }] }).errors.join(), /frozen/i);
+  }
+  assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'A', path: 'supabase/migrations/sub\nx/y.sql' }] }).errors.join(), /nested/i);
 });

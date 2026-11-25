@@ -2,8 +2,8 @@
 // Pure logic: no I/O. `files` is [{ status: 'A'|'M'|'D'|'R', path, previous? }] for origin/main...HEAD.
 export const POLICY_FILE = 'supabase/migration-policy.json';
 export const MODES = ['pre-release-open', 'pre-release-baseline', 'frozen'];
-const MIGRATION = /^supabase\/migrations\/.+$/i;
-const NESTED = /^supabase\/migrations\/.*\//i;
+const MIGRATION = /^supabase\/migrations\/[\s\S]+$/i;
+const NESTED = /^supabase\/migrations\/[\s\S]*\//i;
 const TIMESTAMPED = /^supabase\/migrations\/(\d{14})_[a-z0-9][a-z0-9_]*\.sql$/;
 const timestampMatch = path => path.replace(/^supabase\/migrations\//i, 'supabase/migrations/').match(TIMESTAMPED);
 export const BASELINE_VERSION = /^\d{14}$/;
@@ -14,7 +14,7 @@ export function parseOverride(text) {
   return typeof text === 'string' ? text.match(OVERRIDE)?.[1] ?? '' : '';
 }
 
-export function checkMigrationPolicy({ mode, files, override = '', baselineVersion = '' }) {
+export function checkMigrationPolicy({ mode, files, override = '', baselineVersion = '', now = new Date() }) {
   const errors = [], warnings = [];
   if (!MODES.includes(mode)) return { errors: [`${POLICY_FILE}: mode must be one of ${MODES.join(', ')}.`], warnings };
   if (files.some(file => [file.path, file.previous].some(path => typeof path === 'string' && path.toLowerCase() === POLICY_FILE))) {
@@ -47,6 +47,11 @@ export function checkMigrationPolicy({ mode, files, override = '', baselineVersi
     if (unnamed.length) errors.push(`Frozen: new migrations must be named <14-digit timestamp>_<name>.sql (${unnamed.join(', ')}).`);
     const early = typeof baselineVersion === 'string' && BASELINE_VERSION.test(baselineVersion)
       ? added.filter(path => timestampMatch(path) && timestampMatch(path)[1] <= baselineVersion) : [];
+    const futureLimit = new Date(now);
+    futureLimit.setUTCFullYear(futureLimit.getUTCFullYear() + 1);
+    const maxTimestamp = futureLimit.toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const future = added.filter(path => timestampMatch(path)?.[1] > maxTimestamp);
+    if (future.length) errors.push(`Frozen: migration timestamps must be no more than one year in the future (${future.join(', ')}).`);
     if (early.length) errors.push(`Frozen: new migrations must have a timestamp after the baseline ${baselineVersion} (${early.join(', ')}).`);
   }
   return { errors, warnings };
