@@ -57,7 +57,7 @@ export function CustomerTopBar({ line, onAddress, account }: { line: string; onA
   return <View style={{ backgroundColor: dark ? colors.band : colors.background, borderBottomWidth: dark ? 0 : 1, borderBottomColor: colors.border, paddingTop: insets.top }}>
     <View style={{ width: '100%', maxWidth: 1120, alignSelf: 'center', minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 }}>
       <BrandAvatar size={44} label={name} />
-      <Pressable accessibilityRole="button" accessibilityLabel={prompt ? addDeliveryAddressPrompt : `Delivery address: ${line}. Change`} onPress={onAddress} style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={prompt ? addDeliveryAddressPrompt : `Delivery address: ${line}. Manage saved addresses`} onPress={onAddress} style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
         <Text numberOfLines={1} style={{ color: soft, fontSize: 12, lineHeight: 16, ...(fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const }) }}>Deliver to</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <MarketIcon name="pin" color={ink} size={16} />
