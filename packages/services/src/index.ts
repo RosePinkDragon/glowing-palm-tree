@@ -483,6 +483,12 @@ function lifecycleError(error: { code?: string; details?: string | null } | null
   if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'Your account is being updated. Retry when it finishes.', error);
 }
 
+// An unexpired JWT whose Auth session was deleted or has expired is refused by the database (#213): 42501 with detail
+// INVALID_SESSION. Nothing was written; the person must sign in again.
+function inactiveSessionError(error: { code?: string; details?: string | null } | null): void {
+  if (error?.code === '42501' && error.details === 'INVALID_SESSION') throw new ServiceError('SIGN_IN_REQUIRED', 'Your session ended. Sign in again.', error);
+}
+
 /** The storage key is isolated by backend, business and audience. */
 export function sessionStorageKey(url: string, slug: BusinessSlug, audience: AppAudience): string {
   return `market:${encodeURIComponent(url.replace(/\/+$/, ''))}:${slug}:${audience}`;
@@ -1242,29 +1248,17 @@ export function createMarketServices(options: ServiceOptions) {
   // ---- Owner offers (#182 slice B). Offers are never deleted: there is no delete method, and DELETE is revoked in the database.
   // Every write below changes exactly ONE offer per statement (a bulk UPDATE could be chosen as a deadlock victim), and retries once on 40P01 or 40001.
   type OfferDb = SupabaseClient;
-  /** Uses and discount come from offer_redemptions joined to the order; a cancelled order gives its use back but still locks the terms. Keyset-paged so a concurrent redemption cannot skip or repeat a row. */
+  /** The aggregate counts non-cancelled orders while retaining the lock for any redemption. */
   const readOfferStats = async (db: OfferDb, businessId: string, offerId?: string) => {
     const stats = new Map<string, { uses: number; given: number; redeemed: number }>();
-    let after: string | null = null;
-    for (let page = 0; page < 200; page++) {
-      let query = db.from('offer_redemptions').select('id, offer_id, orders!offer_redemptions_order_fk(status, discount_paise)').eq('business_id', businessId);
-      if (offerId) query = query.eq('offer_id', offerId);
-      if (after) query = query.gt('id', after);
-      const { data, error } = await query.order('id').limit(1000);
-      fail(error, 'Could not load offer usage');
-      if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
-      for (const row of data as { id: string; offer_id: string; orders: { status: string; discount_paise: number } | { status: string; discount_paise: number }[] | null }[]) {
-        const order = Array.isArray(row.orders) ? row.orders[0] : row.orders;
-        if (typeof row.id !== 'string' || typeof row.offer_id !== 'string' || !order || typeof order.status !== 'string' || !Number.isSafeInteger(order.discount_paise)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
-        const stat = stats.get(row.offer_id) ?? { uses: 0, given: 0, redeemed: 0 };
-        stat.redeemed++;
-        if (order.status !== 'cancelled') { stat.uses++; stat.given += order.discount_paise; }
-        stats.set(row.offer_id, stat);
-        after = row.id;
-      }
-      if (data.length === 0) return stats;
+    const { data, error } = await db.rpc('offer_usage_stats', { p_business_id: businessId, p_offer_id: offerId ?? null });
+    fail(error, 'Could not load offer usage');
+    if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
+    for (const row of data) {
+      if (!row || typeof row.offer_id !== 'string' || !Number.isSafeInteger(row.uses) || row.uses < 0 || !Number.isSafeInteger(row.discount_given_paise) || row.discount_given_paise < 0 || row.any_redemption !== true || stats.has(row.offer_id)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offer usage.');
+      stats.set(row.offer_id, { uses: row.uses, given: row.discount_given_paise, redeemed: 1 });
     }
-    throw new ServiceError('OFFERS_TOO_LARGE', 'There are too many redemptions to total here. Ask your developer for a report.');
+    return stats;
   };
   const listOffers = async (): Promise<OwnerOffer[]> => {
     const db = requireClient(), started = generation;
@@ -1272,7 +1266,7 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await db.from('offers').select(offerSelect).eq('business_id', business.id).order('created_at', { ascending: false }).order('id');
     fail(error, 'Could not load offers');
     if (!Array.isArray(data)) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid offers.');
-    // Usage is a nice-to-have: if it cannot be read (or is too large to total here) the offers still list, without counts, and owners can still pause, resume and end them.
+    // Usage is a nice-to-have: if it cannot be read the offers still list, without counts, and owners can still pause, resume and end them.
     const stats = await readOfferStats(db, business.id).catch(() => 'unknown' as const);
     if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Reload your offers.');
     const now = new Date();
@@ -1388,6 +1382,7 @@ export function createMarketServices(options: ServiceOptions) {
     // The code is sent only when there is one, so a cart without a code calls exactly the contract older clients use.
     const code = typeof input.offerCode === 'string' && input.offerCode.trim() ? { p_offer_code: input.offerCode.trim().toUpperCase() } : {};
     const { data, error } = await db.rpc('place_order', { p_business_slug: slug, p_items: input.lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_delivery, p_location: fix, p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing, ...code });
+    inactiveSessionError(error);
     lifecycleError(error);
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
@@ -1458,6 +1453,7 @@ export function createMarketServices(options: ServiceOptions) {
   const transitionOrder = async (orderId: string, status: OrderStatus, expectedVersion: number): Promise<Order> => {
     await loadOrder(orderId); // Reject orders outside the active business before mutating.
     const { data, error } = await requireClient().rpc('transition_order', { p_order_id: orderId, p_status: status, p_expected_version: expectedVersion });
+    inactiveSessionError(error);
     fail(error, 'Could not update order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (typeof data.id !== 'string') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid order.');
@@ -1490,6 +1486,7 @@ export function createMarketServices(options: ServiceOptions) {
     // Pin this request after verification: a later auth change cannot attribute
     // the initiating owner's action to the next account during fetch dispatch.
     const { data, error } = await db.rpc('set_accepting_orders', { p_business_slug: slug, p_accepting: accepting }).setHeader('Authorization', `Bearer ${token}`);
+    inactiveSessionError(error);
     fail(error, 'Could not change whether the restaurant is taking orders');
     if (typeof data?.accepting_orders !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the change.');
     return data.accepting_orders;

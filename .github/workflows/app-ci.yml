@@ -51,7 +51,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: node --test --test-isolation=none .github/scripts/delivery-policy.test.mjs .github/scripts/pr-preflight.test.mjs .github/scripts/migration-policy.test.mjs .github/scripts/trusted-migration-policy.test.mjs .github/scripts/validate-migration-policy.test.mjs
+      - run: node --test --test-isolation=none .github/scripts/delivery-policy.test.mjs .github/scripts/pr-preflight.test.mjs .github/scripts/migration-policy.test.mjs .github/scripts/trusted-migration-policy.test.mjs .github/scripts/validate-migration-policy.test.mjs .github/scripts/hosted-auth-config.test.mjs
+      - name: Committed Supabase config is production-safe (#212)
+        run: node .github/scripts/hosted-auth-config.mjs check
 
   postgis-rls:
     runs-on: ubuntu-latest

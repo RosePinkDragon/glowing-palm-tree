@@ -79,7 +79,7 @@ test('migration paths are case insensitive and frozen nested paths are rejected'
   for (const status of ['A', 'M', 'D']) {
     assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status, path: 'SUPABASE/MIGRATIONS/sub/20270101000000_x.sql' }] }).errors.join(), /nested/i);
   }
-  assert.deepEqual(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'A', path: 'Supabase/Migrations/20270101000000_x.sql' }] }).errors, []);
+  assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'A', path: 'Supabase/Migrations/20270101000000_x.sql' }] }).errors.join(), /exact lowercase/);
 });
 test('policy changes call out owner approval', () => {
   assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'M', path: 'supabase/migration-policy.json' }] }).warnings.join(), /explicit owner approval/);
@@ -99,4 +99,18 @@ test('frozen detects migration paths containing newlines', () => {
     assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'M', path }] }).errors.join(), /frozen/i);
   }
   assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [{ status: 'A', path: 'supabase/migrations/sub\nx/y.sql' }] }).errors.join(), /nested/i);
+});
+
+test('frozen migrations require real UTC calendar timestamps', () => {
+  const now = new Date('2027-01-01T00:00:00Z');
+  for (const stamp of ['20261301000000', '20261232000000', '20261201990000', '20261201246000', '20270229000000']) {
+    const files = [{ status: 'A', path: m(`${stamp}_x`) }];
+    assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now, files }).errors.join(), /valid UTC calendar/);
+  }
+  assert.deepEqual(checkMigrationPolicy({ mode: 'frozen', baselineVersion, now: new Date('2028-01-01T00:00:00Z'), files: [{ status: 'A', path: m('20280229000000_x') }] }).errors, []);
+});
+test('frozen rejects additions and renames into differently cased migration directories', () => {
+  for (const file of [{ status: 'A', path: 'Supabase/Migrations/20270101000000_x.sql' }, { status: 'R', previous: 'other/x.sql', path: 'supabase/Migrations/20270101000000_x.sql' }]) {
+    assert.match(checkMigrationPolicy({ mode: 'frozen', baselineVersion, files: [file] }).errors.join(), /exact lowercase/);
+  }
 });

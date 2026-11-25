@@ -337,6 +337,7 @@ reset role;
 select public.test_assert((select count(*)=1 from public.offer_redemptions),'one redemption before cancelling');
 set role authenticated; select public.t_login(5);
 select public.test_assert(public.transition_order((current_setting('t.used')::jsonb->>'id')::uuid,'cancelled',1)->>'status'='cancelled','the owner cancels the order');
+select public.test_assert((select (v->0->>'uses')::integer=0 and (v->0->>'discount_given_paise')::integer=0 and (v->0->>'any_redemption')::boolean from (select public.offer_usage_stats('10000000-0000-4000-8000-000000000001') v) q), 'cancelled-only usage still locks terms');
 select public.t_login(3);
 select public.test_assert((public.check_offer_code('ammu-sammu','FIRSTO1')->>'applies')::boolean,'a cancelled order is not a first order');
 select public.t_login(4);
@@ -346,6 +347,18 @@ select public.t_login(3);
 select public.test_assert(public.check_offer_code('ammu-sammu','ONEUSE1')->>'reason'='used_up','and then it is used up again (the cancelled order does not count)');
 reset role;
 select public.test_assert((select count(*)=2 from public.offer_redemptions) and (select count(*)=1 from public.offer_redemptions r join public.orders o on o.id=r.order_id where o.status<>'cancelled'),'the cancelled order keeps its redemption row for history but no longer counts');
+
+-- Aggregate runs under the caller's policies, including for cancelled-only usage.
+set role authenticated; select public.t_login(5);
+select public.test_assert((select jsonb_array_length(v)=1 and (v->0->>'uses')::integer=1
+  and (v->0->>'discount_given_paise')::integer=1000 and (v->0->>'any_redemption')::boolean
+  from (select public.offer_usage_stats('10000000-0000-4000-8000-000000000001') v) q), 'owner sees non-cancelled totals and the redemption lock');
+select public.t_login(6);
+select public.test_assert(public.offer_usage_stats('10000000-0000-4000-8000-000000000001')='[]'::jsonb, 'another restaurant owner cannot read aggregate usage');
+select public.t_login(3);
+select public.test_assert(public.offer_usage_stats('10000000-0000-4000-8000-000000000001')='[]'::jsonb, 'customer cannot read aggregate usage');
+reset role;
+select public.test_assert(not has_function_privilege('anon', 'public.offer_usage_stats(uuid, uuid)', 'execute'), 'signed-out callers cannot run the usage aggregate');
 
 -- 10. Rate limit on code lookups -----------------------------------------------------------------------------
 select public.t_clear();
