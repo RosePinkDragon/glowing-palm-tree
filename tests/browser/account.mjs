@@ -17,6 +17,64 @@ const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: '
 const token = part({ alg: 'HS256' }) + '.' + part({ sub: userId, role: 'authenticated', session_id: '53000000-0000-4000-8000-000000000001', exp: Math.floor(Date.now()/1000)+3600 }) + '.fixture';
 const session = { access_token: token, refresh_token: 'account-fixture', expires_in: 3600, expires_at: Math.floor(Date.now()/1000)+3600, token_type: 'bearer', user };
 
+// #194: Help reads the current restaurant's own contact numbers; each brand is served only its own.
+const contactNumbers = {
+  'ammu-sammu': { contact_phone: '98765 43210', whatsapp_phone: '91234 56789', tel: 'tel:+919876543210', wa: 'https://wa.me/919123456789', digits: ['9876543210', '9123456789'] },
+  'kokani-dine-inn': { contact_phone: '98111 22233', whatsapp_phone: '98999 88877', tel: 'tel:+919811122233', wa: 'https://wa.me/919899988877', digits: ['9811122233', '9899988877'] },
+};
+async function contactScenarios({ page, server, slug, fixture }) {
+  // react-native-web opens tel: by assigning window.location (not window.open); that navigation is observed over CDP on a throwaway page so it cannot disturb this one.
+  const telOpened = async () => {
+    const probe = await page.context().newPage(), cdp = await probe.context().newCDPSession(probe), navigations = [];
+    try {
+      await cdp.send('Page.enable'); cdp.on('Page.frameRequestedNavigation', event => navigations.push(event.url));
+      await probe.goto(server.url + '/help', { waitUntil: 'networkidle' });
+      await probe.getByRole('button', { name: 'Call restaurant', exact: true }).click(); await probe.waitForTimeout(500);
+      return navigations.filter(url => url.startsWith('tel:'));
+    } finally { await probe.close(); }
+  };
+  const own = contactNumbers[slug], other = Object.values(contactNumbers).find(value => value !== own);
+  const call = () => page.getByRole('button', { name: 'Call restaurant', exact: true }), chat = () => page.getByRole('button', { name: 'WhatsApp restaurant', exact: true });
+  const unavailable = () => page.getByText('Phone support isn’t available right now', { exact: true });
+  const open = async () => { await page.goto(server.url + '/help', { waitUntil: 'networkidle' }); await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor(); await page.evaluate(() => { window.__opened = []; window.open = url => { window.__opened.push(String(url)); return null; }; }); };
+  const opened = () => page.evaluate(() => window.__opened);
+  const noOther = async () => { const html = (await page.content()).replace(/\D/g, ''); for (const digits of other.digits) assert.equal(html.includes(digits), false, `${slug} Help never carries the other brand's number`); };
+  // Both configured.
+  fixture.contacts = { contact_phone: own.contact_phone, whatsapp_phone: own.whatsapp_phone };
+  await open(); await call().waitFor(); await chat().waitFor();
+  assert.equal(await unavailable().count(), 0);
+  await chat().click();
+  await page.waitForFunction(() => window.__opened.length > 0);
+  assert.deepEqual(await telOpened(), [own.tel], 'Call opens this restaurant\'s tel: link');
+  assert.deepEqual(await opened(), [own.wa], "WhatsApp opens this restaurant's wa.me link");
+  await noOther();
+  // Phone only: no WhatsApp action.
+  fixture.contacts = { contact_phone: own.contact_phone, whatsapp_phone: null };
+  await open(); await call().waitFor(); assert.equal(await chat().count(), 0, 'WhatsApp is hidden without a number');
+  // WhatsApp only (and an invalid landline-style WhatsApp number is rejected): no Call, unavailable text, WhatsApp kept.
+  fixture.contacts = { contact_phone: null, whatsapp_phone: own.whatsapp_phone };
+  await open(); await chat().waitFor(); await unavailable().waitFor(); assert.equal(await call().count(), 0);
+  fixture.contacts = { contact_phone: '12345', whatsapp_phone: '02356 222333' };
+  await open(); await unavailable().waitFor(); assert.equal(await call().count(), 0); assert.equal(await chat().count(), 0, 'invalid numbers give no actions');
+  // Cached business data keeps the actions reachable when a refresh fails (realtime invalidation, then an outage).
+  fixture.contacts = { contact_phone: own.contact_phone, whatsapp_phone: own.whatsapp_phone };
+  await open(); await call().waitFor(); await chat().waitFor();
+  await page.waitForFunction(() => true); for (let i = 0; i < 50 && !fixture.businessChannels.size; i++) await page.waitForTimeout(100);
+  assert.ok(fixture.businessChannels.size > 0, 'business realtime channel joined');
+  fixture.failBusiness = true; fixture.failedBusinessReads = 0;
+  for (const channel of fixture.businessChannels.values()) {
+    const payload = { ids: [1], data: { schema: 'public', table: 'businesses', type: 'UPDATE', commit_timestamp: new Date().toISOString(), columns: [], record: {}, old_record: {} } };
+    channel.socket.send(JSON.stringify(channel.array ? [channel.join, null, channel.topic, 'postgres_changes', payload] : { join_ref: channel.join, ref: null, topic: channel.topic, event: 'postgres_changes', payload }));
+  }
+  await page.waitForTimeout(800);
+  assert.ok(fixture.failedBusinessReads > 0, 'the business refresh really ran and failed');
+  await call().waitFor(); await chat().waitFor();
+  assert.equal(await call().isEnabled(), true, 'Call stays reachable while the catalog refresh has failed');
+  await chat().evaluate(node => node.click()); await page.waitForFunction(() => window.__opened.length > 0);
+  assert.equal((await opened()).at(-1), own.wa, 'WhatsApp still opens the cached restaurant link during the failed refresh');
+  fixture.failBusiness = false; fixture.contacts = {};
+}
+
 async function supportScenarios({ page, context, server, slug, rows, fixture, queries }) {
   const selected = page.locator('#support-order');
   const privacy = () => page.getByRole('heading', { name: 'Draft privacy policy', exact: true });
@@ -35,18 +93,21 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   assert.equal((await context.request.get(server.url + '/missing-support-fixture.js')).status(), 404, 'unknown assets cannot return the SPA document');
   await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/help');
-  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: 'WhatsApp restaurant', exact: true }).count(), 0);
-  await page.getByText('Contact number not available yet.', { exact: true }).waitFor();
+  await page.getByText('Phone support isn’t available right now', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).count(), 0, 'no broken Call action without a number');
   assert.equal(await page.getByText('Good food starts here.', { exact: true }).filter({ visible: true }).count(), 0);
   const questions = [
-    ['Where do you deliver?', 'device’s current location'],
+    ['Which delivery address is used?', 'saved and shared across both restaurants. The cart picks the first eligible address, and you can change it at checkout.'],
     ['How can I pay?', 'cash on delivery'],
     ['Can I cancel or change my order?', 'does not currently offer customer cancellation'],
     ['What if a dish is unavailable?', 'Reorder skips dishes'],
-    ['Why have I not received a login code?', 'Phone login codes are not available'],
+    ['Why have I not received a login code?', 'Sign in with your mobile number; we send a 6-digit code on WhatsApp that works for 10 minutes.'],
+    ['How do I use a coupon?', 'Enter coupon codes in the cart.'],
     ['How do I delete my account?', 'Account deletion is not yet available'],
   ];
+  const faqText = await page.locator('#support-faq').innerText();
+  assert.doesNotMatch(faqText, /Where do you deliver|email and password|Forgot password/i, 'obsolete FAQ claims are gone');
   for (const [question, answer] of questions) {
     const disclosure = page.getByRole('button', { name: question, exact: true });
     await disclosure.focus(); await page.keyboard.press('Enter');
@@ -69,14 +130,14 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
     await page.getByRole('button', { name: 'Back to Help & support', exact: true }).click();
     assert.equal(new URL(page.url()).pathname, '/help');
   }
-  fixture.supportRows = [];
+  fixture.supportRows = []; fixture.contacts = { contact_phone: contactNumbers[slug].contact_phone, whatsapp_phone: contactNumbers[slug].whatsapp_phone };
   await login(); await page.getByText('No active orders right now.', { exact: false }).waitFor();
   fixture.supportRows = rows.map(row => ({ ...row, status: 'preparing' }));
   fixture.failActive = true;
   await page.getByRole('button', { name: 'Refresh active orders', exact: true }).click();
   await page.getByRole('button', { name: 'Retry active orders', exact: true }).waitFor();
   await page.getByRole('heading', { name: 'Common questions', exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Call restaurant', exact: true }).isEnabled(), true, 'contact actions stay reachable when the active-orders refresh fails');
   fixture.failActive = false; await page.getByRole('button', { name: 'Retry active orders', exact: true }).click();
   await selected.getByText(ref(25), { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: /^Select order reference / }).count(), 20);
@@ -161,6 +222,7 @@ async function supportScenarios({ page, context, server, slug, rows, fixture, qu
   await other.reload({ waitUntil: 'networkidle' }); await other.getByRole('button', { name: 'Sign out', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in to see orders', exact: true }).waitFor();
   await other.close(); fixture.supportRows = null; fixture.authSession = null;
+  await contactScenarios({ page, server, slug, fixture });
   console.log(`PASS: ${slug} public support/FAQ/legal/back, independent active paging/retry/selection, realtime terminal transition, identity isolation, mobile/desktop layouts`);
 }
 
@@ -348,7 +410,7 @@ try {
     const businessId = `54000000-0000-4000-8000-00000000000${brand+1}`;
     const business = { id: businessId, slug, name: brand ? 'Kokani Dine Inn' : 'Ammu Sammu', delivery_fee_paise: 2000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     const item = { id: '55000000-0000-4000-8000-000000000001', name: 'Account fixture meal', description: '', category_id: '56000000-0000-4000-8000-000000000001', menu_categories: { name: 'Meals', sort_order: 0 }, price_paise: 10000, available: true, is_demo: false, is_featured: false, sort_order: 0, image_url: null };
-    const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map() };
+    const fixture = { menu: [item], holdMenu: null, supportRows: null, failActive: false, failActiveMore: false, holdActive: null, authSession: null, orderChannels: new Map(), businessChannels: new Map(), contacts: {}, failBusiness: false };
     const rows = Array.from({ length: 25 }, (_, index) => ({ id: orderId(index+1), ...(index === 24 || index === 1 ? { order_number: ref(index + 1) } : {}), business_id: businessId, customer_id: userId, status: index === 24 ? 'preparing' : 'delivered', version: 1, created_at: '2026-11-15T10:00:00.123456Z', subtotal_paise: 10000, delivery_fee_paise: 2000, total_paise: 12000, customer_name: 'Synthetic', customer_phone: '9000000000', delivery_address_line: 'Synthetic Khed address', order_items: [{ menu_item_id: item.id, diet: null, name: `History meal ${index+1}`, quantity: 1, unit_price_paise: 10000, line_total_paise: 10000 }], order_status_history: [] }));
     let failOlder = true, failDetail = false, holdOrders = false, held, release, emptyHistory = false;
     const setupContext = async context => {
@@ -358,7 +420,8 @@ try {
           const [join, ref, topic, event, payload] = array ? data : [data.join_ref, data.ref, data.topic, data.event, data.payload];
           const response = { status: 'ok', response: { postgres_changes: (payload?.config?.postgres_changes ?? []).map((value, index) => ({ ...value, id: index + 1 })) } };
           if (event === 'phx_join' && payload?.config?.postgres_changes?.some(value => value.table === 'orders')) fixture.orderChannels.set(topic, { socket, join, topic, array });
-          if (event === 'phx_leave') fixture.orderChannels.delete(topic);
+          if (event === 'phx_join' && payload?.config?.postgres_changes?.some(value => value.table === 'businesses')) fixture.businessChannels.set(topic, { socket, join, topic, array });
+          if (event === 'phx_leave') { fixture.orderChannels.delete(topic); fixture.businessChannels.delete(topic); }
           if (event === 'phx_join' || event === 'heartbeat' || event === 'phx_leave') socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response }));
         });
       });
@@ -372,7 +435,7 @@ try {
         if (url.pathname === '/auth/v1/token') return json(fixture.authSession ?? session);
         if (url.pathname === '/auth/v1/user') return json(fixture.authSession?.user ?? user);
         if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, body: '' });
-        if (url.pathname === '/rest/v1/businesses') return json(business);
+        if (url.pathname === '/rest/v1/businesses') return fixture.failBusiness ? (fixture.failedBusinessReads = (fixture.failedBusinessReads ?? 0) + 1, json({ message: 'fixture business outage' }, 500)) : json({ ...business, ...fixture.contacts });
         if (url.pathname === '/rest/v1/menu_items') { const hold = fixture.holdMenu; fixture.holdMenu = null; if (hold) { hold.arrived(); await hold.gate; } return json(fixture.menu); }
         if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]);
         if (url.pathname === '/rest/v1/menu_categories') return json([{ id: item.category_id, name: 'Meals', sort_order: 0 }]);
@@ -561,7 +624,7 @@ try {
       await page.getByText('1 × History meal 1', { exact: false }).first().waitFor();
       await page.goto(server.url + '/orders/' + orderId(999), { waitUntil: 'networkidle' });
       await page.getByText("We can't show this order", { exact: true }).waitFor();
-      for (const [label, text] of [['Saved addresses', 'No saved addresses yet'], ['Notifications', 'No notifications yet'], ['Help & support', 'Contact number not available yet.']]) {
+      for (const [label, text] of [['Saved addresses', 'No saved addresses yet'], ['Notifications', 'No notifications yet'], ['Help & support', 'Phone support isn’t available right now']]) {
         await page.getByRole('button', { name: 'Account', exact: true }).click();
         await page.getByRole('button', { name: label, exact: true }).click();
         await page.getByText(text, { exact: false }).waitFor();
