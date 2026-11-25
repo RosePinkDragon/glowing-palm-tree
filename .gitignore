@@ -44,3 +44,6 @@ example
 
 # Generated local Supabase workdir (#212): contains test OTP fixtures, never commit
 .supabase-local/
+
+# Node test coverage output (npm run coverage, #231)
+coverage/
