@@ -25,10 +25,12 @@ function NoBreakTail({ text }: { text: string }) {
  * `sheet` is the phone confirmation layout: rises from the bottom with a grab handle.
  * Titles use the brand heading font when the owners' app has loaded it.
  */
-export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false, owner = false, subtitle, headerEnd, hero, titleLead, closeLabel = 'Close' }: {
+export function AccessiblePanel({ title, children, onClose, fullScreen = false, sheet = false, footer, closeDisabled = false, owner = false, subtitle, headerEnd, hero, titleLead, closeLabel = 'Close', initialFocusId }: {
   title: string; children: ReactNode; onClose: () => void; fullScreen?: boolean; sheet?: boolean; footer?: ReactNode; closeDisabled?: boolean;
   /** Dish details (#114): opt-in photo-led bottom sheet. `hero` is the edge-to-edge photo with a round close button in its top corner, the backdrop dismisses, and `footer` is pinned at the bottom. No hero keeps every other layout unchanged. */
   hero?: ReactNode; titleLead?: ReactNode; closeLabel?: string;
+  /** Web: id of the control that takes focus when the panel opens instead of the heading (a confirmation puts it on its safe choice, #200). */
+  initialFocusId?: string;
   /** Owners' order details and cancel sheet (#53): back arrow, `page` surface, subtitle and header-end slot, roomier sheet. Off keeps the editor and customer layouts unchanged. */
   owner?: boolean; subtitle?: string; headerEnd?: ReactNode;
 }) {
@@ -38,6 +40,12 @@ export function AccessiblePanel({ title, children, onClose, fullScreen = false, 
   const heading = useRef<ComponentRef<typeof Text>>(null);
   const focusHeading = () => {
     const node = heading.current;
+    if (Platform.OS === 'web' && initialFocusId) {
+      // The modal may report shown before its content is attached, and the focus trap may move focus first: retry briefly.
+      let tries = 0;
+      const attempt = () => { const target = document.getElementById(initialFocusId); if (target) target.focus(); if (document.activeElement !== target && tries++ < 5) setTimeout(attempt, 20); };
+      attempt(); return;
+    }
     if (Platform.OS === 'web') (node as unknown as HTMLElement | null)?.focus();
     else { const handle = findNodeHandle(node); if (handle != null) AccessibilityInfo.setAccessibilityFocus(handle); }
   };

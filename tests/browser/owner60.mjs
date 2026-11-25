@@ -142,7 +142,7 @@ try {
       nextSave = 'forbidden'; await input('Minimum order').fill('300'); await button('Save changes').click();
       await text('You no longer have access to change restaurant details.').waitFor(); assert.equal(await button('Save changes').isDisabled(), true);
       // Back returns to Settings.
-      await button('Back to Settings').click(); await button('Log out').waitFor();
+      await button('Back to Settings').click(); await button('Discard changes').click(); await button('Log out').waitFor(); // #200: 300 was never saved
       Object.assign(business, { service_area_version: 'hand-drawn-v2', service_area_verified_at: '2026-11-10T00:00:00Z' });
       await button('Restaurant details').click(); await text('Set by your developer').waitFor(); await text(`${prefix}-YYYYMM0001`).waitFor();
       await button('Back to Settings').click(); await button('Log out').waitFor();

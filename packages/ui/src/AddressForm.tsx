@@ -7,6 +7,8 @@ import { MarketChip } from './MarketChips';
 import { MarketIcon } from './MarketIcons';
 import { requestLocation } from './location';
 import { addressErrorMessage, checkAddressForm, emptyAddressForm, formFromAddress, locationErrorMessage, type AddressForm as FormState, type AddressFormErrors } from './address-model';
+import { addressIsDirty } from './discard-model';
+import { useDiscardGuard } from './DiscardGuard';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 /**
@@ -17,6 +19,8 @@ export function AddressForm({ editing, save, close, inline = false }: { editing:
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
   const [form, setForm] = useState<FormState>(editing ? formFromAddress(editing) : emptyAddressForm);
+  // What was loaded, or last saved: leaving asks only when the normalized fields differ from it (#200). The inline card has no close control.
+  const [baseline, setBaseline] = useState<FormState>(form);
   const [errors, setErrors] = useState<AddressFormErrors>({});
   const [locating, setLocating] = useState(false), [saving, setSaving] = useState(false);
   const [locationError, setLocationError] = useState(''), [saveError, setSaveError] = useState('');
@@ -36,10 +40,11 @@ export function AddressForm({ editing, save, close, inline = false }: { editing:
     const checked = checkAddressForm(form);
     if ('errors' in checked) { setErrors(checked.errors); setSaveError(''); return; }
     setErrors({}); setSaveError(''); busy.current = true; setSaving(true);
-    try { await save(checked.draft); }
+    try { await save(checked.draft); setBaseline(form); }
     catch (error) { setSaveError(addressErrorMessage(error)); }
     finally { busy.current = false; setSaving(false); }
   };
+  const guard = useDiscardGuard(!inline && addressIsDirty(baseline, form), close);
   const pinText = form.location ? (form.location.source === 'gps' ? 'Delivery pin set from your phone\'s location.' : 'Delivery pin is set on the map.') : 'No delivery pin yet.';
   const locationProblem = locationError || errors.location;
   const footer = <>
@@ -68,5 +73,5 @@ export function AddressForm({ editing, save, close, inline = false }: { editing:
     {form.label === 'other' ? <MarketField label="Name this address (optional)" placeholder="e.g. Aai's place" value={form.customLabel} maxLength={40} error={errors.customLabel} onChangeText={customLabel => set({ customLabel })} /> : null}
   </>;
   if (inline) return <View style={{ gap: 14 }}>{body}{footer}</View>;
-  return <AccessiblePanel fullScreen title={editing ? 'Edit address' : 'Add address'} onClose={close} closeDisabled={saving} footer={footer}>{body}</AccessiblePanel>;
+  return <AccessiblePanel fullScreen title={editing ? 'Edit address' : 'Add address'} onClose={guard.requestLeave} closeDisabled={saving} footer={footer}>{body}{guard.confirm}</AccessiblePanel>;
 }
