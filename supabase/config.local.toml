@@ -1,0 +1,22 @@
+# Local development and browser fixtures only (#212). NOT applied to hosted projects: `npm run supabase:local-config`
+# merges these values over supabase/config.toml into a git-ignored workdir for `supabase start`. Keep this file out of
+# any `supabase config push` flow (that command is never used for this repository).
+
+# These numbers skip the hook and always accept 123456, so no WhatsApp message is sent. Fictional numbers.
+# Keys are the number with country code, without +.
+[auth.sms.test_otp]
+919999900001 = "123456"
+919999900002 = "123456"
+
+# CAPTCHA is OFF locally, because the apps send a Turnstile token only when EXPO_PUBLIC_TURNSTILE_SITE_KEY is set.
+# To exercise it locally, set that variable to Cloudflare's always-pass test site key (1x00000000000000000000AA),
+# set `enabled = true` here and put SUPABASE_AUTH_CAPTCHA_SECRET=1x0000000000000000000000000000000AA in
+# supabase/.env.local (git-ignored).
+[auth.captcha]
+enabled = false
+
+# Local functions address. The secret comes from SUPABASE_AUTH_HOOK_SEND_SMS_SECRET in supabase/.env.local
+# (v1,whsec_<base64>); pass the same value as SEND_SMS_HOOK_SECRET to `supabase functions serve --env-file`.
+[auth.hook.send_sms]
+enabled = true
+uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"

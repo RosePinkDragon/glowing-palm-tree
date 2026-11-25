@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Generated local Supabase workdir (#212): contains test OTP fixtures, never commit
+.supabase-local/
