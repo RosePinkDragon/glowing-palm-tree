@@ -28,29 +28,21 @@ otp_length = 6
 # 10 minutes. Supabase's own default is much longer.
 otp_expiry = 600
 
-# Local development and browser fixtures only: these numbers skip the hook and always accept 123456, so no
-# WhatsApp message is sent. Fictional numbers; NEVER run `supabase config push` with this table present, because
-# it would make the same codes valid on the hosted project. Keys are the number with country code, without +.
-[auth.sms.test_otp]
-919999900001 = "123456"
-919999900002 = "123456"
-
-# CAPTCHA is OFF for local development, because the apps send a Turnstile token only when EXPO_PUBLIC_TURNSTILE_SITE_KEY
-# is set, and a request without one would be refused. To exercise it locally, set that variable to Cloudflare's always-pass
-# test site key (1x00000000000000000000AA), set `enabled = true` here and put
-#   SUPABASE_AUTH_CAPTCHA_SECRET=1x0000000000000000000000000000000AA
-# in supabase/.env.local (git-ignored). Production: enable it in the dashboard with the real secret (docs/RELEASE.md),
-# never in this file. The owner flow is verified by request-owner-code itself, with TURNSTILE_SECRET_KEY.
+# Production-safe by default (#212): no test OTP numbers, CAPTCHA on with the secret from the environment. This file is
+# the committed default and must stay safe to apply to a hosted project; `.github/scripts/hosted-auth-config.mjs` fails CI
+# if it is not. Local fixtures (two fictional test numbers, CAPTCHA off, local hook address) live in `supabase/config.local.toml`
+# and are applied only to a git-ignored generated workdir: `npm run supabase:local-config` (see docs/RELEASE.md).
+# Hosted Auth is still configured in the dashboard; never run `supabase config push` or `supabase link` from this repository.
+# Enabled CAPTCHA needs the real Turnstile secret as SUPABASE_AUTH_CAPTCHA_SECRET and EXPO_PUBLIC_TURNSTILE_SITE_KEY in the apps.
 [auth.captcha]
-enabled = false
+enabled = true
 provider = "turnstile"
 secret = "env(SUPABASE_AUTH_CAPTCHA_SECRET)"
 
 # Auth sends every code here. Hosted projects: the dashboard generates the secret ("v1,whsec_...") and the same value
-# is the SEND_SMS_HOOK_SECRET function secret. Local development: put SUPABASE_AUTH_HOOK_SEND_SMS_SECRET=v1,whsec_<base64>
-# in supabase/.env.local, and pass the same value as SEND_SMS_HOOK_SECRET to
-# `supabase functions serve --env-file`. The hook is not used for the numbers in test_otp.
+# is the SEND_SMS_HOOK_SECRET function secret. The uri below is a non-local placeholder (the dashboard holds the real
+# one); the local workdir overlay replaces it with the local functions address. Local secret: see docs/RELEASE.md.
 [auth.hook.send_sms]
 enabled = true
-uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"
+uri = "https://project-ref.functions.supabase.co/functions/v1/send-sms-hook"
 secrets = "env(SUPABASE_AUTH_HOOK_SEND_SMS_SECRET)"

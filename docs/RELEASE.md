@@ -8,7 +8,7 @@ This is the one ordered checklist for a web-only launch on your own Supabase pro
 
 Before you start: the customer and owners' WhatsApp sign-in screens (#50 slices B and C) are on `main`; deploy from a `main` commit that includes them, because the apps cannot sign in without them.
 
-**Never run `supabase config push` for this repository.** It would push CAPTCHA off, a local hook address and fictional test OTPs (valid code `123456`) to the hosted project. Configure hosted Auth in the dashboard only.
+**Never run `supabase config push` for this repository.** Configure hosted Auth in the dashboard only. Since #212 the committed `supabase/config.toml` is production-safe by default (no test OTP numbers, CAPTCHA on, a non-local hook placeholder) and CI fails if that changes (`npm run check:hosted-auth`), but the dashboard remains the source of truth for hosted Auth: the check cannot see the hosted project. Local fixtures are described under "Local development fixtures" below.
 
 ### 1. Create the Supabase project and push the database
 
@@ -164,11 +164,26 @@ Do these on the deployed domains before enabling ordering for real customers. Us
 3. An owner's number receives a code in the owners' app; a non-owner number sees the identical screen and no message appears in the MSG91 log.
 4. A number that is not on WhatsApp gets the "could not deliver" error (customer only).
 5. CAPTCHA works: with it on, a request without a valid token is refused and a normal one succeeds.
+5a. One-time manual verification of the hosted project's Auth settings (#212; evidence goes to #64 hosted provider setup and the #15 release gate; not done yet because no hosted project exists): in the dashboard confirm there are **no test OTP numbers** (Authentication → Providers → Phone), **CAPTCHA is on** with the real Turnstile secret, the send_sms hook points at the project's own `send-sms-hook` function, and the Site URL and redirect URLs are the intended production domains only. Record who checked, when and the project ref.
 6. Place an order end to end on each brand (Ammu Sammu and Kokani Dine Inn): sign in, add to cart, checkout inside the delivery area, see it in that brand's admin app, move it through the order statuses. Confirm an address outside 12 km is refused.
 7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
 8. For each brand, an owner uploads a dish photo in the owners' app and it appears on the customer menu.
 9. Analytics, speed and error reports (steps 7a to 7c): with **Share app usage** off, the browser network tab shows no request to Google, Firebase or Sentry; with it on, a signed-in test account's events, traces and a test error reach the three dashboards.
 10. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
+
+### Local development fixtures (#212)
+
+The committed `supabase/config.toml` is what any tool reading this repository sees, so it carries only production-safe values. Local fixtures
+live in `supabase/config.local.toml` (test numbers `919999900001` and `919999900002` accept `123456` and skip the hook, CAPTCHA off, hook at
+`host.docker.internal`). To run the local stack with them:
+
+1. `npm run supabase:local-config` merges the overlay over the committed file into `.supabase-local/supabase/config.toml` (git-ignored) and links `migrations`, `functions`, `seed.sql` and `.env.local` beside it.
+2. `supabase start --workdir .supabase-local` (confirm your CLI version supports `--workdir` with `supabase start --help`; this repository does not run the CLI in CI).
+3. Put `SUPABASE_AUTH_HOOK_SEND_SMS_SECRET=v1,whsec_<base64>` in `supabase/.env.local` and pass the same value as `SEND_SMS_HOOK_SECRET` to `supabase functions serve --env-file`.
+
+Never link the generated workdir to a hosted project. `npm run check:hosted-auth` (run in App CI) parses the committed config and fails if
+`[auth.sms.test_otp]` has entries, CAPTCHA is not enabled with the env secret, or the send_sms hook points at localhost or `host.docker.internal`.
+The check inspects the committed file only; it cannot see a hosted project's dashboard settings.
 
 ### 10. Rollback
 
@@ -322,7 +337,7 @@ is an admin member: access still comes from `business_memberships`, checked on t
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY` in all four Vercel projects and redeploy (the screens, slices B and C, send a token as `captchaToken`
    only when this variable is set). The **secret key** goes in both places below. The two sides must agree: with the site key set,
    enable CAPTCHA in Auth and set `TURNSTILE_SECRET_KEY`; with no site key the screens send no token, so CAPTCHA must stay off in
-   Auth (as it is in the local `supabase/config.toml`) or every code request is refused.
+   Auth (as it is in the local overlay `supabase/config.local.toml`, not in the committed config) or every code request is refused.
 
 ### Secrets (names only; never in git, chat or a Vercel frontend variable)
 
@@ -353,10 +368,11 @@ Set these as Supabase Edge Function secrets from a trusted machine (`supabase se
 4. Authentication → **Bot and Abuse Protection**: enable CAPTCHA with Turnstile and the same secret (only together with
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, see provider setup step 4). The customer screens send a token with each code request. Auth skips its own CAPTCHA check for the service-role call that `request-owner-code`
    makes, because that function has already verified the token itself.
-5. `supabase/config.toml` carries the same settings for the local stack (OTP expiry 600, resend interval 30 seconds, hook, CAPTCHA
-   off by default with Cloudflare's test keys documented in the file, two fictional test numbers that skip the hook and accept `123456`). **Never run `supabase config push` for this repository**: it would push
-   CAPTCHA off, the local hook address and the fictional test OTPs (making those codes valid on the hosted project). Configure hosted
-   Auth in the dashboard only. For local functions, put `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
+5. `supabase/config.toml` carries the same settings in a production-safe form (OTP expiry 600, resend interval 30 seconds, CAPTCHA on with
+   `env(SUPABASE_AUTH_CAPTCHA_SECRET)`, no test numbers, a non-local hook placeholder). The local-only values (two fictional test numbers that skip the hook
+   and accept `123456`, CAPTCHA off, the local hook address) are in `supabase/config.local.toml` and reach only a generated, git-ignored local
+   workdir. **Never run `supabase config push` for this repository** and configure hosted Auth in the dashboard only. For local functions, put
+   `OWNER_CODE_CAPTCHA=off` (or a Turnstile test secret) in the untracked env file.
 6. Verify on staging before launch: a customer code arrives and logs in a new number; a number that is not on WhatsApp gets the
    "could not deliver" error (customer only); an owner's number receives a code from the owners' app; a non-owner's number
    gets the identical screen and **no message appears in the MSG91 log**; response times look alike. If owners never receive a
