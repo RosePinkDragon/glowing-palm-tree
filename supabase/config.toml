@@ -30,7 +30,7 @@ otp_expiry = 600
 
 # Production-safe by default (#212): no test OTP numbers, CAPTCHA on with the secret from the environment. This file is
 # the committed default and must stay safe to apply to a hosted project; `.github/scripts/hosted-auth-config.mjs` fails CI
-# if it is not. Local fixtures (two fictional test numbers, CAPTCHA off, local hook address) live in `supabase/config.local.toml`
+# if it is not. Local fixtures (two fictional test numbers, CAPTCHA off, local hook) live in `supabase/config.local.toml`
 # and are applied only to a git-ignored generated workdir: `npm run supabase:local-config` (see docs/RELEASE.md).
 # Hosted Auth is still configured in the dashboard; never run `supabase config push` or `supabase link` from this repository.
 # Enabled CAPTCHA needs the real Turnstile secret as SUPABASE_AUTH_CAPTCHA_SECRET and EXPO_PUBLIC_TURNSTILE_SITE_KEY in the apps.
@@ -39,10 +39,9 @@ enabled = true
 provider = "turnstile"
 secret = "env(SUPABASE_AUTH_CAPTCHA_SECRET)"
 
-# Auth sends every code here. Hosted projects: the dashboard generates the secret ("v1,whsec_...") and the same value
-# is the SEND_SMS_HOOK_SECRET function secret. The uri below is a non-local placeholder (the dashboard holds the real
-# one); the local workdir overlay replaces it with the local functions address. Local secret: see docs/RELEASE.md.
+# Auth sends every code to the send_sms hook. The hook is DISABLED in this committed default (#212): hosted projects
+# configure it in the dashboard (the generated secret "v1,whsec_..." is also the SEND_SMS_HOOK_SECRET function secret), and
+# the local address is enabled only by the overlay in supabase/config.local.toml.
 [auth.hook.send_sms]
-enabled = true
-uri = "https://project-ref.functions.supabase.co/functions/v1/send-sms-hook"
+enabled = false
 secrets = "env(SUPABASE_AUTH_HOOK_SEND_SMS_SECRET)"

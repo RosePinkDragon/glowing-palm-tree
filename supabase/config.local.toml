@@ -18,4 +18,5 @@ enabled = false
 # Local functions address. The secret comes from SUPABASE_AUTH_HOOK_SEND_SMS_SECRET in supabase/.env.local
 # (v1,whsec_<base64>); pass the same value as SEND_SMS_HOOK_SECRET to `supabase functions serve --env-file`.
 [auth.hook.send_sms]
+enabled = true
 uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"
