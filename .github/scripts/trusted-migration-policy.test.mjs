@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readMainMigrationPolicy, migrationChanges, evaluateTrustedMigrations } from './trusted-migration-policy.mjs';
+import { readMainMigrationPolicy, migrationChanges, evaluateTrustedMigrations, checkBaselineExists } from './trusted-migration-policy.mjs';
 
-const repository = 'owner/repo', sha = 'a'.repeat(40);
+const repository = 'owner/repo', sha = 'a'.repeat(40), headSha = 'c'.repeat(40), baselineCommit = 'b'.repeat(40);
+const baselineFile = '20261117000000_baseline.sql';
 const policyPath = 'supabase/migration-policy.json';
 const migration = name => `supabase/migrations/${name}.sql`;
 function fixture(mode = 'pre-release-baseline', options = {}) {
@@ -14,11 +15,19 @@ function fixture(mode = 'pre-release-baseline', options = {}) {
       if (options.refError) throw Object.assign(new Error('main API failure'), { status: options.refError });
       return { data: options.ref ?? { object: { type: 'commit', sha } } };
     }
+    if (path === `/repos/${repository}/contents/supabase/migrations?ref=${headSha}`) {
+      if (options.dirError) throw Object.assign(new Error('directory API failure'), { status: options.dirError });
+      return { data: options.dir ?? [{ type: 'file', name: baselineFile }] };
+    }
+    if (path === `/repos/${repository}/compare/${baselineCommit}...${headSha}?per_page=1`) {
+      if (options.compareError) throw Object.assign(new Error('compare API failure'), { status: options.compareError });
+      return { data: { status: options.compareStatus ?? 'ahead' } };
+    }
     assert.equal(path, `/repos/${repository}/contents/${policyPath}?ref=${sha}`, 'only the policy at the resolved main commit may be read');
     if (options.fileError) throw Object.assign(new Error('contents API failure'), { status: options.fileError });
-    return { data: options.file ?? { type: 'file', path: policyPath, encoding: 'base64', content: Buffer.from(options.json ?? JSON.stringify({ mode, baseline: { version: '20261117000000' } })).toString('base64') } };
+    return { data: options.file ?? { type: 'file', path: policyPath, encoding: 'base64', content: Buffer.from(options.json ?? JSON.stringify({ mode, baseline: { version: '20261117000000', commit: baselineCommit } })).toString('base64') } };
   };
-  return { calls, request, run: (files = [], body = '') => evaluateTrustedMigrations({ repository, request, files, body }) };
+  return { calls, request, run: (files = [], body = '') => evaluateTrustedMigrations({ repository, request, files, body, headSha }) };
 }
 
 test('effective rule is pinned to main, ignoring the PR base, policy edit and proposed mode', async () => {
@@ -29,7 +38,8 @@ test('effective rule is pinned to main, ignoring the PR base, policy edit and pr
   ], 'Issue: #77\nProposed mode: pre-release-open');
   assert.equal(verdict.errors.length, 1);
   assert.match(verdict.errors[0], /frozen/);
-  assert.deepEqual(f.calls, [`/repos/${repository}/git/ref/heads/main`, `/repos/${repository}/contents/${policyPath}?ref=${sha}`]);
+  assert.deepEqual(f.calls.slice(0, 2), [`/repos/${repository}/git/ref/heads/main`, `/repos/${repository}/contents/${policyPath}?ref=${sha}`]);
+  assert.ok(f.calls.slice(2).every(call => call.includes(headSha) && !call.includes(policyPath)), 'existence checks use the head sha only and never the PR policy copy');
 });
 
 test('baseline additions, copies and renames into migrations are refused; baseline edits remain allowed', async () => {
@@ -118,10 +128,48 @@ test('privileged workflow checks out main without persisted credentials, never t
 });
 
 test('frozen policy from main requires new migrations to sort after the recorded baseline', async () => {
-  const json = JSON.stringify({ mode: 'frozen', baseline: { version: '20261117000000', commit: 'b'.repeat(40) } });
+  const json = JSON.stringify({ mode: 'frozen', baseline: { version: '20261117000000', commit: baselineCommit } });
   const add = name => [{ filename: migration(name), status: 'added' }];
   assert.deepEqual((await fixture('frozen', { json }).run(add('20261118000000_next'))).errors, []);
   assert.match((await fixture('frozen', { json }).run(add('20261116000000_older'))).errors.join(), /after the baseline/);
   assert.match((await fixture('frozen', { json }).run(add('20261117000000_same'))).errors.join(), /after the baseline/);
   assert.match((await fixture('frozen', { json }).run([{ filename: migration('20261117000000_baseline'), status: 'modified' }])).errors.join(), /frozen/i);
+});
+
+test('frozen existence check: baseline file and commit present and an ancestor passes', async () => {
+  assert.deepEqual((await fixture('frozen').run()).errors, []);
+  assert.deepEqual((await fixture('frozen', { compareStatus: 'identical' }).run()).errors, []);
+});
+
+test('frozen existence check: missing baseline file is rejected', async () => {
+  for (const options of [{ dir: [{ type: 'file', name: '20261118000000_other.sql' }] }, { dir: [] }, { dir: [{ type: 'dir', name: baselineFile }] }, { dir: [{ type: 'file', name: '20261117000000_baseline.txt' }] }, { dirError: 404 }]) {
+    assert.match((await fixture('frozen', options).run()).errors.join(), /baseline migration .* does not exist/);
+  }
+});
+
+test('frozen existence check: unknown baseline commit is rejected', async () => {
+  for (const compareError of [404, 422]) assert.match((await fixture('frozen', { compareError }).run()).errors.join(), /does not exist in this repository/);
+});
+
+test('frozen existence check: a non-ancestor baseline commit is rejected', async () => {
+  for (const compareStatus of ['behind', 'diverged']) assert.match((await fixture('frozen', { compareStatus }).run()).errors.join(), /not an ancestor/);
+});
+
+test('frozen existence check fails closed when it cannot verify', async () => {
+  await assert.rejects(fixture('frozen', { dirError: 503 }).run(), /directory API failure/);
+  await assert.rejects(fixture('frozen', { compareError: 503 }).run(), /compare API failure/);
+  await assert.rejects(fixture('frozen', { compareStatus: 'weird' }).run(), /ancestry/);
+  await assert.rejects(fixture('frozen', { dir: new Array(1000).fill({ type: 'file', name: 'x.sql' }) }).run(), /incomplete or capped/);
+  await assert.rejects(evaluateTrustedMigrations({ repository, request: fixture('frozen').request, files: [], body: '' }), /head commit/);
+});
+
+test('frozen existence check rejects a baseline without a version and commit, and other modes skip it', async () => {
+  const request = async () => assert.fail('must not call the API');
+  for (const baseline of [undefined, null, [], {}, { version: '20261117000000' }, { version: '1', commit: baselineCommit }, { version: '20261117000000', commit: 'B'.repeat(40) }]) {
+    assert.match((await checkBaselineExists({ repository, request, baseline, headSha })).join(), /14-digit version and a 40-character/);
+  }
+  for (const mode of ['pre-release-open', 'pre-release-baseline']) {
+    const f = fixture(mode); await f.run();
+    assert.equal(f.calls.length, 2, `${mode} makes no existence calls`);
+  }
 });

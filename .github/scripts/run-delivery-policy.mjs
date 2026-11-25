@@ -70,7 +70,7 @@ export function createRunner({ repository, event, token, api = 'https://api.gith
         catch (err) { if (err.status !== 404) throw err; }
       }
       ({ errors, count } = evaluator(pr, issue, files, repository));
-      const migrations = await evaluateTrustedMigrations({ repository, request, files, body: pr.body });
+      const migrations = await evaluateTrustedMigrations({ repository, request, files, body: pr.body, headSha: pr.head.sha });
       errors.push(...migrations.errors);
       warnings = migrations.warnings;
       if (issue) {
