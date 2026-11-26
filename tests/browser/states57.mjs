@@ -22,7 +22,7 @@ try {
     const server = await serveWeb(`apps/${slug}-customer/dist/web`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block' });
     const errors = [], orderCalls = [];
-    const state = { fail: null, orders: [], addresses: [] };
+    const state = { fail: null, delay: 0, orders: [], addresses: [] };
     const business = { id: `57200000-0000-4000-8000-00000000000${brand + 1}`, slug, name, delivery_fee_paise: 3000, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true };
     await context.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: `market:${encodeURIComponent(api)}:${slug}:customer`, value: session });
     await context.routeWebSocket(/.*/, socket => socket.onMessage(message => {
@@ -35,6 +35,7 @@ try {
       const request = route.request(), url = new URL(request.url());
       if (url.hostname === '127.0.0.1') return route.fallback();
       assert.equal(url.origin, api, 'no third-party requests');
+      if (state.delay && url.pathname === '/rest/v1/businesses') await new Promise(done => setTimeout(done, state.delay)); // a slow network
       if (state.fail === 'offline') return route.abort('internetdisconnected');
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
       const catalog = ['/rest/v1/businesses', '/rest/v1/menu_items', '/rest/v1/menu_categories'].includes(url.pathname);
@@ -87,16 +88,23 @@ try {
       await noOverflow(); await shot('offline');
       const retry = button('Try again'); await retry.waitFor();
       await retry.focus(); assert.equal(await retry.evaluate(node => node === document.activeElement), true, 'Try again takes keyboard focus');
-      await page.keyboard.press('Enter');
-      await heading('No internet connection', 2).waitFor(); // still offline: the screen comes back, nothing else changes
+      state.delay = 1200; await page.keyboard.press('Enter');
+      // Pressing it keeps the screen and the focused button in place (no "Loading menu" swap), and says it is busy.
+      await button('Trying again…').waitFor();
+      assert.equal(await page.getByText('Loading menu', { exact: true }).count(), 0, 'Try again does not replace the screen with Loading menu');
+      assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Trying again…', 'keyboard focus stays on the same button');
+      await button('Try again').waitFor(); state.delay = 0; // still offline: the screen comes back, nothing else changes
+      await heading('No internet connection', 2).waitFor();
+      assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Try again', 'focus is still on Try again');
       assert.deepEqual(contents(await savedCart()), contents(cartBefore), 'the saved cart is kept while offline');
       assert.equal(await page.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), attempt, 'checkout recovery is kept while offline');
       await page.setViewportSize({ width: 320, height: 700 }); await noOverflow(); await page.setViewportSize({ width: 390, height: 844 });
 
       // 2. The connection returns: the bar goes and the menu loads without Try again. Ammu Sammu relies on the quiet background check, Kokani Dine Inn on the browser's "online" event.
-      state.fail = null;
+      // Ammu Sammu: the network is slow (7 s, longer than the 6 s check), so the background check must not be cancelled by the next one.
+      state.fail = null; state.delay = brand ? 0 : 7000;
       if (brand) await page.evaluate(() => window.dispatchEvent(new Event('online')));
-      await heading(name, 1).waitFor({ timeout: 15000 });
+      await heading(name, 1).waitFor({ timeout: 40000 }); state.delay = 0;
       await bar().waitFor({ state: 'hidden' });
       assert.equal(await page.getByText('No internet connection').count(), 0);
       await button(/^Cart \(1\)/).waitFor();
@@ -111,6 +119,19 @@ try {
       await context.setOffline(false);
       await bar().waitFor({ state: 'hidden' });
       assert.equal(orderCalls.length, 0);
+
+      // A browser that wrongly says "offline" while requests work: the bar clears itself after the next quiet check, which also stops further checks.
+      await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+      await bar().waitFor(); await bar().waitFor({ state: 'hidden', timeout: 15000 });
+      await heading(name, 1).waitFor();
+
+      // Reconnecting while on the cart never flips ordering to "Checking whether the restaurant is taking orders…".
+      await button(/^Cart \(1\)/).click(); await button(/^(?:Place order|Add a delivery address)$/).waitFor();
+      state.delay = 1500; await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      for (let i = 0; i < 12; i++) { assert.equal(await page.getByText('Checking whether the restaurant is taking orders…').count(), 0, 'an online event reloads quietly'); await page.waitForTimeout(100); }
+      state.delay = 0; await page.waitForTimeout(1600);
+      assert.equal(orderCalls.length, 0);
+      await page.goto(server.url, { waitUntil: 'domcontentloaded' }); await heading(name, 1).waitFor();
 
       // 4. A server fault and an expired sign-in are not "offline".
       state.fail = 'server'; await page.reload({ waitUntil: 'domcontentloaded' });

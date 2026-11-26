@@ -6,7 +6,8 @@ export type FailureKind = 'offline' | 'server' | 'auth';
 
 // What browsers and React Native say when a request never reached the server.
 const networkText = /failed to fetch|load failed|network request failed|networkerror|network error|fetch failed|internet connection appears to be offline|err_internet_disconnected|err_network_changed|err_connection|connection failed/i;
-const authCodes = new Set(['SIGN_IN_REQUIRED', 'SESSION_CHANGED', 'ADMIN_REQUIRED', '42501', 'PGRST301', 'PGRST302', 'PT401', 'PT403']);
+// A bare 403 or 42501 on a public menu read is not a sign-in problem (nobody has to be signed in to read the menu), so only an expired or missing session counts.
+const authCodes = new Set(['SIGN_IN_REQUIRED', 'SESSION_CHANGED', 'ADMIN_REQUIRED', 'PGRST301', 'PGRST302', 'PT401']);
 const authText = /jwt|not authenticated|session (?:ended|expired)|sign in again|invalid refresh token/i;
 
 /** The text, code and name of an error and of its causes (up to three levels), so a wrapped network failure is still recognised. */
@@ -30,7 +31,7 @@ export function isNetworkFailure(error: unknown): boolean { return networkText.t
 export function classifyFailure(error: unknown, online = true): FailureKind {
   if (!online || isNetworkFailure(error)) return 'offline';
   const { text, codes, status } = trail(error);
-  if (codes.some(code => authCodes.has(code)) || status === 401 || status === 403 || authText.test(text)) return 'auth';
+  if (codes.some(code => authCodes.has(code)) || status === 401 || authText.test(text)) return 'auth';
   return 'server';
 }
 
@@ -40,10 +41,8 @@ export function friendlyErrorText(message: string): string {
 }
 
 export const offlineBarText = "You're offline";
-/** One line for the restaurant-status notice while offline and a menu is already showing. */
-export const offlineStatusLine = "You're offline. We'll check again when you're back online.";
-/** How often the app quietly checks for the connection while it is showing the offline screen (web also listens for the browser's own event). */
-export const offlineRetryMs = 6000;
+/** Waits (ms) between quiet background checks while offline: 6 s, 12 s, then every 30 s. Web also listens for the browser's own "online" event. */
+export const offlineRetrySteps = [6000, 12000, 30000] as const;
 
 /** What the order or cart is called on this phone: "cart" for Ammu Sammu, "order" for Kokani Dine Inn (their own wording on the final screens). */
 const kept = (slug: BusinessSlug) => slug === 'ammu-sammu' ? 'Your cart is kept on this phone.' : 'Your order is kept on this phone.';

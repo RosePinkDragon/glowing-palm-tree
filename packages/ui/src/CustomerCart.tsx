@@ -113,7 +113,7 @@ export function CartPage(p: CartPageProps) {
   };
   const stick = Platform.OS === 'web' ? ({ position: 'sticky', bottom: 12, zIndex: 2 } as object) : {};
   return <View onFocus={keepAboveBar} style={{ gap: 16, width: '100%', maxWidth: 640, alignSelf: 'center' }}>
-    <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{p.demo ? 'Sample cart' : empty ? name : `${name} · ${count} ${noun}`}</Text>
+    <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>{p.demo ? 'Sample cart' : `${name} · ${count} ${noun}`}</Text>
     {p.undoSlot ? <View style={Platform.OS === 'web' ? ({ position: 'sticky', top: 8, zIndex: 3 } as object) : undefined}>{p.undoSlot}</View> : null}
     {p.cartMessage ? <ReorderNotice message={p.cartMessage} /> : null}
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}

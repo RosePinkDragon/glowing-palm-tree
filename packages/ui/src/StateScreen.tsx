@@ -8,7 +8,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
  * A "nothing here" or "can't load" screen (customer pp. 12, 13, 15, 16): a round icon (filled tint for Ammu Sammu, a gold ring for Kokani Dine Inn),
  * a heading in the brand's heading font, a short plain message and one button. `card` is the dashed box used inside the account drawer and address lists.
  */
-export function StateScreen({ icon, title, message, action, onAction, card = false, level = 2 }: { icon: MarketIconName; title: string; message: string; action?: string; onAction?: () => void; card?: boolean; level?: 1 | 2 | 3 }) {
+export function StateScreen({ icon, title, message, action, onAction, card = false, level = 2, busy = false }: { busy?: boolean; icon: MarketIconName; title: string; message: string; action?: string; onAction?: () => void; card?: boolean; level?: 1 | 2 | 3 }) {
   const { colors, statusHeader } = useMarketTheme();
   const fonts = useMarketFonts();
   const ring = statusHeader === 'band';
@@ -20,7 +20,7 @@ export function StateScreen({ icon, title, message, action, onAction, card = fal
     </View>
     <Text accessibilityRole="header" aria-level={level} style={{ color: colors.ink, fontSize: card ? 22 : 26, lineHeight: card ? 29 : 34, textAlign: 'center', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{title}</Text>
     <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23, textAlign: 'center', ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{message}</Text>
-    {action && onAction ? <MarketButton label={action} onPress={onAction} /> : null}
+    {action && onAction ? <MarketButton label={busy ? 'Trying again…' : action} onPress={() => { if (!busy) onAction(); }} /> : null}
   </View>;
 }
 
