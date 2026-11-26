@@ -79,6 +79,8 @@ export interface PlaceOrderInput { pricing: PricingTerms; /** The code the custo
 /** The signed-in customer's profile (#45): one row per account, shared by both restaurant apps. Phone comes from Auth, not from here. */
 export interface CustomerProfile { fullName: string; updatedAtISO: string }
 export interface SaveProfileInput { fullName: string }
+/** Server confirmation that account deletion was accepted (#51). The account is closed and its active data is gone; the same call repeats safely. Signing out on the device is the screen's job. */
+export interface AccountDeletionReceipt { customerId: string; state: 'deletion_pending'; requestedAtISO: string }
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
 export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
@@ -791,6 +793,28 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await scope.db.from('profiles').upsert({ full_name: name }, { onConflict: 'user_id' }).select(profileSelect).single();
     scope.ensureCurrent(); profileError(error);
     return mapProfile(data, scope.userId);
+  };
+  /**
+   * Deletes the signed-in customer's account for both restaurant apps (#51). One database call does everything or nothing; calling it
+   * again after a lost response returns the same confirmation. Refusals (nothing was changed): ACCOUNT_HAS_ACTIVE_ORDER while an order
+   * is not delivered or cancelled, ONLY_OWNER while the person is the only owner of a restaurant, SIGN_IN_REQUIRED for a dead session.
+   * The auth user itself is removed later by a trusted step; the account is unusable from this call on.
+   */
+  const requestAccountDeletion = async (): Promise<AccountDeletionReceipt> => {
+    const scope = await customerProfileScope();
+    const { data, error } = await scope.db.rpc('request_account_deletion');
+    scope.ensureCurrent();
+    if (error) {
+      inactiveSessionError(error);
+      if (error.code === 'PT409' && error.details === 'ACCOUNT_HAS_ACTIVE_ORDER') throw new ServiceError('ACCOUNT_HAS_ACTIVE_ORDER', 'Finish your active orders before deleting your account.', error);
+      if (error.code === 'PT409' && error.details === 'ONLY_OWNER') throw new ServiceError('ONLY_OWNER', 'Add another owner to your restaurant before deleting your account.', error);
+      throw new ServiceError('ACCOUNT_DELETION_FAILED', 'Could not delete your account. Try again.', error);
+    }
+    const row = data as { customer_id?: unknown; state?: unknown; requested_at?: unknown } | null;
+    if (!row || row.customer_id !== scope.userId || row.state !== 'deletion_pending' || typeof row.requested_at !== 'string' || Number.isNaN(Date.parse(row.requested_at))) {
+      throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the deletion. Try again.');
+    }
+    return { customerId: scope.userId, state: 'deletion_pending', requestedAtISO: row.requested_at };
   };
   const customerNotificationScope = async () => {
     try { return await customerOrderScope(); }
@@ -1662,7 +1686,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, saveOpeningHours, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, saveOpeningHours, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken, requestAccountDeletion };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

@@ -138,6 +138,8 @@ The baseline has exactly two purge functions, both callable only by `service_rol
 
 `public.purge_customer_notifications(...)` is internal to the leave-restaurant flow; do not schedule it.
 
+Account deletion (#51) adds a third trusted purge: `public.purge_deleted_customer_order_snapshots()` blanks customer details on orders of deleted accounts once the retention period (a setting, default 365 days) has passed. Its schedule and setting are in [Customer account deletion](#customer-account-deletion-51-slice-1-database-and-services).
+
 Optional, pg_cron (enable it in Database → Extensions or Integrations; **confirm in dashboard** that jobs run as `postgres`):
 
 ```sql
@@ -526,6 +528,27 @@ their own name/phone snapshots. `full_name` is trimmed, 1 to 120 characters (CHE
 - Services: `getProfile()` (null before the first save) and `saveProfile({ fullName })` for the signed-in customer; stale results after sign-out, an
   account switch or disposal are refused with `SESSION_CHANGED`. Errors: `PROFILE_INVALID_NAME`, `SIGN_IN_REQUIRED`, `PROFILE_REQUEST_FAILED`.
   No UI uses them yet (slice 2).
+
+## Customer account deletion (#51, slice 1: database and services)
+
+Added by the forward-only migration `20261126210000_account_deletion.sql` (it must sort after every migration on `main`, including `20261126200000_opening_hours.sql`). Database and services only: no screens, no web page and no Edge Function (slice 2). Nothing here touches a remote project.
+
+**What `public.request_account_deletion()` does** (customers only; invoker wrapper over a private SECURITY DEFINER function, `search_path=''`; one transaction, so it either does everything or nothing). Lock order: users KEY SHARE, sessions SHARE (the active-session check), the account row FOR UPDATE, then each owned restaurant FOR NO KEY UPDATE in id order (the same per-restaurant owner lock #59 reuses), then token, order and other rows. `place_order`, `join_business`, `leave_business`, token registration and `transition_order` take the same account lock, so an order cannot slip in while deletion starts.
+
+- Refused, changing nothing: a dead session (`INVALID_SESSION`), an order that is not delivered or cancelled (`PT409`, `ACCOUNT_HAS_ACTIVE_ORDER`), and being the only usable owner of any restaurant (`PT409`, `ONLY_OWNER`). A co-owner whose own account is already pending does not count as another owner.
+- Removed at once: profile, saved addresses, device tokens and their pending push jobs (completed audit rows keep a null token reference), customer notifications (`purge_customer_notifications`), restaurant relationships, leave requests, offer code attempts, pricing-rejection replay rows, the owner membership, and the owner's name on past order history ("Former owner"; `changed_by` set null).
+- Kept for the restaurants: orders with their items and history, and offer redemptions, all with `customer_id` null. `orders.customer_id`, `offer_redemptions.customer_id` and `order_status_history.changed_by` are now `ON DELETE SET NULL`, so even a direct `delete from auth.users` no longer fails. Owners still see these orders (the RLS policy tests `customer_id = auth.uid()`, which is never true for null); no customer does.
+- The account is marked `deletion_pending` with `deletion_requested_at`. A pending account is refused by checkout, join, leave, token registration and every RLS write behind the active-session helper (`PT409`, `ACCOUNT_LIFECYCLE_PENDING`), so signing in again with the same phone cannot recreate a profile, address or order. Calling it again returns the same confirmation and changes nothing.
+
+**Auth user removal (the one step SQL cannot do).** SQL cannot call GoTrue's admin API, and whether the SECURITY DEFINER owner may delete from `auth.users` on a hosted project cannot be shown by local tests (they run as superuser). So the RPC leaves the `auth.users` row and the trusted step removes it. `public.list_accounts_pending_auth_deletion(limit)` (service_role only) lists who is waiting, oldest first. Until slice 2 adds a service-role Edge Function that calls `auth.admin.deleteUser(id)` for each, do it by hand from a trusted machine: either the dashboard (Authentication, Users, Delete user) or `auth.admin.deleteUser` with the service-role key. Removing the user cascades the leftover account row and sessions and signs the person out everywhere; their orders stay, unlinked. The person is already unable to do anything while pending. **Before the first real deploy, confirm** that the dashboard or admin delete succeeds for a user who has orders (it should, because of `SET NULL`), and that `FOR KEY SHARE` on `auth.users` works for the definer owner (see the #51 comments).
+
+**Retention (placeholder pending the lawyer, #195; DPDP Rule 8(3)).** When the link is cut (by the RPC or by the foreign key action) a trigger stamps `orders.customer_deleted_at`; the retention clock runs from that stamp, per order. `public.purge_deleted_customer_order_snapshots()` (service_role and the SQL editor only; returns the number purged) blanks the name, phone, address line and parts, saved-address reference, latitude, longitude and distance of orders whose stamp is older than the period, once, and stamps `customer_pii_purged_at`. Amounts, items, status, order number and times stay. CHECK constraints keep those fields required for every order that is not purged, and require them blank on a purged one.
+
+- The period is one row: `customer_lifecycle_private.retention_settings.order_snapshot_retention`, default `365 days`, read at purge time, so changing it needs no code or migration. Change it in the SQL editor: `update customer_lifecycle_private.retention_settings set order_snapshot_retention = interval '540 days';` (it must be above zero). A longer period holds orders back; a shorter one makes older ones due on the next run.
+- Schedule it like the other purges in section 8 (nothing is scheduled by this change, so retention is not live until you do): `select cron.schedule('purge-deleted-customer-order-snapshots', '37 3 * * *', $$select public.purge_deleted_customer_order_snapshots()$$);` or run `select public.purge_deleted_customer_order_snapshots();` in the SQL editor now and then.
+- The issue's "scrub immediately and keep permanently" plan was replaced by the owner's 26 Nov decision. The lawyer must still confirm which fields fall under rule 8(3), and what GST and income-tax record keeping needs; both the period and the field list live in one place each (the setting and the function).
+
+**Services:** `requestAccountDeletion()` returns `{ customerId, state: 'deletion_pending', requestedAtISO }`. Errors: `ACCOUNT_HAS_ACTIVE_ORDER`, `ONLY_OWNER`, `SIGN_IN_REQUIRED`, `SESSION_CHANGED`, `CUSTOMER_REQUIRED`, `INVALID_RESPONSE`, `ACCOUNT_DELETION_FAILED`. A success only means the server finished: the screen must then sign out and clear device-local data (cart, preferences) itself. Retrying after a lost response is safe. Because the whole deletion is one transaction there are no half-finished stages to resume; the only later stage (removing the Auth user) is retried by listing what is still pending.
 
 ## Offers and discounts (#182, slice A: database and pricing)
 
