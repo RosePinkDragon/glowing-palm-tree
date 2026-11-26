@@ -47,7 +47,7 @@ create function public.s_place(key integer, cart jsonb) returns jsonb language s
   select public.place_order('ammu-sammu',cart,public.test_delivery('Sample'),null,('24300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid,public.test_quote('ammu-sammu',cart)) $$;
 create function public.s_place_ok(key integer, cart jsonb) returns jsonb language sql as $$
   select public.place_order('ammu-sammu',cart,public.test_delivery('Sample'),null,('24300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid,public.quote_order('ammu-sammu',cart,null)->'pricing') $$;
--- Run a statement and require the same refusal an unavailable dish gets: 22023 'item unavailable'.
+-- Require the expected 22023 refusal and verify the checkout state is unchanged.
 create function public.s_refused(stmt text, expected_message text default 'item unavailable', expected_detail text default '') returns void language plpgsql as $$
 declare before_state jsonb := public.s_state(); actual_detail text;
 begin
