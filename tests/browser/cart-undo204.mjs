@@ -117,7 +117,7 @@ for (const slug of ['ammu-sammu', 'kokani-dine-inn']) {
     assert.ok((await saved(page)).some(([n]) => n === A));
     // Emptying the cart: the notice stays in the empty state and brings the dish back.
     for (const dishName of [A, B]) { while (await quantity(dishName) > 0) { await page.getByRole('button', { name: `Remove one ${dishName}`, exact: true }).click(); await page.waitForTimeout(150); } }
-    await page.getByText('Your cart is empty', { exact: true }).waitFor();
+    await page.getByText(slug === 'ammu-sammu' ? 'Your plate is empty' : 'Nothing ordered yet', { exact: true }).waitFor();
     await undoButton(page, B).click(); await page.getByRole('group', { name: new RegExp(`^${B}:`) }).waitFor(); await focusedOnStepper(page, B);
     assert.ok((await saved(page)).some(([n, q]) => n === B && q >= 1));
     // Changing the restaurant scope (here: an order receipt would) is covered by the unit tests; a reload never offers Undo.

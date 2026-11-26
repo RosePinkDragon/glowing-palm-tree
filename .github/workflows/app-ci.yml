@@ -138,6 +138,7 @@ jobs:
               node tests/browser/cart.mjs
               node tests/browser/photos.mjs
               node tests/browser/customer-offers182.mjs
+              node tests/browser/states57.mjs
           - shard: brand-menu-kokani-checkout
             commands: |
               node tests/browser/brand39.mjs

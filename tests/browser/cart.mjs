@@ -153,7 +153,7 @@ try {
   assert.equal(await pages[0].getByRole('button', { name: 'Place order', exact: true }).isDisabled(), true);
   await pages[0].screenshot({ path: 'dist/browser/cart-unavailable-mobile.png', fullPage: true });
   await pages[0].getByRole('button', { name: 'Remove unavailable Current Ammu meal', exact: true }).click();
-  await pages[0].getByText('Your cart is empty', { exact: true }).filter({ visible: true }).waitFor();
+  await pages[0].getByText('Your plate is empty', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal((await saved(pages[0], slugs[1])).lines.length, 1);
   console.log('PASS: cross-tab additions serialize, fresh prices/names render, missing dishes require visible removal and block checkout');
   await other.close();

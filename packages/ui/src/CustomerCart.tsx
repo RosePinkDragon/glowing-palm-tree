@@ -2,6 +2,8 @@ import { useRef, type ComponentRef } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import { formatINRFromPaise, removeCartItem, setCartItemQuantity, MAX_QUANTITY, type CartLine } from '@market/core';
 import { MarketButton, MarketStatus } from './components';
+import { StateScreen } from './StateScreen';
+import { emptyCartCopy } from './states-model';
 import { CheckoutRecipient } from './CheckoutRecipient';
 import { CheckoutAddressSummary, type CheckoutAddresses } from './CheckoutAddress';
 import type { RecipientMode } from './recipient-model';
@@ -87,9 +89,10 @@ function BillRow({ label, value, muted }: { label: string; value: string; muted?
 }
 
 export function CartPage(p: CartPageProps) {
-  const { colors, name, voice, receiptRule, statusHeader } = useMarketTheme();
+  const { colors, name, voice, receiptRule, statusHeader, businessId } = useMarketTheme();
   const fonts = useMarketFonts();
   const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
+  const emptyCopy = emptyCartCopy(businessId);
   const count = p.cart.reduce((n, line) => n + line.quantity, 0);
   const noun = voice === 'we' ? (count === 1 ? 'dish' : 'dishes') : (count === 1 ? 'item' : 'items');
   const discount = p.discountPaise ?? 0;
@@ -114,7 +117,7 @@ export function CartPage(p: CartPageProps) {
     {p.undoSlot ? <View style={Platform.OS === 'web' ? ({ position: 'sticky', top: 8, zIndex: 3 } as object) : undefined}>{p.undoSlot}</View> : null}
     {p.cartMessage ? <ReorderNotice message={p.cartMessage} /> : null}
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}
-    {!p.ready && !p.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : empty ? <MarketStatus kind="empty" title="Your cart is empty" message="Explore the menu to get started." /> : <>
+    {!p.ready && !p.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : empty ? <StateScreen icon="plate" title={emptyCopy.title} message={emptyCopy.message} action={emptyCopy.action} onAction={p.onBrowse} /> : <>
       <CheckoutAddressSummary ctrl={p.addrs} />
       <CheckoutRecipient mode={p.recipient.mode} setMode={p.recipient.setMode} details={p.details} setDetails={p.setDetails} locked={p.locked} />
       <Card gap={14}>
