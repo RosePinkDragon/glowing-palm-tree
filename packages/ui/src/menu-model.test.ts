@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MenuItem } from '@market/core';
-import { activeSectionId, customerSections, gridColumns, carouselCardWidth, searchMenuItems, applyCategoryOrder, applyItemOrder, dishDraftErrors, dishSortOrder, dragTarget, featuredLabel, featuredMenuItems, menuSections, moveId, nextCategoryOrder, parseItemOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems, type DishDraft } from './menu-model.ts';
+import { activeSectionId, customerSections, gridColumns, carouselCardWidth, searchMenuItems, applyCategoryOrder, applyItemOrder, dishDraftErrors, dishSortOrder, dragTarget, featuredLabel, featuredMenuItems, makeRealDish, sampleDishCopy, menuSections, moveId, nextCategoryOrder, parseItemOrder, replaceMenuItem, sectionSummary, sortCategories, sortMenuItems, type DishDraft } from './menu-model.ts';
 import { parseRupees } from './admin-model.ts';
 import { readCart } from './cart-state.ts';
 
@@ -172,4 +172,14 @@ test('the dish grid is two columns on phones and widens on larger screens', () =
 test('signature carousel cards show the next card peeking in, within 220-280 wide', () => {
   assert.deepEqual([280, 350, 390, 450, 1040].map(carouselCardWidth), [220, 220, 242, 279, 280]);
   for (let width = 200; width <= 1200; width += 25) { const card = carouselCardWidth(width); assert.ok(card >= 220 && card <= 280); }
+});
+
+test('making a sample dish real clears the sample flag and keeps it unavailable (#201)', () => {
+  const sample: DishDraft = { id: 'd1', name: 'Sample thali', description: '', categoryId: 'meals', price: '100', diet: 'veg', isAvailable: true, isFeatured: true, isDemo: true };
+  assert.deepEqual(makeRealDish(sample), { ...sample, isDemo: false, isAvailable: false });
+  assert.equal(makeRealDish({ ...sample, isAvailable: false }).isAvailable, false);
+  assert.equal(sample.isDemo, true, 'the draft is not mutated');
+  assert.deepEqual(dishDraftErrors(makeRealDish(sample), ['meals'], 10000), {}, 'the converted draft passes the same validation');
+  assert.equal(sampleDishCopy.action, 'Make this a real dish');
+  assert.match(sampleDishCopy.helper, /Customers can't order sample dishes/);
 });
