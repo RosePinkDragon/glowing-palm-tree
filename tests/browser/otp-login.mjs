@@ -2,11 +2,38 @@
 // The fixtures' GoTrue mocks still answer /auth/v1/token with the fixture session, so the helper maps the new
 // /auth/v1/otp and /auth/v1/verify calls onto that handler (route.fallback with a rewritten request).
 const installed = new WeakSet();
+
+// Customer profile (#45) fixture. Journeys that are not about profiles leave `mode` as 'unavailable': the read answers 503, the app then
+// shows no name step and prefills no name, so their other assertions are unaffected. Profile journeys call profileFixture(page) and
+// switch to 'live': `names` maps a user id to the saved name, `reads` and `writes` record the requests, `failWrites` makes saves fail.
+const fixtures = new WeakMap();
+export function profileFixture(page) {
+  if (!fixtures.has(page)) fixtures.set(page, { mode: 'unavailable', names: {}, reads: [], writes: [], failWrites: null, delay: 0 });
+  return fixtures.get(page);
+}
+/** Answers /rest/v1/profiles for a fixture state. `route` is a Playwright route for that URL. */
+export async function answerProfile(state, route) {
+  const request = route.request(), bearer = request.headers().authorization?.replace('Bearer ', '');
+  const who = bearer?.includes('.') ? JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString()).sub : null;
+  const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+  if (state.mode === 'unavailable' || !who) return json({ code: 'XX000', message: 'fixture profile unavailable', details: null, hint: null }, 503);
+  if (state.delay) await new Promise(resolve => setTimeout(resolve, state.delay));
+  const row = name => ({ user_id: who, full_name: name, updated_at: '2026-11-26T10:00:00Z' });
+  if (request.method() === 'GET') { state.reads.push(who); return json(state.names[who] ? [row(state.names[who])] : []); }
+  if (request.method() === 'POST') {
+    const body = request.postDataJSON(); state.writes.push({ who, body });
+    if (state.failWrites) return json({ code: 'XX000', message: 'fixture write failure', details: null, hint: null }, state.failWrites);
+    state.names[who] = body.full_name; return json(row(body.full_name), 201);
+  }
+  throw new Error(`Unexpected profile request ${request.method()}`);
+}
 export const fixturePhone = '9876543210', fixtureCode = '123456';
 const mapOtpRoutes = async page => {
   if (installed.has(page)) return; installed.add(page);
   let email = 'customer@example.test';
   page.__otpEmail = value => { email = value; };
+  const state = profileFixture(page);
+  await page.route(url => url.pathname === '/rest/v1/profiles', route => answerProfile(state, route));
   await page.route(url => /^\/auth\/v1\/(?:otp|verify)$/.test(url.pathname), route => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/otp')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });

@@ -199,6 +199,7 @@ jobs:
             commands: |
               node tests/browser/cart-undo204.mjs
               node tests/browser/inbox55.mjs
+              node tests/browser/profile45.mjs
               node tests/browser/leave52.mjs
               node tests/browser/otp50.mjs
               node tests/browser/owner-otp50.mjs

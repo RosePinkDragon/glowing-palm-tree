@@ -34,6 +34,7 @@ import { ReorderPanel } from './ReorderPanel';
 import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 import { CustomerAddresses } from './CustomerAddresses';
 import { CustomerNotifications } from './CustomerNotifications';
+import { CustomerProfile, NameGate } from './CustomerProfile';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { hoursClosedMessage, openHoursFact } from './hours-model';
 import { useOpeningHours } from './useOpeningHours';
@@ -310,7 +311,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Menu' && carta ? <CartaHeader name={name} {...menuProps} edge={width >= 760 ? 0 : edge} /> : null}
     {page === 'Menu' && !carta ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{facts ? <MarketText variant="muted">{facts}</MarketText> : null}</View> : null}
 
-    {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' && page !== 'Notifications' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
+    {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Profile' && page !== 'Addresses' && page !== 'Notifications' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
     {!demo && (page === 'Menu' || page === 'Cart') && !menuFailure && !(market.offline && market.catalogError) ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} closedByHours={closedByHours} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
@@ -339,12 +340,12 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Addresses' ? <CustomerAddresses market={market} /> : null}
     {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} /> : null}
-    {page === 'Profile' ? <MarketCard><MarketText variant="heading">Edit profile</MarketText><MarketText>Profile editing is not available yet. Your account settings are available below.</MarketText><MarketButton label="Account settings" onPress={() => navigation.current?.go('/account')} /><MarketButton label="Browse menu" variant="secondary" onPress={() => navigation.current?.go('/')} /></MarketCard> : null}
+    {page === 'Profile' ? <CustomerProfile market={market} onDone={() => navigation.current?.go('/')} /> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
   // Only the root Menu route waits for the first-launch welcome; deep links (/privacy, /login, orders) render normally.
   const welcomeScreen = welcome.state === 'show' ? <BrandWelcome onContinue={welcome.dismiss} /> : welcome.state === 'checking' ? <View style={{ flex: 1, backgroundColor: colors.background }} /> : null;
-  return <MarketFontsProvider value={fonts}><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
+  return <MarketFontsProvider value={fonts}><NameGate market={market} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} /><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
     // The sheet quoted a total before the phone's location was awaited; never send a different one than was shown.
     try { if (validateOrder().pricing.total_paise !== chosen.totalPaise) { setLocalError('Your total changed. Please check your order and try again.'); return; } } catch (e) { setLocalError(messageOf(e)); return; }
     void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} deliveryLine={deliveryAddressLine(demo ? null : addrs.selected)} welcome={welcomeScreen} offline={market.offline && !demo} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</MarketFontsProvider>;
