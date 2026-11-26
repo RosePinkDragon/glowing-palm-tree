@@ -733,6 +733,7 @@ export function createMarketServices(options: ServiceOptions) {
   const profileError = (error: { code?: string; details?: string | null } | null) => {
     if (!error) return;
     inactiveSessionError(error);
+    // 23502 means an invalid name only because RLS runs before NOT NULL: a refused row never reaches the constraint.
     if (error.code === '23514' || error.code === '23502') throw new ServiceError('PROFILE_INVALID_NAME', FULL_NAME_MESSAGE, error);
     throw new ServiceError('PROFILE_REQUEST_FAILED', 'Could not reach your profile. Try again.', error);
   };

@@ -13,11 +13,11 @@ type Failure = { status: number; body: Record<string, unknown> };
 /** Drive the real SDK against a deterministic HTTP fixture of the auth endpoints and the profiles table. */
 async function fixture(run: (f: {
   service: ReturnType<typeof createMarketServices>; seen: Seen[]; names: Map<string, string>; create: (audience?: 'customer' | 'admin') => ReturnType<typeof createMarketServices>;
-  hold: () => Promise<() => void>; failNext: (failure: Failure) => void; setCurrentUserLookup: (fn: () => Response) => void;
+  hold: () => Promise<() => void>; respondAs: (id: string | undefined) => void; failNext: (failure: Failure) => void; setCurrentUserLookup: (fn: () => Response) => void;
 }) => Promise<void>) {
   const originalFetch = globalThis.fetch;
   const services: ReturnType<typeof createMarketServices>[] = [], seen: Seen[] = [], names = new Map<string, string>();
-  let blocked: Promise<void> | undefined, unblock: (() => void) | undefined, entered: (() => void) | undefined, holdNext = false, failure: Failure | undefined, userLookup: (() => Response) | undefined;
+  let blocked: Promise<void> | undefined, unblock: (() => void) | undefined, entered: (() => void) | undefined, holdNext = false, owner: string | undefined, failure: Failure | undefined, userLookup: (() => Response) | undefined;
   const token = (id: string) => `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: id, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
   const userFrom = (headers: HeadersInit | undefined) => {
     const claim = (new Headers(headers).get('authorization') ?? '').split('.')[1];
@@ -41,9 +41,10 @@ async function fixture(run: (f: {
       if (holdNext) { holdNext = false; entered?.(); await blocked; }
       if (failure) { const f = failure; failure = undefined; return Response.json(f.body, { status: f.status }); }
       const me = userFrom(init?.headers)!;
+      const rowOwner = owner ?? me;   // a misbehaving server may answer with another user's row
       if ((init?.method ?? 'GET') === 'GET') {
         assert.equal(url.searchParams.get('user_id'), `eq.${me}`, 'the read names only the verified user');
-        const rows = names.has(me) ? [{ user_id: me, full_name: names.get(me), updated_at: stamp }] : [];
+        const rows = names.has(me) ? [{ user_id: rowOwner, full_name: names.get(me), updated_at: stamp }] : [];
         return Response.json(headers.get('accept')?.includes('pgrst.object') ? (rows[0] ?? null) : rows);
       }
       assert.equal(init?.method, 'POST');
@@ -51,7 +52,7 @@ async function fixture(run: (f: {
       assert.match(headers.get('prefer') ?? '', /resolution=merge-duplicates/);
       assert.deepEqual(Object.keys(body), ['full_name'], 'only the name is sent; the database pins user_id');
       names.set(me, body.full_name);
-      const row = { user_id: me, full_name: body.full_name, updated_at: stamp };
+      const row = { user_id: rowOwner, full_name: body.full_name, updated_at: stamp };
       return Response.json(headers.get('accept')?.includes('pgrst.object') ? row : [row], { status: 201 });
     }
     throw new Error(`Unexpected synthetic request ${url.pathname}`);
@@ -66,7 +67,7 @@ async function fixture(run: (f: {
   const service = create();
   try {
     await service.auth.signIn('customer@example.test', 'synthetic-password');
-    await run({ service, seen, names, create, failNext: f => { failure = f; }, setCurrentUserLookup: fn => { userLookup = fn; }, hold: async () => {
+    await run({ service, seen, names, create, respondAs: id => { owner = id; }, failNext: f => { failure = f; }, setCurrentUserLookup: fn => { userLookup = fn; }, hold: async () => {
       holdNext = true; blocked = new Promise<void>(resolve => { unblock = resolve; });
       return () => unblock?.();
     } });
@@ -137,7 +138,13 @@ test('error mappings: inactive session, refused name, and everything else', asyn
 });
 
 test('a response for another account or with an invalid name is refused', async () => {
-  await fixture(async ({ service, names }) => {
+  await fixture(async ({ service, names, respondAs }) => {
+    respondAs(customerB);
+    names.set(customerA, 'Neha Rao');
+    await assert.rejects(service.getProfile(), code('INVALID_RESPONSE'), 'a read answered with another user\'s row');
+    await assert.rejects(service.saveProfile({ fullName: 'Neha Rao' }), code('INVALID_RESPONSE'), 'an upsert answered with another user\'s row');
+    respondAs(undefined);
+    assert.equal((await service.getProfile())?.fullName, 'Neha Rao');
     names.set(customerA, ' padded ');
     await assert.rejects(service.getProfile(), code('INVALID_RESPONSE'));
     names.set(customerA, 'N'.repeat(121));

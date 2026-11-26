@@ -89,6 +89,7 @@ select public.test_assert(has_column_privilege('authenticated','public.profiles'
 select public.test_assert(not has_any_column_privilege('anon','public.profiles','select') and not has_any_column_privilege('anon','public.profiles','insert')
   and not has_any_column_privilege('anon','public.profiles','update') and not has_table_privilege('anon','public.profiles','delete'), 'anon has no privilege at all');
 select public.test_assert((select count(*)=0 from information_schema.role_table_grants where table_schema='public' and table_name='profiles' and grantee not in ('postgres','authenticated','service_role','supabase_admin')), 'no other grantee holds a table privilege');
+select public.test_assert(not exists (select 1 from pg_publication_tables where schemaname='public' and tablename='profiles'), 'profiles is not in any realtime publication');
 select public.test_assert((select confdeltype='c' from pg_constraint where conrelid='public.profiles'::regclass and contype='f'), 'the Auth foreign key cascades');
 
 -- 1. Own read and write, as the app sends them (a name only; upsert on user_id). ---------------------------------------
