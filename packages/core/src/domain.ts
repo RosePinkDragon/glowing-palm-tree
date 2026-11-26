@@ -215,12 +215,20 @@ export function formatINRFromPaise(paise: number): string {
   return paise % 100 === 0 ? formattedRupees : `${formattedRupees}.${paiseRemainder}`;
 }
 
+/** A person's full name (customer profile #45, checkout delivery name): trimmed, 1 to 120 characters (code points, as the database counts). */
+export const FULL_NAME_MESSAGE = 'Enter a name from 1 to 120 characters.';
+export function normalizeFullName(value: unknown): { name: string; valid: boolean } {
+  const name = typeof value === 'string' ? value.trim() : '';
+  const length = [...name].length;
+  return { name, valid: length >= 1 && length <= 120 };
+}
+
 export function validateDeliveryDetails(input: DeliveryDetails): DeliveryDetails {
-  const name = input.name.trim();
+  const { name, valid: validName } = normalizeFullName(input.name);
   const addressLine = input.addressLine.trim();
   const digits = input.phone.replace(/\s/g, '').replace(/^\+91/, '');
   const fields: DomainFieldErrors = {};
-  if (name.length < 1 || name.length > 120) fields.name = 'Enter a name from 1 to 120 characters.';
+  if (!validName) fields.name = FULL_NAME_MESSAGE;
   if (!/^\+?\d+$/.test(input.phone.replace(/\s/g, '')) || !/^[6-9]\d{9}$/.test(digits)) {
     fields.phone = 'Enter a valid 10-digit Indian mobile number.';
   }

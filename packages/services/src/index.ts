@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, normalizeFullName, FULL_NAME_MESSAGE, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
@@ -73,6 +73,9 @@ export interface OrderQuote { pricing: PricingTerms; offerError: OfferError | nu
  */
 export interface PlaceOrderInput { pricing: PricingTerms; /** The code the customer entered, if any. It is part of the idempotent request: retry with the same value. */ offerCode?: string | null; lines: readonly CartLine[]; delivery: { name: string; phone: string }; location: LocationFix | null; idempotencyKey: string; savedAddress: { id: string; version: number } }
 /** Preserve the database timestamp verbatim: JavaScript dates lose microseconds. */
+/** The signed-in customer's profile (#45): one row per account, shared by both restaurant apps. Phone comes from Auth, not from here. */
+export interface CustomerProfile { fullName: string; updatedAtISO: string }
+export interface SaveProfileInput { fullName: string }
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
 export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
@@ -704,6 +707,58 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId).eq('id', id).maybeSingle();
     scope.ensureCurrent(); fail(error, 'Could not load your order');
     return data ? mapOrder(data as OrderRow, slug) : null;
+  };
+  // The customer profile (#45) belongs to the account, not to a restaurant, so its scope needs no business lookup.
+  // Same identity rule as the order reads: a response that arrives after sign-out, an account switch or disposal is refused.
+  const customerProfileScope = async () => {
+    const db = requireClient(), started = generation;
+    if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to view your profile.');
+    const ensureCurrent = (userId?: string) => {
+      if (disposed || generation !== started || (userId !== undefined && sessionUserId !== undefined && sessionUserId !== userId)) {
+        throw new ServiceError('SESSION_CHANGED', 'Your account changed. Reload your profile.');
+      }
+    };
+    const { data, error } = await db.auth.getUser();
+    ensureCurrent();
+    if (error?.name === 'AuthSessionMissingError') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to view your profile.', error);
+    fail(error, 'Could not verify your account');
+    if (!data.user) throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to view your profile.');
+    const userId = data.user.id;
+    ensureCurrent(userId);
+    return { db, userId, ensureCurrent: () => ensureCurrent(userId) };
+  };
+  const profileSelect = 'user_id,full_name,updated_at';
+  const mapProfile = (data: unknown, userId: string): CustomerProfile => {
+    const row = data as { user_id?: unknown; full_name?: unknown; updated_at?: unknown } | null;
+    if (!row || row.user_id !== userId || typeof row.full_name !== 'string' || typeof row.updated_at !== 'string' || !normalizeFullName(row.full_name).valid || normalizeFullName(row.full_name).name !== row.full_name) {
+      throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid profile.');
+    }
+    return { fullName: row.full_name, updatedAtISO: row.updated_at };
+  };
+  /** Profile failures never echo server text. A CHECK or NOT NULL refusal means the name was invalid. */
+  const profileError = (error: { code?: string; details?: string | null } | null) => {
+    if (!error) return;
+    inactiveSessionError(error);
+    // 23502 means an invalid name only because RLS runs before NOT NULL: a refused row never reaches the constraint.
+    if (error.code === '23514' || error.code === '23502') throw new ServiceError('PROFILE_INVALID_NAME', FULL_NAME_MESSAGE, error);
+    throw new ServiceError('PROFILE_REQUEST_FAILED', 'Could not reach your profile. Try again.', error);
+  };
+  /** The signed-in customer's own profile, or null when no name has been saved yet (the row is created on first save). */
+  const getProfile = async (): Promise<CustomerProfile | null> => {
+    const scope = await customerProfileScope();
+    const { data, error } = await scope.db.from('profiles').select(profileSelect).eq('user_id', scope.userId).maybeSingle();
+    scope.ensureCurrent(); profileError(error);
+    return data ? mapProfile(data, scope.userId) : null;
+  };
+  /** Saves the name (trimmed, 1 to 120 characters) for the signed-in customer: an upsert of their own row, which the database pins to auth.uid(). */
+  const saveProfile = async (input: SaveProfileInput): Promise<CustomerProfile> => {
+    const { name, valid } = normalizeFullName(input?.fullName);
+    if (!valid) throw new ServiceError('PROFILE_INVALID_NAME', FULL_NAME_MESSAGE);
+    const scope = await customerProfileScope();
+    // Only full_name is sent: user_id comes from the session in the database, so no request can name another account.
+    const { data, error } = await scope.db.from('profiles').upsert({ full_name: name }, { onConflict: 'user_id' }).select(profileSelect).single();
+    scope.ensureCurrent(); profileError(error);
+    return mapProfile(data, scope.userId);
   };
   const customerNotificationScope = async () => {
     try { return await customerOrderScope(); }
@@ -1535,7 +1590,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;

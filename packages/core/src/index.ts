@@ -13,6 +13,8 @@ export {
   orderStatusTransitions,
   removeCartItem,
   setCartItemQuantity,
+  FULL_NAME_MESSAGE,
+  normalizeFullName,
   validateDeliveryDetails,
   validateLocationFix,
 } from './domain.ts';
