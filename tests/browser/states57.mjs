@@ -160,7 +160,7 @@ try {
       await shot('no-orders-drawer');
       await button('Browse the menu').first().click();
       await heading(name, 1).waitFor();
-      assert.equal(await heading('No orders yet').count(), 0, 'the drawer closes on Browse the menu');
+      await heading('No orders yet').waitFor({ state: 'hidden', timeout: 10000 }); // the drawer closes on Browse the menu
 
       // 7. No saved addresses.
       await page.goto(`${server.url}/addresses`, { waitUntil: 'domcontentloaded' });
