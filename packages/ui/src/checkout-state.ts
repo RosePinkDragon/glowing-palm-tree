@@ -53,6 +53,20 @@ export function isDefiniteOrderRejection(error: unknown): boolean {
   return new Set(['delivery unavailable', 'invalid delivery details', 'invalid items', 'invalid item', 'invalid item quantity or duplicate', 'item unavailable', 'invalid order total']).has(error.message.replace(/^Could not place order: /, '')) && error.message.startsWith('Could not place order: ');
 }
 
+/**
+ * The server refused the order because the session behind the request had ended (INVALID_SESSION, mapped to SIGN_IN_REQUIRED).
+ * That check runs before anything is written, so nothing is uncertain: the saved attempt (same idempotency key) and the cart are kept,
+ * the customer is signed out locally and sent to sign in, and a retry after signing back in replays the same attempt.
+ * It is deliberately not a "definite rejection": that would release the attempt, and a replay of an earlier lost request must still be recoverable.
+ */
+export const signedOutCheckoutNote = 'You were signed out. Sign in again to place your order — your cart is saved.';
+export function isSignInRequired(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'SIGN_IN_REQUIRED';
+}
+export function signInRequiredOutcome(error: unknown): { keepAttempt: true; keepCart: true; signOutLocally: true; goToSignIn: '/cart'; note: string } | null {
+  return isSignInRequired(error) ? { keepAttempt: true, keepCart: true, signOutLocally: true, goToSignIn: '/cart', note: signedOutCheckoutNote } : null;
+}
+
 export interface Identity { userId: string | null; generation: number }
 export function nextIdentity(current: Identity, userId: string | null): Identity {
   return current.userId === userId ? current : { userId, generation: current.generation + 1 };
