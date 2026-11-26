@@ -25,7 +25,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers active-session active-session-rls)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
-shared_fixture=(isolation checkout notifications notification-routing accepting-orders pricing)
+shared_fixture=(isolation checkout checkout-budget notifications notification-routing accepting-orders pricing)
 for db in all_fresh all_existing; do
   docker exec "$container" createdb -U postgres "$db"
   sql_file tests/database/fixture.sql
@@ -140,7 +140,7 @@ SQL
 begin;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009',true);
-select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Race","phone":"123","address_id":"74800000-0000-4000-8000-000000000001","address_version":1}',null,'64800000-0000-4000-8000-000000000099',
+select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]','{"name":"Race","phone":"9876543210","address_id":"74800000-0000-4000-8000-000000000001","address_version":1}',null,'64800000-0000-4000-8000-000000000099',
   jsonb_build_object('lines',jsonb_build_array(jsonb_build_object('menu_item_id',m.id,'quantity',1,'unit_price_paise',m.price_paise,'line_total_paise',m.price_paise)),'delivery_fee_paise',0,'min_order_paise',0,'subtotal_paise',m.price_paise,'total_paise',m.price_paise))
   from public.menu_items m where m.id='20000000-0000-4000-8000-000000000001';
 select pg_sleep(2);
@@ -170,6 +170,7 @@ select set_config('request.jwt.claim.sub','34800000-0000-4000-8000-000000000009'
 update public.customer_addresses set house='Edited during checkout' where id='74800000-0000-4000-8000-000000000001';
 SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
+  source tests/database/checkout-budget-races.sh
   source tests/database/restaurant-settings-races.sh
   source tests/database/customer-notifications-races.sh
   source tests/database/owner-display-name-races.sh

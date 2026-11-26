@@ -53,6 +53,14 @@ export function isDefiniteOrderRejection(error: unknown): boolean {
   return new Set(['delivery unavailable', 'invalid delivery details', 'invalid items', 'invalid item', 'invalid item quantity or duplicate', 'item unavailable', 'invalid order total']).has(error.message.replace(/^Could not place order: /, '')) && error.message.startsWith('Could not place order: ');
 }
 
+export const rateLimitedAttemptNote = 'Your order was not placed. Please wait a little, then retry the same order.';
+/** A budget refusal happens after replay lookup, so this request placed no order. Keep the saved attempt for a later retry. */
+export function orderRateLimitOutcome(error: unknown): { keepAttempt: true; note: string } | null {
+  return error instanceof Error && 'code' in error && error.code === 'ORDER_RATE_LIMITED'
+    ? { keepAttempt: true, note: "You've placed a lot of orders in the last hour. Please wait a little before placing another." }
+    : null;
+}
+
 /**
  * The server refused the order because the session behind the request had ended (INVALID_SESSION, mapped to SIGN_IN_REQUIRED).
  * That check runs before anything is written, so nothing is uncertain: the saved attempt (same idempotency key) and the cart are kept,
