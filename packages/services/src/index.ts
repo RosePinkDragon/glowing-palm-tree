@@ -386,6 +386,12 @@ function activeOffer(v: unknown): ActiveOffer {
     endsAtISO: o.ends_at as string | null, window: w ? { from: w.from as string, to: w.to as string, days: w.days as number[] } : null };
 }
 
+function demoRestaurantError(error: { code?: string; details?: string; message: string } | null): void {
+  if (error?.code === '22023' && error.details === 'DEMO_RESTAURANT') {
+    throw new ServiceError('NOT_ACCEPTING_ORDERS', 'This is a sample restaurant. Ordering is unavailable.', error);
+  }
+}
+
 function fail(error: { message: string; code?: string } | null, action: string): void {
   if (error) throw new ServiceError(error.code ?? 'BACKEND_ERROR', `${action}: ${error.message}`, error);
 }
@@ -1297,6 +1303,7 @@ export function createMarketServices(options: ServiceOptions) {
     finally { clearTimeout(timer); }
     const { data, error } = reply;
     if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to get your prices.', error);
+    demoRestaurantError(error);
     fail(error, 'Could not price the order');
     if (!data || data.outcome !== 'quoted') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid quote.');
     const nudge = data.nudge as Record<string, unknown> | null;
@@ -1451,6 +1458,7 @@ export function createMarketServices(options: ServiceOptions) {
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
     if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
+    demoRestaurantError(error);
     fail(error, 'Could not place order');
     if (!data) throw new ServiceError('INVALID_RESPONSE', 'The server did not return an order.');
     if (data.outcome === 'pricing_changed' && !('id' in data)) throw new PricingChangedError(validateRevisedPricing(data.pricing, input.lines));

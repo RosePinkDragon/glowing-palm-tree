@@ -7,7 +7,7 @@ select public.test_assert((select relrowsecurity from pg_class where oid='public
 -- Customers A and B and their saved addresses come from final-fixture.sql. Fictional service square, rolled back.
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''pricing test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=500,min_order_paise=100 where slug=''ammu-sammu''',ns);
+  execute format('update public.businesses set is_demo=false,service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''pricing test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=500,min_order_paise=100 where slug=''ammu-sammu''',ns);
 end $$;
 insert into public.menu_items(id,business_id,name,category_id,price_paise,diet) values
 ('24000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','Price one',public.test_category('10000000-0000-4000-8000-000000000001','Pricing'),10000,'veg'),

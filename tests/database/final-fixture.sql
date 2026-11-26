@@ -24,3 +24,6 @@ insert into public.order_status_history(order_id,status) select id,'placed' from
 -- The seed's two "Demo meal" rows are sample dishes (is_demo), which the server refuses to order (#243). The suites that
 -- share this fixture order them as their real dishes, so mark those rows real here (a fixture change; the seed is untouched).
 update public.menu_items set is_demo=false where id in ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002');
+
+-- Treat both seeded restaurants as real for the shared checkout scenarios.
+update public.businesses set is_demo=false where slug in ('ammu-sammu', 'kokani-dine-inn');

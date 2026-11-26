@@ -12,7 +12,7 @@ insert into public.customer_addresses(customer_id,label,house,street_area,latitu
  select ('18200000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'home','Offer house','Offer road',0.5,0.5,'pin' from generate_series(1,4) n;
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''offers test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=5000,min_order_paise=0 where slug=''ammu-sammu''',ns);
+  execute format('update public.businesses set is_demo=false,service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''offers test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=5000,min_order_paise=0 where slug=''ammu-sammu''',ns);
 end $$;
 insert into public.menu_items(id,business_id,name,category_id,price_paise,diet) values
  ('18200000-0000-4000-a000-000000000001','10000000-0000-4000-8000-000000000001','T250',public.test_category('10000000-0000-4000-8000-000000000001','Offers'),25000,'veg'),
