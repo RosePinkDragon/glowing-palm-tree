@@ -35,6 +35,16 @@ do $$ begin
   begin perform public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1},{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',current_setting('test.delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000004','{}'); raise exception 'duplicate item accepted'; exception when invalid_parameter_value then null; end;
   begin perform public.transition_order(current_setting('test.order_id')::uuid,'accepted',1); raise exception 'customer transition accepted'; exception when insufficient_privilege then null; end;
 end $$;
+-- The same client key belongs to each account separately, including after a committed-looking retry.
+begin;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000002',false);
+select set_config('test.b_delivery',public.test_delivery('Customer B')::text,false);
+select set_config('test.b_order',public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.b_delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001',public.test_quote('ammu-sammu',current_setting('test.items')::jsonb))->>'id',false);
+select public.test_assert(current_setting('test.b_order') <> current_setting('test.order_id'),'same key creates a separate order for customer B');
+select public.test_assert(public.place_order('ammu-sammu',current_setting('test.items')::jsonb,current_setting('test.b_delivery')::jsonb,current_setting('test.fix')::jsonb,'60000000-0000-4000-8000-000000000001',public.test_quote('ammu-sammu',current_setting('test.items')::jsonb))->>'id'=current_setting('test.b_order'),'customer B retry returns B order');
+reset role;
+select public.test_assert((select count(*)=2 and count(distinct customer_id)=2 from public.orders where business_id='10000000-0000-4000-8000-000000000001' and idempotency_key='60000000-0000-4000-8000-000000000001'),'same key remains isolated per account');
+rollback;
 reset role;
 update public.menu_items set available=false, price_paise=20000 where id='20000000-0000-4000-8000-000000000001';
 set role authenticated;
