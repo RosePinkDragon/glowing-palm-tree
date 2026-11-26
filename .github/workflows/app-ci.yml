@@ -145,6 +145,7 @@ jobs:
               node tests/browser/kokani39.mjs
               node tests/browser/checkout48.mjs
               node tests/browser/sample-dish201.mjs
+              node tests/browser/checkout-signin213.mjs
           - shard: inbox-leave
             commands: |
               node tests/browser/cart-undo204.mjs
