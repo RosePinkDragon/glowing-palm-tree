@@ -6,7 +6,7 @@ import { webRedirectUrl } from './auth-callback.ts';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { menuItem } from '../../../tests/fixtures/menu.ts';
-import { freezeAttempt, readAttempt } from './checkout-state.ts';
+import { freezeAttempt, isDefiniteOrderRejection, isSignInRequired, readAttempt, sameIdentity, signInRequiredOutcome, signedOutCheckoutNote } from './checkout-state.ts';
 import { cleanupDecision, ensureLeaveRequest, leaveFailure, leaveRequestIsFinal, leaveRetryCopy, leaveTarget, type LeaveLink, type LeaveStorage } from './leave-model.ts';
 
 test('a persisted attempt preserves the original request for retries', () => {
@@ -322,3 +322,16 @@ test('owner label names the offer or its code', () => {
 });
 
 }
+
+test('an ended session at checkout keeps the attempt and cart, says so plainly, and never claims uncertainty', () => {
+  const ended = Object.assign(new Error('Your session ended. Sign in again.'), { code: 'SIGN_IN_REQUIRED' });
+  assert.equal(isSignInRequired(ended), true);
+  assert.deepEqual(signInRequiredOutcome(ended), { keepAttempt: true, keepCart: true, signOutLocally: true, goToSignIn: '/cart', note: signedOutCheckoutNote });
+  assert.match(signedOutCheckoutNote, /signed out/); assert.doesNotMatch(signedOutCheckoutNote, /uncertain/);
+  assert.equal(isDefiniteOrderRejection(ended), false, 'the saved attempt must not be released');
+  for (const other of [new Error('x'), Object.assign(new Error('x'), { code: 'NOT_ACCEPTING_ORDERS' }), Object.assign(new Error('x'), { code: '42501' }), 'SIGN_IN_REQUIRED', null]) {
+    assert.equal(isSignInRequired(other), false); assert.equal(signInRequiredOutcome(other), null);
+  }
+  // Signing back in is a new identity generation, so the identity-mismatch handling still decides whose attempt it is.
+  assert.equal(sameIdentity({ userId: 'u', generation: 1 }, { userId: null, generation: 2 }), false);
+});
