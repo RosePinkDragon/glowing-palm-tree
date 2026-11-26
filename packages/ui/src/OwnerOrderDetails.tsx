@@ -66,11 +66,11 @@ export function OwnerOrderDetails({ queue, orderId, now, onClose }: { queue: Own
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, fontSize: 18, lineHeight: 26, fontWeight: '700' }}>{order.delivery.name}</Text>
-          <MarketText variant="muted">{order.delivery.phone}</MarketText>
+          {order.delivery.phone ? <MarketText variant="muted">{order.delivery.phone}</MarketText> : null}
         </View>
         {call ? <View style={{ minWidth: 96 }}><MarketLinkButton tone="primary" icon="phone" label="Call" name={`Call ${order.delivery.name}`} href={call} /></View> : null}
       </View>
-      {!call ? <MarketText variant="muted">This phone number can't be dialled. Check it before calling.</MarketText> : null}
+      {!call && order.delivery.phone ? <MarketText variant="muted">This phone number can't be dialled. Check it before calling.</MarketText> : null}
       <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}><MarketIcon name="pin" color={colors.muted} nudge={3} /><View style={{ flex: 1, gap: 2 }}>
           {order.address ? <>

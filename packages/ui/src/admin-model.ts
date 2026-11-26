@@ -69,8 +69,8 @@ export function pinCheckLine(order: Pick<Order, 'address' | 'kitchenDistanceM'>)
 }
 
 /** One-line address summary for cards. */
-export function shortAddress(line: string, max = 40): string {
-  const text = line.replace(/\s+/g, ' ').trim();
+export function shortAddress(line: string | null | undefined, max = 40): string {
+  const text = (line ?? '').replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
@@ -83,7 +83,7 @@ export function nextAction(status: OrderStatus): { status: OrderStatus; label: s
 }
 export const canCancel = (status: OrderStatus) => nextStatuses(status).includes('cancelled');
 /** Dialer link from the customer's phone, or null when it is not a valid Indian number. */
-export function callLink(phone: string): string | null { const number = indianPhone(phone); return number ? `tel:+${number}` : null; }
+export function callLink(phone: string | null | undefined): string | null { const number = indianPhone(phone ?? ''); return number ? `tel:+${number}` : null; }
 /** Google Maps search link for the delivery pin; null when there is no valid pin (#48 adds a structured address). */
 export function mapsUrl(location: Order['location']): string | null {
   if (!location || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)) return null;

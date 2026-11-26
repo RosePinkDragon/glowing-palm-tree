@@ -92,3 +92,14 @@ test('placed label reads today or the date', () => {
   assert.match(placedLabel('2026-11-14T09:40:00', now), /^Placed 14 Nov, \d{1,2}:40 (am|pm)$/);
   assert.equal(placedLabel('bad', now), 'Placed');
 });
+
+test('an order whose customer details were removed after account deletion still renders (#51)', () => {
+  assert.equal(shortAddress(null), '');
+  assert.equal(shortAddress(undefined), '');
+  assert.equal(callLink(null), null);
+  assert.equal(callLink(undefined), null);
+  const purged = { delivery: { name: 'Deleted customer', phone: '', addressLine: 'Address removed' }, kitchenDistanceM: null } as Pick<Order, 'address' | 'delivery' | 'kitchenDistanceM'>;
+  assert.equal(cardArea(purged), 'Address removed');
+  assert.equal(callLink(purged.delivery.phone), null);
+  assert.equal(cardArea({ delivery: { name: 'x', phone: '', addressLine: null as unknown as string }, kitchenDistanceM: null } as Pick<Order, 'address' | 'delivery' | 'kitchenDistanceM'>), '', 'even a null line cannot throw');
+});
