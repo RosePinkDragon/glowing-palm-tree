@@ -9,7 +9,7 @@ update public.businesses set is_demo=false,ordering_enabled=true,accepting_order
 update public.menu_items set is_demo=false,available=true,price_paise=15000 where id='20000000-0000-4000-8000-000000000001';
 create function public.test_feed_race_place() returns uuid language sql as $$
  select (public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',
- '{"name":"Race customer","phone":"123","address_id":"75100000-0000-4000-8000-000000000001","address_version":1}',null,'65100000-0000-4000-8000-000000000001',
+ '{"name":"Race customer","phone":"9876543210","address_id":"75100000-0000-4000-8000-000000000001","address_version":1}',null,'65100000-0000-4000-8000-000000000001',
  public.test_quote('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]'))->>'id')::uuid $$;
 SQL
 feed_tmp=$(mktemp -d /tmp/customer-feed-races.XXXXXX)

@@ -15,7 +15,7 @@ create function public.test_quote(p_slug text, p_items jsonb) returns jsonb lang
   from public.businesses b where b.slug = p_slug $$;
 -- Saved-address delivery details for the calling customer's oldest saved address at its current version.
 create function public.test_delivery(p_name text default 'Test Customer') returns jsonb language sql stable as $$
-  select jsonb_build_object('name',p_name,'phone','123','address_id',a.id,'address_version',a.version)
+  select jsonb_build_object('name',p_name,'phone','9876543210','address_id',a.id,'address_version',a.version)
   from public.customer_addresses a where a.customer_id = auth.uid() order by a.created_at, a.id limit 1 $$;
 -- A catalog category for a restaurant (trusted fixture use, as the table owner).
 create function public.test_category(p_business uuid, p_name text) returns uuid language sql as $$

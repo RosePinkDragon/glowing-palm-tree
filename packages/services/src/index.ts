@@ -1392,6 +1392,7 @@ export function createMarketServices(options: ServiceOptions) {
     inactiveSessionError(error);
     lifecycleError(error);
     if (error?.code === ADDRESS_CHANGED_SQLSTATE) throw addressChanged(error);
+    if (error?.code === 'PT429' && error.details === 'ORDER_RATE_LIMITED') throw new ServiceError('ORDER_RATE_LIMITED', 'You have placed several orders recently. Please wait before placing another order.', error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
     if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
