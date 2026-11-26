@@ -21,3 +21,6 @@ insert into public.orders(id,business_id,customer_id,customer_name,customer_phon
 insert into public.device_tokens(user_id,business_id,audience,token) values ('30000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','customer','device-a');
 insert into public.order_items(order_id,name,unit_price_paise,quantity,line_total_paise) select id,'Snapshot',100,1,100 from public.orders;
 insert into public.order_status_history(order_id,status) select id,'placed' from public.orders;
+-- The seed's two "Demo meal" rows are sample dishes (is_demo), which the server refuses to order (#243). The suites that
+-- share this fixture order them as their real dishes, so mark those rows real here (a fixture change; the seed is untouched).
+update public.menu_items set is_demo=false where id in ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002');
