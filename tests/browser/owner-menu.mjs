@@ -229,7 +229,8 @@ try {
       assert.equal(await dialog.getByRole('button', { name: 'Non-vegetarian', exact: true }).getAttribute('aria-pressed'), 'true');
       assert.equal(await dialog.getByRole('switch', { name: 'Available to order', exact: true }).isChecked(), true);
       assert.equal(await dialog.getByRole('switch', { name: feature, exact: true }).isChecked(), true);
-      assert.equal(await dialog.getByRole('switch', { name: 'Sample dish', exact: true }).isChecked(), false);
+      assert.equal(await dialog.getByRole('switch', { name: 'Sample dish', exact: true }).count(), 0, 'owners cannot mark a dish as a sample (#201)');
+      assert.equal(await dialog.getByRole('button', { name: 'Make this a real dish', exact: true }).count(), 0, 'a real dish has no sample action');
       assert.equal(await dialog.getByLabel(/order within|category order|^order$/i).count(), 0, 'no numeric order field');
       // #114 p. 9: lighter field outline, inset toggle dividers, Delete with a trash icon.
       assert.equal(await dialog.getByLabel('Dish name', { exact: true }).evaluate(el => getComputedStyle(el).borderTopColor), brand ? 'rgb(120, 141, 135)' : 'rgb(143, 124, 117)', 'field outline uses the lighter token');
@@ -248,10 +249,9 @@ try {
       await dialog.getByLabel('Dish name', { exact: true }).fill('Fish thali special'); await dialog.getByLabel('Price in rupees', { exact: true }).fill('345.5');
       await dialog.getByRole('button', { name: 'Category: Thalis', exact: true }).click();
       await dialog.getByRole('button', { name: 'Snacks', exact: true }).click(); await focused('Category: Snacks');
-      await dialog.getByRole('switch', { name: 'Sample dish', exact: true }).click();
       await button('Save changes').click();
       await text('Dish saved.').waitFor(); await focused('Edit Fish thali special');
-      assert.deepEqual(patches.at(-1), { id: id('Fish thali special'), values: { diet: 'non_veg', name: 'Fish thali special', description: 'Neutral synthetic test description.', category_id: snacks, price_paise: 34550, available: true, is_demo: true, is_featured: true, sort_order: 3 } });
+      assert.deepEqual(patches.at(-1), { id: id('Fish thali special'), values: { diet: 'non_veg', name: 'Fish thali special', description: 'Neutral synthetic test description.', category_id: snacks, price_paise: 34550, available: true, is_demo: false, is_featured: true, sort_order: 3 } });
       await button('Edit Misal pav').click(); await focused('Edit dish');
       await page.getByRole('dialog').last().getByRole('switch', { name: feature, exact: true }).click(); await button('Save changes').click(); await text('Dish saved.').waitFor();
       assert.equal(patches.at(-1).values.is_featured, true); assert.equal(patches.at(-1).values.sort_order, dishes.find(row => row.name === 'Misal pav').sort_order, 'an edit keeps its position');
@@ -292,7 +292,7 @@ try {
       await text('Prawn thali deleted.').waitFor(); await focused('Search dishes');
       assert.deepEqual(deletes, [prawn]);
       assert.equal(await button('Edit Prawn thali').count(), 0);
-      console.log(`PASS ${slug} owner menu: edit/add validation, category picker, featured "${feature}", sample flag, saved position and delete confirmation`);
+      console.log(`PASS ${slug} owner menu: edit/add validation, category picker, featured "${feature}", no sample switch, saved position and delete confirmation`);
       assert.deepEqual(errors, []); assert.deepEqual(external, []);
     } finally { await context.close(); await owner.close(); }
   }
