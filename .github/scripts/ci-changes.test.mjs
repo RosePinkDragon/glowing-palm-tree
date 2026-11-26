@@ -61,3 +61,8 @@ test('pushes, manual runs and an empty or failed diff run everything', () => {
   for (const event of ['push', 'workflow_dispatch', 'schedule']) assert.equal(classify(['docs/RELEASE.md'], { event }).all, true, event);
   assert.equal(classify([]).all, true);
 });
+
+test('a lockfile-only or audit-policy-only pull request routes to quality', () => {
+  assert.equal(classify(['package-lock.json']).app, true);
+  assert.deepEqual(on(classify(['docs/policy/npm-audit-allowlist.json'])), ['scripts']);
+});
