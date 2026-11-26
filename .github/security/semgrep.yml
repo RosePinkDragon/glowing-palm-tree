@@ -1,0 +1,22 @@
+rules:
+  - id: dynamic-javascript-evaluation
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Use explicit parsing or dispatch instead of evaluating a string as JavaScript.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+  - id: disabled-tls-certificate-verification
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Keep TLS certificate verification enabled.
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: $OPTIONS.rejectUnauthorized = false
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+  - id: explicit-subprocess-shell
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Review shell subprocess calls and use argument arrays where possible.
+    pattern: "{..., shell: true, ...}"
