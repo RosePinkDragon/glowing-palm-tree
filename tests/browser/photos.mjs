@@ -92,6 +92,8 @@ try {
       }
       if (url.pathname === '/rest/v1/rpc/list_addresses') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }); // signed-in carts read saved addresses (#48)
       if (url.pathname === '/rest/v1/customer_businesses') return json([]);
+      // Signing in now reads the customer profile (#45). It's unavailable here, so no name step appears.
+      if (url.pathname === '/rest/v1/profiles') return json({ message: 'profile fixture unavailable' }, 503);
       throw new Error(`Unhandled photo fixture: ${req.method()} ${url.pathname}`);
     });
     try {
