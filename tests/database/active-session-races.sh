@@ -17,6 +17,41 @@ as_wait() {
   if [[ "$seen" != true ]]; then echo "Active-session race never observed: $predicate" >&2; cat "$as_tmp"/*.log >&2; exit 1; fi
 }
 as_changes_before=$(as_sql -tA -c "select count(*) from public.accepting_orders_changes")
+# Hold a real RPC transaction open until the non-key session UPDATE is observed waiting on it.
+mkfifo "$as_tmp/refresh-call.in"
+as_sql <"$as_tmp/refresh-call.in" >"$as_tmp/refresh-call.log" 2>&1 &
+as_refresh_call=$!
+exec {as_refresh_input}>"$as_tmp/refresh-call.in"
+cat >&"$as_refresh_input" <<'SQL'
+begin;
+set application_name='active-session-refresh-call';
+set idle_in_transaction_session_timeout='20s';
+set local role authenticated;
+select set_config('request.jwt.claim.sub','21310000-0000-4000-8000-000000000001',true);
+select set_config('request.jwt.claims','{"session_id":"21310000-0000-4000-b000-000000000001"}',true);
+select public.set_accepting_orders('ammu-sammu',(select accepting_orders from public.businesses where slug='ammu-sammu'));
+SQL
+as_wait "application_name='active-session-refresh-call' and state='idle in transaction' and query like 'select public.set_accepting_orders(%'"
+as_sql {as_refresh_input}>&- >"$as_tmp/refresh.log" 2>&1 <<'SQL' &
+set application_name='active-session-refresh';
+set statement_timeout='15s';
+update auth.sessions set not_after='2099-01-01 00:00:00+00' where id='21310000-0000-4000-b000-000000000001';
+SQL
+as_refresh=$!
+as_wait "application_name='active-session-refresh' and exists (
+  select 1 from pg_stat_activity holder where holder.application_name='active-session-refresh-call'
+    and holder.pid=any(pg_blocking_pids(pg_stat_activity.pid)))"
+printf 'commit;\n' >&"$as_refresh_input"
+exec {as_refresh_input}>&-
+wait "$as_refresh_call" || { cat "$as_tmp/refresh-call.log" >&2; exit 1; }
+wait "$as_refresh" || { cat "$as_tmp/refresh.log" >&2; exit 1; }
+as_sql >/dev/null <<'SQL'
+select public.test_assert(
+  (select not_after='2099-01-01 00:00:00+00'::timestamptz from auth.sessions where id='21310000-0000-4000-b000-000000000001'),
+  'the non-key update completes after the in-flight call commits');
+SQL
+echo 'Active-session refresh update race passed.'
+
 # An owner call that has passed the session check and is still open (it re-sends the current switch value: no change).
 as_sql >"$as_tmp/call.log" 2>&1 <<'SQL' &
 begin;
