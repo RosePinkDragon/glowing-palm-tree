@@ -20,7 +20,7 @@ import { messageOf, useMarket } from './useMarket';
 import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { CustomerHistory, CustomerOrderDetail, type ReorderAction } from './CustomerOrders';
 import { useCustomerCart } from './useCustomerCart';
-import { OfferError, PricingChangedError, ServiceError } from '@market/services';
+import { OfferError, OutsideHoursError, PricingChangedError, ServiceError } from '@market/services';
 import { traced, type EventName } from '@market/notifications';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
 import { RevisedPricing } from './RevisedPricing';
@@ -35,6 +35,8 @@ import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 import { CustomerAddresses } from './CustomerAddresses';
 import { CustomerNotifications } from './CustomerNotifications';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
+import { hoursClosedMessage, openHoursFact } from './hours-model';
+import { useOpeningHours } from './useOpeningHours';
 import { CartPage } from './CustomerCart';
 import { StateScreen } from './StateScreen';
 import { failureCopy, friendlyErrorText, isNetworkFailure, minimumCopy, minimumOrder, suggestDishes } from './states-model';
@@ -92,8 +94,12 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   // Addresses are only read once there is something to order; the top bar shows the selected one from then on.
   const addrs = useCheckoutAddresses(market, !demo && !!market.session && market.authReady && cart.length > 0);
   const refused = !!closedRefusal && closedRefusal.business === market.business && sameIdentity(closedRefusal.identity, market.identity.current);
-  const orderingAllowed = demo || (market.businessReady && !!market.business?.orderingEnabled && market.business.acceptingOrders && !refused);
+  // #253: within opening hours is computed from the clock (and a fresh server refusal), never remembered, so a reload cannot reopen a closed restaurant.
+  const hours = useOpeningHours(demo ? null : market.business);
+  const closedByHours = !demo && market.business && !hours.open ? { opensAtLabel: hours.opensAtLabel } : null;
+  const orderingAllowed = demo || (market.businessReady && !!market.business?.orderingEnabled && market.business.acceptingOrders && !refused && hours.open);
   const orderingMessage = refused || market.businessReady && market.business && !market.business.acceptingOrders ? closedMessage(businessId)
+    : market.businessReady && closedByHours ? hoursClosedMessage(businessId, closedByHours.opensAtLabel)
     : market.catalogError ? 'Could not confirm whether the restaurant is taking orders. Refresh the restaurant status before adding dishes.'
     : !market.businessReady ? 'Checking whether the restaurant is taking orders…' : 'Ordering is currently unavailable.';
   const ordering = useRef({ allowed: orderingAllowed, business: market.business, message: orderingMessage });
@@ -105,7 +111,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   // #182: signed in, the server prices the cart (discount, offer, nudge); signed out, only the public automatic offers are listed.
   const signedIn = !!market.session && market.authReady, fee = market.business?.deliveryFeePaise ?? 0, minOrder = market.business?.minOrderPaise ?? 0;
   const priced = cart.filter(line => line.item.isAvailable || line.item.isDemo);
-  const offers = useOfferQuote({ services: market.services, quoting: !demo && signedIn && draft.ready && !!market.business && priced.length > 0, listing: !demo && market.authReady && !market.session && !!market.business,
+  const offers = useOfferQuote({ services: market.services, quoting: !demo && signedIn && draft.ready && !!market.business && hours.open && priced.length > 0, onOutsideHours: e => hours.refuse(e.opensAtLabel ? `Opens at ${e.opensAtLabel}` : null), listing: !demo && market.authReady && !market.session && !!market.business,
     lines: priced, signature: quoteSignature(priced, fee, minOrder), identityKey: `${businessId}:${market.session?.user.id ?? ''}:${market.identityVersion}` });
   // #57: items only, against the same minimum the server enforces in place_order.
   const minimum = demo ? minimumOrder(0, 0) : minimumOrder(subtotal, minOrder);
@@ -178,7 +184,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       } else if (isDefiniteOrderRejection(e)) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
-        if (closed) setClosedRefusal({ business: ordering.current.business, identity: started });
+        if (closed && e instanceof OutsideHoursError) hours.refuse(e.opensAtLabel ? `Opens at ${e.opensAtLabel}` : null);
+        else if (closed) setClosedRefusal({ business: ordering.current.business, identity: started });
         try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); if (sameIdentity(started, market.identity.current)) { await setCart(saved.lines); if (!sameIdentity(started, market.identity.current)) return; draft.restoreRecipient(saved.delivery);
           if (changed) addrs.refresh();
           if (outside) { addrs.select(null); addrs.refresh(); }
@@ -294,7 +301,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const failureText = failureCopy(menuFailure ?? 'server', businessId);
   const failureScreen = <StateScreen icon={menuFailure === 'offline' ? 'offline' : 'help'} title={failureText.title} message={failureText.message} action={failureText.action} busy={market.checking} onAction={() => menuFailure === 'auth' ? navigation.current?.login('/') : market.retry()} />;
   const carta = menuLayout === 'carta', edge = width >= 760 ? 40 : 20;
-  const facts = market.business ? [market.business.minOrderPaise > 0 ? `Min. order ${money(market.business.minOrderPaise)}` : '', `Delivery ${money(market.business.deliveryFeePaise)}`, 'Cash on delivery'].filter(Boolean).join(' · ') : '';
+  const facts = market.business ? [openHoursFact(market.business) ?? '', market.business.minOrderPaise > 0 ? `Min. order ${money(market.business.minOrderPaise)}` : '', `Delivery ${money(market.business.deliveryFeePaise)}`, 'Cash on delivery'].filter(Boolean).join(' · ') : '';
   const menuProps = { items: draft.menu, cart, contentWidth: Math.min(width, 1120) - 2 * edge, orderingAllowed, demo, locked, viewportRevision, onOpen: openDish, onAdd: (item: MenuItem) => changeCart(lines => addCartItem(lines, item), true), onRemove: removeOne };
   const render = (page: CustomerScreen, orderId?: string) => <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" scrollEventThrottle={64} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Menu') viewportListener.current?.({ y: event.nativeEvent.contentOffset.y, height: event.nativeEvent.layoutMeasurement.height, contentHeight: event.nativeEvent.contentSize.height }); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: edge, paddingTop: carta && page === 'Menu' ? 0 : 28, paddingBottom: 28, gap: 24 }}>
 
@@ -305,7 +312,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
 
     {page !== 'Menu' && page !== 'Cart' && page !== 'Help' && page !== 'Privacy' && page !== 'Terms' && page !== 'Order' && page !== 'Addresses' && page !== 'Notifications' ? <View style={{ gap: 8 }}><MarketText variant="eyebrow">{name}</MarketText><MarketText variant="title">Good food starts here.</MarketText><MarketText variant="muted">Explore the menu and find something for your table.</MarketText></View> : null}
 
-    {!demo && (page === 'Menu' || page === 'Cart') && !menuFailure && !(market.offline && market.catalogError) ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} /> : null}
+    {!demo && (page === 'Menu' || page === 'Cart') && !menuFailure && !(market.offline && market.catalogError) ? <RestaurantNotice businessId={businessId} business={market.business} ready={market.businessReady} error={market.catalogError} retry={market.load} refused={refused} closedByHours={closedByHours} /> : null}
     {demo ? <MarketCard><MarketText variant="heading">Sample menu</MarketText><MarketText variant="muted">Items and prices shown as examples are for browsing only. Ordering is unavailable.</MarketText></MarketCard> : null}
     {market.notice ? <MarketText>{market.notice}</MarketText> : null}
     <RemovalAnnouncer text={removal.announcement} />

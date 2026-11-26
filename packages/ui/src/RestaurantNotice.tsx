@@ -3,6 +3,7 @@ import { Text, View } from 'react-native';
 import type { BusinessSlug } from '@market/core';
 import type { Business } from '@market/services';
 import { MarketButton } from './components';
+import { hoursClosedParts } from './hours-model';
 import { MarketIcon } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
 
@@ -29,14 +30,29 @@ function NoticeText({ closed, bold, children }: { closed: boolean; bold?: string
   </Text>;
 }
 
-export function RestaurantNotice({ businessId, business, ready, error, retry, refused = false }: {
+export function RestaurantNotice({ businessId, business, ready, error, retry, refused = false, closedByHours = null }: {
   businessId: BusinessSlug; business: Business | null; ready: boolean; error: string; retry: () => void; refused?: boolean;
+  /** Outside opening hours (#253) with the switch on: "Closed now · Opens at 9 am". The owner's closed switch (below) takes precedence. */
+  closedByHours?: { opensAtLabel: string | null } | null;
 }) {
   const { colors } = useMarketTheme();
   const clock = (closed: boolean) => <View aria-hidden style={{ marginTop: 3 }}><MarketIcon name="clock" color={closed ? colors.onNotice : colors.primary} size={22} /></View>;
   const refresh = <MarketButton label="Refresh restaurant status" variant="secondary" onPress={retry} />;
   if (refused || (ready && business && !business.acceptingOrders)) {
     const { lead, rest } = closedParts(businessId);
+    return <NoticeFrame closed>
+      <View role="status" accessibilityLiveRegion="polite" style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+        {clock(true)}
+        <View style={{ flex: 1, gap: 6 }}>
+          <NoticeText closed bold={lead}>{rest}</NoticeText>
+          <Text style={{ color: colors.onNotice, fontSize: 14, lineHeight: 20 }}>Your saved cart is kept for later.</Text>
+        </View>
+      </View>
+      {error ? refresh : null}
+    </NoticeFrame>;
+  }
+  if (closedByHours && business) {
+    const { lead, rest } = hoursClosedParts(businessId, closedByHours.opensAtLabel);
     return <NoticeFrame closed>
       <View role="status" accessibilityLiveRegion="polite" style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
         {clock(true)}
