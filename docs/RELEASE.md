@@ -504,6 +504,25 @@ Local storage cannot be cleared by SQL. This backend slice does not wire screens
 cleanup, and does not claim those steps or full #52 are complete. Keep the left row forever
 until account deletion; only explicit join replaces its generation.
 
+## Customer profile (#45, slice 1: database and services)
+
+Added by the forward-only migration `20261126150000_customer_profiles.sql`; the baseline is untouched. `public.profiles` holds one
+`full_name` per Auth account (primary key `user_id`, `ON DELETE CASCADE`), shared by both restaurant apps; phone comes from Auth and orders keep
+their own name/phone snapshots. `full_name` is trimmed, 1 to 120 characters (CHECK), matching `place_order` and the shared TypeScript validator.
+
+- Access: RLS on (not forced, like the rest of the schema). Authenticated users have own-row SELECT, INSERT and UPDATE policies
+  (`user_id = auth.uid()`); INSERT and UPDATE also require an active Auth session (`session_rls_private.require_active_session()`, #213 slice B).
+  There is no DELETE grant or policy. anon has no privilege. Restaurant owners, admins and members have no policy: they see no profile.
+- Writes are column-granted: clients may set `full_name` only. `user_id` defaults to `auth.uid()` (so PostgREST's `on_conflict=user_id` upsert
+  never names a user), and a trigger refuses any change of `user_id` and maintains `created_at`/`updated_at`.
+- Initialization: no backfill and no row at sign-up. No name is stored server-side today, so a profile is created on its first save and a missing
+  row means "no name yet". Never derive one from `user_metadata` or an order's `customer_name`.
+- Lock order: unchanged. The table takes no advisory or lifecycle lock; the only interaction is the FK to `auth.users` (KEY SHARE, first in the order)
+  and its cascade.
+- Services: `getProfile()` (null before the first save) and `saveProfile({ fullName })` for the signed-in customer; stale results after sign-out, an
+  account switch or disposal are refused with `SESSION_CHANGED`. Errors: `PROFILE_INVALID_NAME`, `SIGN_IN_REQUIRED`, `PROFILE_REQUEST_FAILED`.
+  No UI uses them yet (slice 2).
+
 ## Offers and discounts (#182, slice A: database and pricing)
 
 Added by the forward-only migration `20261120070000_offers_and_pricing.sql`; the baseline is untouched. This slice is the

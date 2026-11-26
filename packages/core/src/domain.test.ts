@@ -3,6 +3,8 @@ import test from 'node:test';
 import { menuItem } from '../../../tests/fixtures/menu.ts';
 import {
   DomainValidationError,
+  FULL_NAME_MESSAGE,
+  normalizeFullName,
   dietLabels,
   isDiet,
   addCartItem,
@@ -60,6 +62,22 @@ test('delivery validation trims fields and normalizes Indian mobile numbers', ()
     assert.deepEqual(Object.keys(error.fields).sort(), ['addressLine', 'name', 'phone']);
     return true;
   });
+});
+
+test('full names are trimmed and 1 to 120 characters, counted as the database counts them (#45)', () => {
+  const ok = (value: string) => normalizeFullName(value);
+  assert.deepEqual(ok('  Neha Rao \n'), { name: 'Neha Rao', valid: true });
+  assert.equal(ok('N').valid, true);
+  assert.equal(ok('N'.repeat(120)).valid, true);
+  assert.equal(ok('N'.repeat(121)).valid, false);
+  assert.equal(ok(' ' + 'N'.repeat(120) + ' ').valid, true, 'the limit applies after trimming');
+  for (const empty of ['', '   ', '\t\n']) assert.equal(ok(empty).valid, false);
+  assert.equal(ok('\u{1F35B}'.repeat(120)).valid, true, 'an emoji is one character, as char_length counts it');
+  assert.equal(ok('\u{1F35B}'.repeat(121)).valid, false);
+  assert.equal(normalizeFullName(undefined).valid, false);
+  assert.equal(normalizeFullName(null).valid, false);
+  assert.equal(FULL_NAME_MESSAGE, 'Enter a name from 1 to 120 characters.');
+  assert.equal(validateDeliveryDetails({ name: '\u{1F35B}'.repeat(120), phone: '9876543210', addressLine: 'Flat 4, Park Road' }).name.length, 240);
 });
 
 test('location fix checks finite bounds, accuracy, freshness, and future timestamps', () => {
