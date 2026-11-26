@@ -66,7 +66,7 @@ reset role;
 -- Fictional local service area, never a real restaurant delivery assertion.
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''diet test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,min_order_paise=0 where slug=''ammu-sammu''',ns);
+  execute format('update public.businesses set is_demo=false,service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''diet test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,min_order_paise=0 where slug=''ammu-sammu''',ns);
 end $$;
 select set_config('test.diet.fix',jsonb_build_object('latitude',0.5,'longitude',0.5,'accuracy',10,'captured_at',clock_timestamp())::text,false);
 -- Deliberately forged diet must not influence the stored snapshot.
