@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ComponentRef, ReactNode, Ref } from 'react';
 import { ActivityIndicator, Linking, Platform, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { useMarketFonts, useMarketTheme } from './theme';
@@ -34,10 +34,10 @@ export function MarketCard({ children }: { children: ReactNode }) {
   return <View style={{ backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 22, padding: 24, gap: 12 }}>{children}</View>;
 }
 
-export function MarketField({ label, error, ...props }: TextInputProps & { label: string; error?: string }) {
+export function MarketField({ label, error, inputRef, ...props }: TextInputProps & { label: string; error?: string; inputRef?: Ref<ComponentRef<typeof TextInput>> }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  return <View style={{ gap: 8 }}><Text style={branded({ color: colors.ink, fontSize: 15, fontWeight: '700' as const }, fonts.bodyBold)}>{label}</Text><TextInput {...props} accessibilityLabel={props.accessibilityLabel ?? label} accessibilityState={{ ...props.accessibilityState, disabled: props.editable === false }} placeholderTextColor={colors.muted} style={[{ minHeight: 48, borderWidth: 1, borderColor: error ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 16 }, props.style]} />{error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{error}</Text> : null}</View>;
+  return <View style={{ gap: 8 }}><Text style={branded({ color: colors.ink, fontSize: 15, fontWeight: '700' as const }, fonts.bodyBold)}>{label}</Text><TextInput ref={inputRef} {...props} accessibilityLabel={props.accessibilityLabel ?? label} accessibilityState={{ ...props.accessibilityState, disabled: props.editable === false }} placeholderTextColor={colors.muted} style={[{ minHeight: 48, borderWidth: 1, borderColor: error ? colors.danger : colors.inputBorder, borderRadius: 12, backgroundColor: colors.surface, color: colors.ink, paddingHorizontal: 14, fontSize: 16 }, props.style]} />{error ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{error}</Text> : null}</View>;
 }
 
 export function MarketStatus({ kind, title, message, action }: { kind: 'loading' | 'empty' | 'error'; title: string; message?: string; action?: ReactNode }) {

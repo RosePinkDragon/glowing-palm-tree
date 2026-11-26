@@ -21,7 +21,7 @@ export async function serveWeb(directory, { firstLaunch = false } = {}) {
       res.writeHead(200, { 'Content-Type': mime[extname(file).toLowerCase()] ?? 'application/octet-stream' }).end(data);
     } catch {
       const path = new URL(req.url, 'http://localhost').pathname;
-      if (/^\/(?:cart|orders(?:\/[^/.]+)?|account|addresses|login|help|privacy|terms)\/?$/.test(path)) {
+      if (/^\/(?:cart|orders(?:\/[^/.]+)?|account|addresses|profile|login|help|privacy|terms)\/?$/.test(path)) {
         try { return res.writeHead(200, { 'Content-Type': mime['.html'] }).end(seeded(await readFile(resolve(root, 'index.html')), resolve(root, 'index.html'), firstLaunch)); } catch { /* No export. */ }
       }
       res.writeHead(404).end('Not found');

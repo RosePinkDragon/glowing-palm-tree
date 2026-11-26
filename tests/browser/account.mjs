@@ -468,6 +468,7 @@ try {
         if (url.pathname === '/rest/v1/customer_businesses') return json([]);
         if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
         if (url.pathname === '/rest/v1/rpc/list_customer_notifications') return json([]);
+        if (url.pathname === '/rest/v1/profiles') return json({ code: 'XX000', message: 'fixture profile unavailable', details: null, hint: null }, 503); // #45: this journey is not about profiles
         throw new Error(`Unexpected account request ${url.pathname}`);
       });
       await context.addInitScript(() => {
@@ -632,7 +633,7 @@ try {
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByRole('button', { name: 'Account options', exact: true }).click();
       await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
-      await page.getByText('Profile editing is not available yet.', { exact: false }).waitFor();
+      await page.getByText("We couldn't load your profile", { exact: true }).waitFor(); // the shared sign-in helper answers the profile read with 503 (#45)
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole('button', { name: 'Account', exact: true }).click();
       await page.getByText('Phone not added', { exact: true }).waitFor();
