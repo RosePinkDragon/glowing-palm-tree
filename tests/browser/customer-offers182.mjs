@@ -270,6 +270,18 @@ try {
         assert.equal(await p.getByRole('alert').filter({ hasText: alertText }).count(), 0, `${mode}: nothing to retry without a code`);
         await b('Place order').click(); await p.waitForURL(/\/orders\//);
         assert.equal(fx.orders.length, 1); assert.equal(fx.pricingChanged, 0); assert.equal(fx.orders[0].p_accepted_pricing.total_paise, 27000);
+        // #207: the quote failed (no code) on a cart above the automatic-offer minimum, so the client sent undiscounted pricing; the server applies the offer at place time.
+        // The old pricing is never used silently: the revision screen names the discount (Rs 0 to the new one) and nothing is ordered until Accept, which sends the revised terms.
+        resetFx(); fx.quoteMode = mode; await k.toCart(); asked = fx.quotes.length + 1; await k.add();
+        if (hang) { await timeout(); }
+        await b('Place order').waitFor(); await b('Place order').click();
+        await t('Review revised order').waitFor(); await t('Discount (Launch offer): ₹0 → −₹100').waitFor(); await t('Total: ₹520 → ₹420').waitFor();
+        assert.equal(fx.orders.length, 1); assert.equal(fx.orders[0].p_accepted_pricing.discount_paise, undefined, 'the first request carried the undiscounted quote'); assert.equal(fx.pricingChanged, 1);
+        assert.equal(await p.evaluate(key => localStorage.getItem(key), `market:checkout:${slug}`), null, 'the spent attempt is released'); await p.waitForTimeout(1200); assert.equal(fx.orders.length, 1, 'never auto-placed');
+        await b('Accept revised total and place order').click(); await p.waitForURL(/\/orders\//);
+        assert.equal(fx.orders.length, 2); assert.notEqual(fx.orders[1].p_idempotency_key, fx.orders[0].p_idempotency_key, 'a fresh key');
+        assert.equal(fx.orders[1].p_accepted_pricing.discount_paise, 10000); assert.equal(fx.orders[1].p_accepted_pricing.offer.id, autoId); assert.equal(fx.orders[1].p_accepted_pricing.total_paise, 42000); assert.equal(fx.pricingChanged, 1, 'the accepted terms were taken as sent');
+        await t('Discount (Launch offer)').waitFor(); fx.pricingChanged = 0;
         // With a code: an inline alert with "Try again"; Place order is disabled but never stuck.
         resetFx(); await k.toCart(); await k.add(); await t('Offer applied: Launch offer').waitFor(); await k.apply('SAVE50'); await t('Offer applied: Flat 50').waitFor();
         fx.quoteMode = mode; asked = fx.quotes.length + 1; await k.add();
