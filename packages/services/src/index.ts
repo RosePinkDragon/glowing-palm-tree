@@ -79,6 +79,8 @@ export interface PlaceOrderInput { pricing: PricingTerms; /** The code the custo
 /** The signed-in customer's profile (#45): one row per account, shared by both restaurant apps. Phone comes from Auth, not from here. */
 export interface CustomerProfile { fullName: string; updatedAtISO: string }
 export interface SaveProfileInput { fullName: string }
+/** Server confirmation that account deletion was accepted (#51). The account is closed and its active data is gone; the same call repeats safely. Signing out on the device is the screen's job. */
+export interface AccountDeletionReceipt { customerId: string; state: 'deletion_pending'; requestedAtISO: string }
 export interface OrderCursor { createdAtISO: string; id: string }
 export interface OrderPageOptions { cursor?: OrderCursor | null; limit?: number }
 export interface OrderPage { orders: Order[]; nextCursor: OrderCursor | null }
@@ -603,7 +605,7 @@ function publicConfig(): PublicConfig {
 }
 
 type MenuRow = { diet: Diet | null; id: string; name: string; description: string | null; category_id: string; menu_categories: { name: string; sort_order: number }; price_paise: number; available: boolean; is_demo: boolean; is_featured: boolean; sort_order: number; image_url: string | null };
-type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string; customer_phone: string; delivery_address_line: string; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; discount_paise?: number | null; offer_id?: string | null; offer_name?: string | null; offer_code?: string | null; offer_kind?: OfferKind | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
+type OrderRow = { order_number?: string | null; id: string; status: OrderStatus; version: number; subtotal_paise: number; delivery_fee_paise: number; total_paise: number; customer_name: string | null; customer_phone: string | null; delivery_address_line: string | null; latitude?: number | null; longitude?: number | null; created_at: string; address_label?: string | null; address_custom_label?: string | null; address_house?: string | null; address_street_area?: string | null; address_landmark?: string | null; address_location_source?: string | null; saved_address_id?: string | null; placed_from_distance_m?: number | null; kitchen_distance_m?: number | null; discount_paise?: number | null; offer_id?: string | null; offer_name?: string | null; offer_code?: string | null; offer_kind?: OfferKind | null; order_items: { diet: Diet | null; menu_item_id: string; name: string; quantity: number; unit_price_paise: number; line_total_paise: number }[]; order_status_history?: HistoryRow[] };
 // Owner reads embed the snapshot; RLS returns null for anyone but that restaurant's owners.
 type HistoryRow = { status: OrderStatus; created_at: string; order_status_actors?: { actor_name: string } | { actor_name: string }[] | null };
 const actorName = (row: HistoryRow) => { const actor = Array.isArray(row.order_status_actors) ? row.order_status_actors[0] : row.order_status_actors; return typeof actor?.actor_name === 'string' ? { actorName: actor.actor_name } : {}; };
@@ -633,8 +635,10 @@ export function mapSavedAddress(row: AddressRow): SavedAddress {
     latitude: row.latitude, longitude: row.longitude, locationSource: row.location_source, version: row.version, updatedAtISO: row.updated_at,
     inArea: row.in_area, distanceM: Number.isSafeInteger(row.distance_m) && (row.distance_m as number) >= 0 ? row.distance_m : null };
 }
+/** Shown to owners for an order whose customer details were blanked after account deletion (#51). The phone is then empty, so no Call button. */
+const DELETED_CUSTOMER_NAME = 'Deleted customer';
 export function mapOrder(row: OrderRow, slug: BusinessSlug): Order {
-  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, ...(row.discount_paise ? { discountPaise: row.discount_paise } : {}), ...(row.offer_id && row.offer_name && row.offer_kind ? { offer: { id: row.offer_id, name: row.offer_name, code: row.offer_code ?? null, kind: row.offer_kind } } : {}), delivery: { name: row.customer_name, phone: row.customer_phone, addressLine: row.delivery_address_line }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
+  return { id: row.id, ...(row.order_number ? { orderNumber: row.order_number } : {}), businessId: slug, status: row.status, version: row.version, subtotalPaise: row.subtotal_paise, deliveryFeePaise: row.delivery_fee_paise, totalPaise: row.total_paise, ...(row.discount_paise ? { discountPaise: row.discount_paise } : {}), ...(row.offer_id && row.offer_name && row.offer_kind ? { offer: { id: row.offer_id, name: row.offer_name, code: row.offer_code ?? null, kind: row.offer_kind } } : {}), delivery: { name: row.customer_name ?? DELETED_CUSTOMER_NAME, phone: row.customer_phone ?? '', addressLine: row.delivery_address_line ?? 'Address removed' }, createdAtISO: row.created_at, ...(typeof row.latitude === 'number' && typeof row.longitude === 'number' ? { location: { latitude: row.latitude, longitude: row.longitude } } : {}), lines: row.order_items.map(item => ({ menuItemId: item.menu_item_id, diet: item.diet, name: item.name, quantity: item.quantity, unitPricePaise: item.unit_price_paise, lineTotalPaise: item.line_total_paise })), ...orderAddress(row), ...(row.order_status_history ? { history: row.order_status_history.map(item => ({ status: item.status, createdAtISO: item.created_at, ...actorName(item) })).sort((a, b) => a.createdAtISO.localeCompare(b.createdAtISO)) } : {}) };
 }
 const menuSelect = '*, menu_categories!menu_items_category_business_fk(name, sort_order)';
 // History columns are explicit: customers may read status and time only (#98).
@@ -791,6 +795,28 @@ export function createMarketServices(options: ServiceOptions) {
     const { data, error } = await scope.db.from('profiles').upsert({ full_name: name }, { onConflict: 'user_id' }).select(profileSelect).single();
     scope.ensureCurrent(); profileError(error);
     return mapProfile(data, scope.userId);
+  };
+  /**
+   * Deletes the signed-in customer's account for both restaurant apps (#51). One database call does everything or nothing; calling it
+   * again after a lost response returns the same confirmation. Refusals (nothing was changed): ACCOUNT_HAS_ACTIVE_ORDER while an order
+   * is not delivered or cancelled, ONLY_OWNER while the person is the only owner of a restaurant, SIGN_IN_REQUIRED for a dead session.
+   * The auth user itself is removed later by a trusted step; the account is unusable from this call on.
+   */
+  const requestAccountDeletion = async (): Promise<AccountDeletionReceipt> => {
+    const scope = await customerProfileScope();
+    const { data, error } = await scope.db.rpc('request_account_deletion');
+    scope.ensureCurrent();
+    if (error) {
+      inactiveSessionError(error);
+      if (error.code === 'PT409' && error.details === 'ACCOUNT_HAS_ACTIVE_ORDER') throw new ServiceError('ACCOUNT_HAS_ACTIVE_ORDER', 'Finish your active orders before deleting your account.', error);
+      if (error.code === 'PT409' && error.details === 'ONLY_OWNER') throw new ServiceError('ONLY_OWNER', 'Add another owner to your restaurant before deleting your account.', error);
+      throw new ServiceError('ACCOUNT_DELETION_FAILED', 'Could not delete your account. Try again.', error);
+    }
+    const row = data as { customer_id?: unknown; state?: unknown; requested_at?: unknown } | null;
+    if (!row || row.customer_id !== scope.userId || row.state !== 'deletion_pending' || typeof row.requested_at !== 'string' || Number.isNaN(Date.parse(row.requested_at))) {
+      throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the deletion. Try again.');
+    }
+    return { customerId: scope.userId, state: 'deletion_pending', requestedAtISO: row.requested_at };
   };
   const customerNotificationScope = async () => {
     try { return await customerOrderScope(); }
@@ -1662,7 +1688,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, saveOpeningHours, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, saveOpeningHours, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken, requestAccountDeletion };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
