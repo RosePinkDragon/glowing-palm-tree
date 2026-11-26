@@ -13,7 +13,7 @@ import { deliveryAddressLine } from './address-model';
 import { AuthPanel } from './AuthPanel';
 import { LeaveRestaurant } from './LeaveRestaurant';
 import { checkoutLifecycleCopy } from './leave-model';
-import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, readAttempt, sameIdentity, signInRequiredOutcome, type CheckoutAttempt } from './checkout-state';
+import { attemptKey, freezeAttempt, isDefiniteOrderRejection, orderInput, orderRateLimitOutcome, rateLimitedAttemptNote, readAttempt, sameIdentity, signInRequiredOutcome, type CheckoutAttempt } from './checkout-state';
 import { prepareAttempt, withCheckoutGuard } from './checkout-guard';
 import { requestLocation } from './location';
 import { messageOf, useMarket } from './useMarket';
@@ -115,8 +115,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const undoBar = removal.pending ? <RemovalUndoBar removal={removal.pending} disabled={locked} onUndo={() => undoRemoval(removal.pending!)} onPause={removal.setPaused} /> : null;
   // The idempotency key of an attempt refused because the session had ended (nothing was written for that request).
   const [signedOutKey, setSignedOutKey] = useState<string | null>(null);
+  const [rateLimitedKey, setRateLimitedKey] = useState<string | null>(null);
   const send = async (saved: CheckoutAttempt) => {
-    setSignedOutKey(null);
+    setSignedOutKey(null); setRateLimitedKey(null);
     if (market.identity.current.userId !== saved.userId) { navigation.current?.login('/cart'); setLocalError('Sign in with the account used for this order to recover it.'); return; } const started = market.identity.current;
     try {
       const order = await traced('checkout_submit', () => market.services.placeOrder(orderInput(saved)));
@@ -166,6 +167,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
         setSignedOutKey(saved.idempotencyKey); setLeftNotice(outcome.note); setLocalError('');
         try { await market.services.auth.signOut(); } catch { /* the sign-in screen still opens; a live session returns to the cart */ }
         navigation.current?.login(outcome.goToSignIn);
+      } else if (orderRateLimitOutcome(e)) {
+        // The replay lookup ran before the budget check: retain the same attempt for a later retry.
+        setRateLimitedKey(saved.idempotencyKey); setLocalError(orderRateLimitOutcome(e)!.note);
       } else if (isDefiniteOrderRejection(e)) {
         const code = e instanceof ServiceError ? e.code : '';
         const closed = code === 'NOT_ACCEPTING_ORDERS', changed = code === 'ADDRESS_CHANGED', outside = code === 'DELIVERY_UNAVAILABLE';
@@ -300,7 +304,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {draft.cartError ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger }}>{draft.cartError}</Text><MarketButton label="Retry saved cart" variant="secondary" onPress={() => { void draft.retryCart().catch(() => {}); }} /><MarketButton label="Start new cart" variant="secondary" onPress={() => { void draft.resetCart().catch(() => {}); }} /></MarketCard> : null}
     {(market.error && (market.error !== market.catalogError || (page !== 'Menu' && page !== 'Cart'))) || market.storageError || (localError && !(page === 'Menu') && (page !== 'Cart' || !cart.length)) ? <MarketCard><Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{market.storageError || localError || market.error}</Text>{market.error ? <MarketButton label="Retry loading" variant="secondary" onPress={() => void market.load()} /> : null}</MarketCard> : null}
     {market.storageError ? <MarketText>Saved checkout state is unavailable. Ordering is paused to avoid creating a duplicate order.</MarketText> : null}
-    {market.attempt ? <MarketCard><MarketText variant="heading">Order awaiting confirmation</MarketText><MarketText>{signedOutKey === market.attempt.idempotencyKey ? 'You were signed out before this order could be checked. Sign in again, then retry; the same request is reused, so it cannot be placed twice.' : 'Your previous order may have been received. Retry the same request to recover its result before changing the cart or placing another order.'}</MarketText>{market.authReady && market.session?.user.id === market.attempt.userId ? market.attempt.lines.map(line => <View key={line.item.id} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.item.name} · {money(line.item.pricePaise * line.quantity)}</MarketText><DietMark diet={line.item.diet} /></View>) : null}<MarketButton label={busy ? 'Checking…' : 'Retry order recovery'} disabled={busy} onPress={retry} /></MarketCard> : null}
+    {market.attempt ? <MarketCard><MarketText variant="heading">{rateLimitedKey === market.attempt.idempotencyKey ? 'Order waiting to retry' : 'Order awaiting confirmation'}</MarketText><MarketText>{rateLimitedKey === market.attempt.idempotencyKey ? rateLimitedAttemptNote : signedOutKey === market.attempt.idempotencyKey ? 'You were signed out before this order could be checked. Sign in again, then retry; the same request is reused, so it cannot be placed twice.' : 'Your previous order may have been received. Retry the same request to recover its result before changing the cart or placing another order.'}</MarketText>{market.authReady && market.session?.user.id === market.attempt.userId ? market.attempt.lines.map(line => <View key={line.item.id} style={{ gap: 4 }}><MarketText>{line.quantity} × {line.item.name} · {money(line.item.pricePaise * line.quantity)}</MarketText><DietMark diet={line.item.diet} /></View>) : null}<MarketButton label={busy ? 'Checking…' : 'Retry order recovery'} disabled={busy} onPress={retry} /></MarketCard> : null}
     {quote ? <RevisedPricing quote={quote} busy={busy || !!market.attempt || !draft.ready} orderingAllowed={orderingAllowed} accept={acceptRevision} edit={editRevision} /> : null}
     {page === 'Menu' && !demo && !market.session && market.authReady ? <OfferBanner offers={offers.active} /> : null}
     {page === 'Menu' ? (market.loading ? <MarketStatus kind="loading" title="Loading menu" /> : <MenuBody variant={menuLayout} facts={facts} businessId={businessId} {...menuProps} bleed={edge} scrollRef={scrollRef} viewportListener={viewportListener} message={localError} onDismissMessage={() => setLocalError('')} undoSlot={undoBar} />) : null}

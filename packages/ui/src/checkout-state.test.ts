@@ -6,7 +6,7 @@ import { webRedirectUrl } from './auth-callback.ts';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { menuItem } from '../../../tests/fixtures/menu.ts';
-import { freezeAttempt, isDefiniteOrderRejection, isSignInRequired, readAttempt, sameIdentity, signInRequiredOutcome, signedOutCheckoutNote } from './checkout-state.ts';
+import { freezeAttempt, isDefiniteOrderRejection, isSignInRequired, orderRateLimitOutcome, rateLimitedAttemptNote, readAttempt, sameIdentity, signInRequiredOutcome, signedOutCheckoutNote } from './checkout-state.ts';
 import { cleanupDecision, ensureLeaveRequest, leaveFailure, leaveRequestIsFinal, leaveRetryCopy, leaveTarget, type LeaveLink, type LeaveStorage } from './leave-model.ts';
 
 test('a persisted attempt preserves the original request for retries', () => {
@@ -334,4 +334,13 @@ test('an ended session at checkout keeps the attempt and cart, says so plainly, 
   }
   // Signing back in is a new identity generation, so the identity-mismatch handling still decides whose attempt it is.
   assert.equal(sameIdentity({ userId: 'u', generation: 1 }, { userId: null, generation: 2 }), false);
+});
+
+test('order budget refusal keeps the saved attempt and gives a definite wait message', () => {
+  const error = Object.assign(new Error('order submission limit reached'), { code: 'ORDER_RATE_LIMITED' });
+  assert.deepEqual(orderRateLimitOutcome(error), { keepAttempt: true, note: "You've placed a lot of orders in the last hour. Please wait a little before placing another." });
+  assert.equal(isDefiniteOrderRejection(error), false, 'the release path must not clear the saved attempt');
+  assert.match(rateLimitedAttemptNote, /not placed/);
+  assert.doesNotMatch(rateLimitedAttemptNote, /may have been received|uncertain/);
+  for (const other of [new Error('Network timeout'), Object.assign(new Error('limited'), { code: 'OFFER_RATE_LIMITED' }), null]) assert.equal(orderRateLimitOutcome(other), null);
 });

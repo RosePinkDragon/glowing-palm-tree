@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 -- Runs inside a transaction so this test cannot change the shared fixture.
 begin;
+select public.test_assert((select array_agg(tgname::text order by tgname) from pg_catalog.pg_trigger where tgrelid='public.orders'::regclass and not tgisinternal and tgname in ('a0_checkout_order_budget','assign_order_number')) = array['a0_checkout_order_budget','assign_order_number'], 'budget trigger fires before order-number allocation');
 update public.businesses set accepting_orders=true, min_order_paise=0 where slug='ammu-sammu';
 update public.businesses b set accepting_orders=true, ordering_enabled=true, min_order_paise=0, service_area=a.service_area, service_area_source='budget-test', service_area_version='budget-test', service_area_verified_at=now() from public.businesses a where b.slug='kokani-dine-inn' and a.slug='ammu-sammu';
 insert into auth.users(id) values ('30000000-0000-4000-8000-000000000099');

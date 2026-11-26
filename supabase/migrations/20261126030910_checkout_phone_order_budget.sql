@@ -173,21 +173,24 @@ begin
 end $$;
 
 -- Checkout already holds the caller's account row lock before reaching the order insert.
--- Reacquiring it is a no-op for checkout and serializes other privileged insert paths too.
+-- This trigger sorts before assign_order_number, so direct inserts lock the account before the order counter.
+-- Reacquiring the account lock is a no-op for checkout and serializes privileged insert paths too.
 -- Replayed keys return before INSERT, and all side effects roll back with a refused insert.
 create index orders_checkout_budget_idx on public.orders(customer_id, business_id, created_at desc);
 
 create function offers_private.enforce_order_budget() returns trigger
 language plpgsql security definer set search_path = '' as $$
+declare cutoff timestamptz;
 begin
   perform customer_lifecycle_private.lock_account(new.customer_id);
+  cutoff := pg_catalog.clock_timestamp() - interval '1 hour';
   if (select count(*) from public.orders o
       where o.customer_id = new.customer_id and o.business_id = new.business_id
-        and o.created_at > pg_catalog.clock_timestamp() - interval '1 hour') >= 20 then
+        and o.created_at > cutoff) >= 20 then
     raise exception 'order submission limit reached' using errcode = 'PT429', detail = 'ORDER_RATE_LIMITED';
   end if;
   return new;
 end $$;
 revoke all on function offers_private.enforce_order_budget() from public, anon, authenticated, service_role;
-create trigger checkout_order_budget before insert on public.orders
+create trigger a0_checkout_order_budget before insert on public.orders
 for each row execute function offers_private.enforce_order_budget();
