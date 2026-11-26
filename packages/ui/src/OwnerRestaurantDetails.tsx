@@ -6,6 +6,8 @@ import { MarketIcon } from './MarketIcons';
 import { MarketSection } from './MarketList';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMarketFonts, useMarketTheme } from './theme';
+import { detailsAreDirty } from './discard-model';
+import { useDiscardGuard } from './DiscardGuard';
 import { deliveryAreaText, orderNumberFormat, firstErrorField, formFromSettings, serverFieldErrors, validateDetailsForm, type DetailsErrors, type DetailsField, type DetailsForm } from './restaurant-details-model';
 
 // Owners' Restaurant details (owners' screen p. 13, opened from Settings p. 10). Saves all four fields
@@ -97,13 +99,15 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
     </View>;
   };
 
+  // Dirty means the typed fields differ from the settings last loaded or saved (#200); a save replaces that baseline, a failed one keeps it.
+  const guard = useDiscardGuard(load.kind === 'ready' && detailsAreDirty(formFromSettings(load.settings), form), onBack, saving);
   const disabled = load.kind !== 'ready' || saving || problem?.kind === 'conflict' || problem?.kind === 'denied';
   const readOnlyRow = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}><Text style={muted}>{label}</Text><Text style={{ ...body(14), ...bold, flexShrink: 1, textAlign: 'right' }}>{value}</Text></View>;
 
   return <View style={{ flex: 1 }}>
     <View style={{ backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border, paddingTop: insets.top }}>
       <View style={{ width: '100%', maxWidth: 600, alignSelf: 'center', minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 }}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back to Settings" onPress={onBack} style={({ pressed }) => ({ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}><MarketIcon name="back" color={colors.ink} size={22} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to Settings" onPress={guard.requestLeave} style={({ pressed }) => ({ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}><MarketIcon name="back" color={colors.ink} size={22} /></Pressable>
         <Text accessibilityRole="header" aria-level={1} numberOfLines={1} style={{ flex: 1, color: colors.ink, fontSize: 24, lineHeight: 32, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>Restaurant details</Text>
       </View>
     </View>
@@ -142,5 +146,6 @@ export function OwnerRestaurantDetails({ services, onBack }: { services: MarketS
         </Pressable>
       </View>
     </View>
+    {guard.confirm}
   </View>;
 }

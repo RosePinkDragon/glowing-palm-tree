@@ -21,10 +21,10 @@ export function MarketText({ children, variant = 'body' }: { children: ReactNode
   return <Text style={branded(styles[variant], family)}>{children}</Text>;
 }
 
-export function MarketButton({ label, onPress, variant = 'primary', disabled = false }: { label: string; onPress: () => void; variant?: 'primary' | 'secondary'; disabled?: boolean }) {
+export function MarketButton({ label, onPress, variant = 'primary', disabled = false, nativeID }: { label: string; onPress: () => void; variant?: 'primary' | 'secondary'; disabled?: boolean; nativeID?: string }) {
   const { colors } = useMarketTheme();
   const fonts = useMarketFonts();
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 22, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.primary, backgroundColor: variant === 'primary' ? colors.primary : colors.surface, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 })}>
+  return <Pressable nativeID={nativeID} accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: 22, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.primary, backgroundColor: variant === 'primary' ? colors.primary : colors.surface, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 })}>
     <Text style={branded({ color: variant === 'primary' ? colors.onPrimary : colors.primary, fontSize: 15, lineHeight: 22, fontWeight: '700' as const }, fonts.bodySemiBold)}>{label}</Text>
   </Pressable>;
 }

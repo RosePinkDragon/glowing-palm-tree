@@ -149,7 +149,9 @@ try {
       fixture.conflict = true; await button('Save address').click();
       await text('This address was changed elsewhere. Reload and try again.').waitFor();
       fixture.conflict = false; writes.length = 0;
-      await button('Close').click(); await button('Options for Work').click(); await button('Edit address').click();
+      // #200: the changed field is unsaved, so leaving asks first; discarding returns to the list.
+      await button('Close').click(); await button('Discard changes').click();
+      await button('Options for Work').click(); await button('Edit address').click();
       await visible(page.getByLabel('House, flat or floor', { exact: true })).fill('Shop 14');
       await button('Save address').click(); await text('Address updated.').waitFor();
       assert.equal(writes[0].method, 'PATCH'); assert.equal(writes[0].id, addressId(2)); assert.equal(writes[0].version, '1');

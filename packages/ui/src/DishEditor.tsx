@@ -13,6 +13,8 @@ import { useMarketFonts, useMarketTheme } from './theme';
 import { dishDraftErrors, dishSortOrder, featuredLabel, type DishDraft, type DishDraftErrors } from './menu-model';
 import { parseRupees, rupeesInput } from './admin-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
+import { dishIsDirty } from './discard-model';
+import { useDiscardGuard } from './DiscardGuard';
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Please try again.';
 const focusById = (id: string) => { if (Platform.OS === 'web' && typeof document !== 'undefined') setTimeout(() => document.getElementById(id)?.focus(), 0); };
@@ -32,6 +34,8 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   const [draft, setDraft] = useState<DishDraft>(() => item
     ? { id: item.id, name: item.name, description: item.description, categoryId: item.categoryId, price: rupeesInput(item.pricePaise), diet: item.diet ?? null, isAvailable: item.isAvailable, isFeatured: item.isFeatured, isDemo: item.isDemo }
     : { name: '', description: '', categoryId: categories.length === 1 ? categories[0].id : '', price: '', diet: null, isAvailable: true, isFeatured: false, isDemo: false });
+  // What was opened, or last saved: leaving asks only when the normalized fields differ from it (#200). Photo changes save on their own and never touch the draft.
+  const [baseline, setBaseline] = useState<DishDraft>(draft);
   const [validation, setValidation] = useState(false);
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [error, setError] = useState('');
@@ -55,6 +59,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
     setBusy('save'); setError(''); setNote('');
     try {
       await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), categoryId: draft.categoryId, pricePaise: parseRupees(draft.price)!, diet: draft.diet, isAvailable: draft.isAvailable, isFeatured: draft.isFeatured, isDemo: draft.isDemo, sortOrder: dishSortOrder(items, draft.categoryId, latest) });
+      setBaseline(draft);
       await onSaved(draft.id ? 'Dish saved.' : 'Dish added. Open it again to add a photo.');
     } catch (e) { setError(message(e)); } finally { setBusy(null); }
   };
@@ -64,6 +69,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
     try { await services.deleteMenuItem(latest.id); await onDeleted(latest.name); }
     catch (e) { setDeleteError(message(e)); } finally { setBusy(null); }
   };
+  const guard = useDiscardGuard(dishIsDirty(baseline, draft), onClose, !!busy);
   const closeDelete = () => { setConfirmDelete(false); restorePanelFocus(trigger.current); };
   const closePhoto = () => { setPhotoOpen(false); restorePanelFocus(trigger.current); };
   const photo = latest?.imageUrl?.replace(/\/card\.webp$/, '/detail.webp');
@@ -74,7 +80,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   const fieldError = (text?: string) => text ? <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 14 }}>{text}</Text> : null;
   const box = { minHeight: 48, borderWidth: 1, borderRadius: 14, backgroundColor: colors.surface, paddingHorizontal: 14 } as const;
   const textField = (id: string, labelText: string, value: string, onChange: (text: string) => void, error?: string, extra?: object, multiline = false) => <View style={{ gap: 8 }}>{label(labelText)}<TextInput nativeID={id} multiline={multiline} accessibilityLabel={labelText} accessibilityState={{ disabled: !!busy }} editable={!busy} value={value} onChangeText={onChange} placeholderTextColor={colors.muted} style={{ ...box, borderColor: error ? colors.danger : colors.fieldBorder, color: colors.ink, fontSize: 16, ...body, ...extra }} />{fieldError(error)}</View>;
-  return <AccessiblePanel fullScreen title={item ? 'Edit dish' : 'Add dish'} closeDisabled={!!busy} onClose={() => { if (!busy) onClose(); }}
+  return <AccessiblePanel fullScreen title={item ? 'Edit dish' : 'Add dish'} closeDisabled={!!busy} onClose={() => { if (!busy) guard.requestLeave(); }}
     // Errors sit beside Save: the form is taller than a phone screen.
     footer={<>
       {error ? <MarketStatus kind="error" title="Could not save dish" message={error} action={<MarketButton label="Reload menu" variant="secondary" disabled={!!busy} onPress={() => void reload()} />} /> : null}
@@ -157,6 +163,7 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
       <MarketButton label={busy === 'delete' ? 'Deleting…' : 'Delete dish'} disabled={!!busy} onPress={() => void remove()} />
       <MarketButton label="Keep dish" variant="secondary" disabled={!!busy} onPress={closeDelete} />
     </AccessiblePanel> : null}
+    {guard.confirm}
   </AccessiblePanel>;
 }
 
