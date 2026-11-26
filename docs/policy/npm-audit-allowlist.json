@@ -1,0 +1,9 @@
+[
+  {
+    "advisory": "GHSA-m9gg-hp2v-232j",
+    "path": "node_modules/@grpc/grpc-js",
+    "version": "1.9.16",
+    "expires": "2026-12-26",
+    "reason": "Firebase brings this in through Firestore's Node transport. The apps only import Firebase App, Analytics, Messaging and Performance. Reassess before adding Firestore or a gRPC server."
+  }
+]
