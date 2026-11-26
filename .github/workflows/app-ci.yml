@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       all: ${{ steps.detect.outputs.all }}
+      secrets: ${{ steps.detect.outputs.secrets }}
+      static_analysis: ${{ steps.detect.outputs.static_analysis }}
       app: ${{ steps.detect.outputs.app }}
       browser: ${{ steps.detect.outputs.browser }}
       db: ${{ steps.detect.outputs.db }}
@@ -46,9 +48,51 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node .github/scripts/ci-changes.mjs
 
+  source-security:
+    name: source-security
+    needs: changes
+    if: needs.changes.outputs.secrets == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Gitleaks 8.30.0
+        run: |
+          dir=$(mktemp -d)
+          curl --fail --silent --show-error --location --retry 2 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz -o "$dir/gitleaks.tar.gz"
+          echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  $dir/gitleaks.tar.gz" | sha256sum --check --status
+          tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Test secret detection and CI failure without leaking the finding
+        run: node --test --test-name-pattern='secret scan' .github/scripts/source-security.integration.mjs
+      - name: Scan Git commits for secrets
+        env:
+          SCAN_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SCAN_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node .github/scripts/source-security.mjs secrets
+      - name: Install Semgrep 1.187.0
+        if: needs.changes.outputs.static_analysis == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --disable-pip-version-check semgrep==1.187.0
+          echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
+      - name: Test blocking and report-only rules
+        if: needs.changes.outputs.static_analysis == 'true'
+        run: node --test --test-name-pattern='static analysis' .github/scripts/source-security.integration.mjs
+      - name: Analyze CI scripts and backend source
+        if: needs.changes.outputs.static_analysis == 'true'
+        run: node .github/scripts/source-security.mjs static
+
   quality:
     name: quality
-    needs: changes
+    needs: [changes, source-security]
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -81,7 +125,7 @@ jobs:
   # this artifact. Before #231 App CI built them again without those values; the code compiled is identical.
   build:
     name: build
-    needs: changes
+    needs: [changes, source-security]
     if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -105,7 +149,7 @@ jobs:
 
   export:
     name: export
-    needs: changes
+    needs: [changes, source-security]
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -188,7 +232,7 @@ jobs:
 
   postgis-rls:
     name: postgis-rls
-    needs: changes
+    needs: [changes, source-security]
     if: needs.changes.outputs.db == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -199,7 +243,7 @@ jobs:
 
   dispatcher:
     name: dispatcher
-    needs: changes
+    needs: [changes, source-security]
     if: needs.changes.outputs.functions == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -223,7 +267,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [changes, quality, build, export, suites, postgis-rls, dispatcher]
+    needs: [changes, source-security, quality, build, export, suites, postgis-rls, dispatcher]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -234,17 +278,8 @@ jobs:
       FUNCTIONS: ${{ needs.changes.outputs.functions }}
       SCRIPTS: ${{ needs.changes.outputs.scripts }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Require every needed job to pass
-        run: |
-          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          bad=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
-          if [[ -n "$bad" ]]; then echo "Not passing: $bad" >&2; exit 1; fi
-          result() { echo "$NEEDS" | jq -r --arg job "$1" '.[$job].result'; }
-          [[ "$(result changes)" == success ]] || { echo "Change detection did not succeed." >&2; exit 1; }
-          require() { [[ "$(result "$2")" == success ]] || { echo "$2 was needed ($1 changed) but its result is $(result "$2")." >&2; exit 1; }; }
-          [[ "$APP" == true || "$SCRIPTS" == true ]] && require "app or scripts" quality
-          [[ "$APP" == true ]] && require app export
-          [[ "$BROWSER" == true ]] && require browser build && require browser suites
-          [[ "$DB" == true ]] && require db postgis-rls
-          [[ "$FUNCTIONS" == true ]] && require functions dispatcher
-          echo "All needed jobs passed."
+        run: bash .github/scripts/require-ci.sh
