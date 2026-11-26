@@ -217,3 +217,20 @@ test('identity changes while resolving customer or business prevent the order re
     });
   }
 });
+
+test('a delayed read from A is rejected after A signs out and signs in again', async () => {
+  for (const kind of ['history', 'active', 'single'] as const) {
+    await fixture(async ({ service, rows, hold }) => {
+      rows.push(row(1, 'placed'));
+      const waiting = hold('orders');
+      const request = kind === 'history' ? service.getOrderHistory() : kind === 'active' ? service.getActiveOrders() : service.getCustomerOrder(orderId(1));
+      const rejected = assert.rejects(request, code('SESSION_CHANGED'));
+      const release = await waiting;
+      await service.auth.signOut();
+      await service.auth.signIn('customer@example.test', 'synthetic-password');
+      release();
+      await rejected;
+      assert.equal((await service.getCustomerOrder(orderId(1)))?.id, orderId(1));
+    });
+  }
+});
