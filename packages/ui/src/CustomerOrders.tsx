@@ -10,6 +10,8 @@ import { DietMark } from './DietMark';
 import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketIcon } from './MarketIcons';
 import { restorePanelFocus } from './AccessiblePanel';
+import { StateScreen } from './StateScreen';
+import { friendlyErrorText, noOrdersCopy } from './states-model';
 
 type Market = ReturnType<typeof useMarket>;
 export type { ReorderAction } from './CustomerOrderStatus';
@@ -50,14 +52,9 @@ export function CustomerHistory({ market, go, onReorder, drawer = false }: { mar
     <MarketText variant="eyebrow">Past orders</MarketText>
     {drawer ? <Pressable accessibilityRole="button" onPress={() => void market.refreshOrders()} style={{ minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' }}><Text style={{ color: colors.primary, fontWeight: '700' }}>Refresh orders</Text></Pressable> : <MarketButton label="Refresh orders" variant="secondary" onPress={() => void market.refreshOrders()} />}
     {market.ordersLoading || (!market.ordersReady && !market.ordersError) ? <MarketStatus kind="loading" title="Loading your orders" /> : null}
-    {market.ordersError ? <MarketStatus kind="error" title="Could not load your orders" message={market.ordersError} action={<MarketButton label="Retry orders" onPress={() => void market.refreshOrders()} />} /> : null}
+    {market.ordersError ? <MarketStatus kind="error" title="Could not load your orders" message={friendlyErrorText(market.ordersError)} action={<MarketButton label="Retry orders" onPress={() => void market.refreshOrders()} />} /> : null}
     {market.orders.map(order => <OrderCard key={order.id} order={order} onTrack={() => go(`/orders/${order.id}`)} onReorder={onReorder} compact={drawer} />)}
-    {market.ordersReady && !market.orders.length ? drawer ? <View style={{ borderWidth: 1, borderStyle: 'dashed', borderColor: colors.inputBorder, borderRadius: 16, padding: 24, alignItems: 'center', gap: 14, backgroundColor: colors.surface }}>
-      <View accessible={false} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.tint, alignItems: 'center', justifyContent: 'center' }}><MarketIcon name="plate" color={colors.primary} size={32} /></View>
-      <Text accessibilityRole="header" style={{ color: colors.ink, fontSize: 22, textAlign: 'center', ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' }) }}>No orders yet</Text>
-      <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 23, textAlign: 'center' }}>{`Your orders from ${name} will appear here.`}</Text>
-      <MarketButton label="Browse the menu" onPress={() => go('/')} />
-    </View> : <MarketStatus kind="empty" title="No orders yet" message={`Your orders from ${name} will appear here.`} action={<MarketButton label="Browse the menu" onPress={() => go('/')} />} /> : null}
+    {market.ordersReady && !market.orders.length ? <StateScreen card={drawer} icon="plate" level={drawer ? 3 : 2} {...noOrdersCopy(name)} onAction={() => go('/')} /> : null}
     {market.olderOrdersError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{market.olderOrdersError}</Text> : null}
     {market.hasOlderOrders ? <MarketButton label={market.olderOrdersLoading ? 'Loading older orders…' : market.olderOrdersError ? 'Retry older orders' : 'Load older orders'} variant="secondary" disabled={market.olderOrdersLoading || market.ordersLoading} onPress={() => void market.loadOlderOrders()} /> : null}
     <View role="status" accessibilityLiveRegion="polite"><MarketText variant="muted">{market.ordersReady ? `${market.orders.length} orders loaded` : ''}</MarketText></View>

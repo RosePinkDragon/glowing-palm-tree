@@ -162,7 +162,7 @@ try {
       // #204: remove the only dishes with the code applied, press Undo: the re-quote carries the code and the discount returns; then add the second dish back.
       await button('Remove one Offer fixture meal').click(); await text('₹270').first().waitFor();
       await button('Remove one Offer fixture meal').click();
-      await text('Your cart is empty').waitFor();
+      await text(brand ? 'Nothing ordered yet' : 'Your plate is empty').waitFor();
       await button('Undo removing Offer fixture meal').waitFor();
       await button('Undo removing Offer fixture meal').click();
       await text('Offer applied: Flat 50').waitFor(); await text('−₹50').waitFor(); await text('₹220').first().waitFor();
