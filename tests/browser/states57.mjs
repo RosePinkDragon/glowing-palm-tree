@@ -11,9 +11,10 @@ const userId = '57100000-0000-4000-8000-000000000001';
 const part = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'states@example.test', app_metadata: {}, user_metadata: { full_name: 'Rohan Sawant' }, phone: '+919876543210', identities: [], created_at: '2026-01-01T00:00:00Z' };
 const session = { access_token: `${part({ alg: 'HS256' })}.${part({ sub: userId, aud: 'authenticated', role: 'authenticated', session_id: userId, exp: Math.floor(Date.now() / 1000) + 3600 })}.fixture`, refresh_token: 'states-fixture', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, token_type: 'bearer', user };
-const category = { id: '57300000-0000-4000-8000-000000000001', name: 'Meals', sort_order: 1 };
-const dish = (n, name, price) => ({ id: `57400000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`, name, description: 'Synthetic fixture dish for browser checks.', diet: 'veg', category_id: category.id, menu_categories: { name: category.name, sort_order: 1 }, price_paise: price, available: true, is_demo: false, is_featured: false, sort_order: n, image_url: null });
-const menu = [dish(1, 'Kanda poha', 5000), dish(2, 'Misal pav', 9000)];
+const meals = { id: '57300000-0000-4000-8000-000000000001', name: 'Meals', sort_order: 1 };
+const drinks = { id: '57300000-0000-4000-8000-000000000002', name: 'Drinks', sort_order: 2 };
+const dish = (n, name, price, category = meals) => ({ id: `57400000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`, name, description: 'Synthetic fixture dish for browser checks.', diet: 'veg', category_id: category.id, menu_categories: { name: category.name, sort_order: category.sort_order }, price_paise: price, available: true, is_demo: false, is_featured: false, sort_order: n, image_url: null });
+const menu = [dish(1, 'Kanda poha', 5000), dish(2, 'Misal pav', 9000), dish(3, 'Sol kadhi', 4000, drinks)];
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 await mkdir('dist/browser', { recursive: true });
 try {
@@ -46,7 +47,7 @@ try {
       if (url.pathname === '/auth/v1/user') return json(user);
       if (url.pathname === '/rest/v1/businesses') return json(business);
       if (url.pathname === '/rest/v1/menu_items') return json(menu);
-      if (url.pathname === '/rest/v1/menu_categories') return json([category]);
+      if (url.pathname === '/rest/v1/menu_categories') return json([meals, drinks]);
       if (url.pathname === '/rest/v1/orders') return json(state.orders);
       if (url.pathname === '/rest/v1/rpc/list_addresses') return json(state.addresses);
       if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0);
@@ -167,8 +168,54 @@ try {
       await heading('No saved addresses yet', 3).waitFor();
       await text(`Use your current location or add an address. It's saved for next time, in this app and the ${other} app.`).waitFor();
       await button('Add address').waitFor(); await noOverflow(); await shot('no-addresses');
+      // 8. Below the minimum order (items only, delivery not counted): bar, progress, suggestions, a disabled main button that says why, and it follows the cart live.
+      business.min_order_paise = 15000;
+      await page.goto(server.url, { waitUntil: 'domcontentloaded' }); await heading(name, 1).waitFor();
+      await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click();
+      await page.waitForFunction(key => JSON.parse(localStorage.getItem(key) || '{"lines":[]}').lines.length === 1, `market:cart:${slug}`);
+      await button(/^Cart \(1\)/).click();
+      const minBar = page.locator('#minimum-order-bar').filter({ visible: true });
+      await minBar.getByText('Add ₹100 more to order.', { exact: false }).waitFor();
+      await minBar.getByText('The minimum order is ₹150, not counting delivery.', { exact: false }).waitFor();
+      await minBar.getByText('₹50 of ₹150', { exact: true }).waitFor();
+      assert.equal(await minBar.getAttribute('aria-live'), 'polite');
+      assert.equal(await minBar.getByRole('progressbar').getAttribute('aria-valuenow'), '33');
+      assert.deepEqual(await page.getByRole('button', { name: /^Add (?!one|more)/ }).filter({ visible: true }).evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')).filter(label => /^Add (Misal pav|Sol kadhi|Kanda poha)$/.test(label))), ['Add Misal pav', 'Add Sol kadhi']);
+      const main = button('Add ₹100 more to order'); await main.waitFor();
+      assert.equal(await main.isDisabled(), true, 'the main button is disabled below the minimum');
+      assert.equal(await main.getAttribute('aria-describedby'), 'minimum-order-text', 'and its reason is in text');
+      assert.equal(await page.locator('#minimum-order-text').filter({ visible: true }).count(), 1);
+      await text(brand ? 'Dishes' : 'Items').last().waitFor();
+      await noOverflow(); await shot('below-minimum');
+      await button('Add Misal pav').scrollIntoViewIfNeeded(); await shot('below-minimum-suggestions');
+      await button('Add Misal pav').click();
+      await minBar.getByText('Add ₹10 more to order.', { exact: false }).waitFor(); await button('Add ₹10 more to order').waitFor();
+      assert.equal(await button('Add Misal pav').count(), 0, 'a dish already in the cart is no longer suggested');
+      await button('Add Sol kadhi').click();
+      await page.locator('#minimum-order-bar').filter({ visible: true }).waitFor({ state: 'detached' });
+      assert.equal(await page.getByRole('button', { name: /more to order$/ }).count(), 0, 'at the minimum nothing blocks');
+      assert.equal(await button('Add a delivery address').isDisabled(), false);
+      await button('Remove one Sol kadhi').click(); await button('Add ₹10 more to order').waitFor(); // takes the minimum away again, live
+      business.min_order_paise = 0; await page.reload({ waitUntil: 'domcontentloaded' });
+      await button(/^(?:Place order|Add a delivery address)$/).waitFor(); assert.equal(await page.locator('#minimum-order-bar').count(), 0, 'a minimum of 0 never blocks');
+      await page.evaluate(key => localStorage.removeItem(key), `market:cart:${slug}`);
+
+      // 9. Menu search with no match: the brand's words, category chips as suggestions, and a way to clear it.
+      await page.goto(server.url, { waitUntil: 'domcontentloaded' }); await heading(name, 1).waitFor();
+      const search = page.getByLabel('Search dishes', { exact: true });
+      await search.fill('poha'); await heading(name, 1).waitFor();
+      assert.deepEqual(await page.locator('#regular-menu').getByRole('heading', { level: brand ? 4 : 3 }).allTextContents(), ['Kanda poha']);
+      await search.fill(brand ? 'lollipop' : 'paneer');
+      const none = brand ? 'Nothing matches “lollipop”' : 'No dishes match “paneer”';
+      await heading(none, 2).waitFor();
+      await text(brand ? 'Check the spelling, or look through a section:' : 'Check the spelling, or try one of these:').waitFor();
+      await button('Show Meals').waitFor(); await button('Show Drinks').waitFor(); await noOverflow(); await shot('search-no-match');
+      await button('Show Drinks').click();
+      assert.equal(await search.inputValue(), '', 'a chip clears the search'); await text('Sol kadhi').waitFor();
+      await search.fill('zzz'); await heading('Nothing matches “zzz”'.replace('Nothing matches', brand ? 'Nothing matches' : 'No dishes match'), 2).waitFor();
+      await button('Clear search').last().click(); assert.equal(await search.inputValue(), ''); await text('Kanda poha').waitFor();
       assert.deepEqual(errors, []); assert.equal(orderCalls.length, 0);
-      console.log(`PASS: ${slug} offline screen and bar, auto-recovery (${brand ? 'online event' : 'background check'}), cart and checkout recovery kept, server and sign-in errors told apart, empty cart, no orders, no saved addresses`);
+      console.log(`PASS: ${slug} offline screen and bar, auto-recovery (${brand ? 'online event' : 'background check'}), cart and checkout recovery kept, server and sign-in errors told apart, empty cart, no orders, no saved addresses, below-minimum bar, search with no match`);
     } catch (error) { await shot('failure').catch(() => {}); throw error; }
     finally { await context.close(); await server.close(); }
   }
