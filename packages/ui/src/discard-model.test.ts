@@ -37,6 +37,14 @@ test('dish drafts compare normalized fields', () => {
   for (const change of [{ categoryId: 'c2' }, { diet: 'veg' as const }, { isAvailable: false }, { isFeatured: true }, { isDemo: true }]) assert.equal(dishIsDirty(dish, { ...dish, ...change }), true, JSON.stringify(change));
 });
 
+test('making a sample dish real is an unsaved change until saved (#201)', () => {
+  const sample = { ...dish, isDemo: true };
+  assert.equal(dishIsDirty(sample, { ...sample }), false);
+  assert.equal(dishIsDirty(sample, { ...sample, isDemo: false, isAvailable: false }), true);
+  const saved = { ...sample, isDemo: false, isAvailable: false };
+  assert.equal(dishIsDirty(saved, { ...saved }), false, 'the saved conversion becomes the baseline');
+});
+
 test('a new dish is clean until something is typed, and a saved draft becomes the baseline', () => {
   const blank: DishDraft = { name: '', description: '', categoryId: '', price: '', diet: null, isAvailable: true, isFeatured: false, isDemo: false };
   assert.equal(dishIsDirty(blank, { ...blank }), false);

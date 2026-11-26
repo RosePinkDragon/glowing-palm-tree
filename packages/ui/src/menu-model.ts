@@ -84,6 +84,13 @@ export function dragTarget(start: number, dy: number, rowHeight: number, count: 
 }
 
 export type DishDraft = { id?: string; name: string; description: string; categoryId: string; price: string; diet: Diet | null; isAvailable: boolean; isFeatured: boolean; isDemo: boolean };
+/** Owners cannot mark a dish as a sample (#201). Converting a sample to a real dish keeps it hidden from customers until availability is turned on. */
+export const makeRealDish = (draft: DishDraft): DishDraft => ({ ...draft, isDemo: false, isAvailable: false });
+export const sampleDishCopy = {
+  badge: 'Sample',
+  action: 'Make this a real dish',
+  helper: "Customers can't order sample dishes. Making it real keeps it hidden until you turn on 'Available to order'.",
+} as const;
 export type DishDraftErrors = Partial<Record<'name' | 'category' | 'price' | 'description' | 'diet', string>>;
 /** Mirrors saveMenuItem's limits so the owner sees field messages before a request is sent. `price` is parseRupees(draft.price). */
 export function dishDraftErrors(draft: DishDraft, categoryIds: readonly string[], price: number | null): DishDraftErrors {

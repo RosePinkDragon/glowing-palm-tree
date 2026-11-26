@@ -7,10 +7,11 @@ import { traced } from '@market/notifications';
 import { dietLabels, type Diet, type MenuItem } from '@market/core';
 import type { MenuCategory, MarketServices } from '@market/services';
 import { MarketButton, MarketStatus, MarketText } from './components';
+import { MarketPill } from './MarketChips';
 import { MarketIcon } from './MarketIcons';
 import { DietMark } from './DietMark';
 import { useMarketFonts, useMarketTheme } from './theme';
-import { dishDraftErrors, dishSortOrder, featuredLabel, type DishDraft, type DishDraftErrors } from './menu-model';
+import { dishDraftErrors, dishSortOrder, featuredLabel, makeRealDish, sampleDishCopy, type DishDraft, type DishDraftErrors } from './menu-model';
 import { parseRupees, rupeesInput } from './admin-model';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { dishIsDirty } from './discard-model';
@@ -52,15 +53,15 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
   const shown: DishDraftErrors = validation ? errors : {};
   const set = (changes: Partial<DishDraft>) => setDraft(current => ({ ...current, ...changes }));
   const category = categories.find(entry => entry.id === draft.categoryId);
-  const save = async () => {
+  const save = async (next: DishDraft = draft) => {
     if (busy) return;
     const invalid = (Object.keys(fieldIds) as (keyof DishDraftErrors)[]).find(key => errors[key]);
     if (invalid) { setValidation(true); focusById(fieldIds[invalid]); return; }
     setBusy('save'); setError(''); setNote('');
     try {
-      await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), categoryId: draft.categoryId, pricePaise: parseRupees(draft.price)!, diet: draft.diet, isAvailable: draft.isAvailable, isFeatured: draft.isFeatured, isDemo: draft.isDemo, sortOrder: dishSortOrder(items, draft.categoryId, latest) });
-      setBaseline(draft);
-      await onSaved(draft.id ? 'Dish saved.' : 'Dish added. Open it again to add a photo.');
+      await services.saveMenuItem({ id: draft.id, name: draft.name.trim(), description: draft.description.trim(), categoryId: draft.categoryId, pricePaise: parseRupees(draft.price)!, diet: next.diet, isAvailable: next.isAvailable, isFeatured: next.isFeatured, isDemo: next.isDemo, sortOrder: dishSortOrder(items, draft.categoryId, latest) });
+      setBaseline(next); setDraft(next);
+      await onSaved(next.id ? 'Dish saved.' : 'Dish added. Open it again to add a photo.');
     } catch (e) { setError(message(e)); } finally { setBusy(null); }
   };
   const remove = async () => {
@@ -146,8 +147,14 @@ export function DishEditor({ item, items, categories, services, onClose, onSaved
     <MarketGroup inset>
       <MarketRow title="Available to order" detail={'Off shows "Currently unavailable"'} end={<MarketSwitch label="Available to order" value={draft.isAvailable} disabled={!!busy} onValueChange={isAvailable => set({ isAvailable })} />} />
       <MarketRow title={feature} detail={businessId === 'ammu-sammu' ? 'Shown big at the top of the menu while available' : 'Shown with the signature dishes at the top of the menu while available'} end={<MarketSwitch label={feature} value={draft.isFeatured} disabled={!!busy} onValueChange={isFeatured => set({ isFeatured })} />} />
-      <MarketRow title="Sample dish" detail="For testing; labelled as a sample" end={<MarketSwitch label="Sample dish" value={draft.isDemo} disabled={!!busy} onValueChange={isDemo => set({ isDemo })} />} />
     </MarketGroup>
+
+    {/* Owners cannot create samples; one that already exists stays labelled and can be made real (#201). */}
+    {draft.isDemo ? <View style={{ gap: 10, padding: 16, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface }}>
+      <View style={{ flexDirection: 'row' }}><MarketPill tone="outline" label={sampleDishCopy.badge} /></View>
+      <MarketText variant="muted">{sampleDishCopy.helper}</MarketText>
+      <MarketButton label={sampleDishCopy.action} variant="secondary" disabled={!!busy || demo} onPress={() => void save(makeRealDish(draft))} />
+    </View> : null}
 
     {item ? <Pressable accessibilityRole="button" disabled={demo || !!busy} accessibilityState={{ disabled: demo || !!busy }} onPress={() => { trigger.current = capturePanelFocus(); setDeleteError(''); setConfirmDelete(true); }}
       style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, opacity: demo || busy ? 0.5 : pressed ? 0.7 : 1 })}>
