@@ -20,7 +20,7 @@ const menu = [
   dish(7, 2, 'Ukadiche modak', 12000, { diet: 'veg' }), dish(8, 2, 'Sol kadhi', 4000),
 ];
 // #202: fixture numbers only (never real ones). Each brand gets its own so one can never show the other's.
-const phones = { 'ammu-sammu': { contact_phone: '98765 43210', whatsapp_phone: '91234 56789', tel: 'tel:+919876543210', wa: 'https://wa.me/919123456789' }, 'kokani-dine-inn': { contact_phone: '98111 22233', whatsapp_phone: '98999 88877', tel: 'tel:+919811122233', wa: 'https://wa.me/919899988877' } };
+const phones = { 'ammu-sammu': { contact_phone: '98765 43210', whatsapp_phone: '91234 56789', tel: 'tel:+919876543210', wa: 'https://wa.me/919123456789' }, 'kokani-dine-inn': { contact_phone: '99999 00011', whatsapp_phone: '99999 00022', tel: 'tel:+919999900011', wa: 'https://wa.me/919999900022' } };
 let contacts = {};
 let fixtureMenu = menu, fixtureCategories = categories;
 const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#E9C9B8"/><circle cx="160" cy="120" r="80" fill="#F6EEE8"/><circle cx="160" cy="120" r="46" fill="#C65A3A"/></svg>';

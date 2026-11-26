@@ -43,7 +43,7 @@ test('Prefer Call? uses the restaurant\'s own numbers and is hidden without a va
   assert.deepEqual(preferCall({ contactPhone: '98765 43210', whatsappPhone: '91234 56789' }, 'Ammu Sammu'), {
     heading: 'Prefer Call?', call: { label: 'Call', name: 'Call Ammu Sammu', href: 'tel:+919876543210' }, whatsapp: { label: 'WhatsApp', name: 'WhatsApp Ammu Sammu', href: 'https://wa.me/919123456789' } });
   assert.deepEqual(preferCall({ contactPhone: '02356 222333', whatsappPhone: '02356222333' }, 'Kokani Dine Inn')?.whatsapp, null, 'landline is not a WhatsApp number');
-  assert.equal(preferCall({ contactPhone: '98111 22233', whatsappPhone: null }, 'Kokani Dine Inn')?.whatsapp, null);
+  assert.equal(preferCall({ contactPhone: '99999 00011', whatsappPhone: null }, 'Kokani Dine Inn')?.whatsapp, null);
   assert.equal(preferCall({ contactPhone: null, whatsappPhone: '91234 56789' }, 'Ammu Sammu'), null);
   assert.equal(preferCall({ contactPhone: '12345' }, 'Ammu Sammu'), null);
   assert.equal(preferCall(null, 'Ammu Sammu'), null);
