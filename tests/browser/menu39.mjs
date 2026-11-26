@@ -19,6 +19,9 @@ const menu = [
   dish(4, 1, 'Misal pav', 9000), dish(5, 1, 'Kanda poha', 5000, { diet: 'veg' }), dish(6, 1, 'Kothimbir vadi', 7000, { available: false }),
   dish(7, 2, 'Ukadiche modak', 12000, { diet: 'veg' }), dish(8, 2, 'Sol kadhi', 4000),
 ];
+// #202: fixture numbers only (never real ones). Each brand gets its own so one can never show the other's.
+const phones = { 'ammu-sammu': { contact_phone: '98765 43210', whatsapp_phone: '91234 56789', tel: 'tel:+919876543210', wa: 'https://wa.me/919123456789' }, 'kokani-dine-inn': { contact_phone: '99999 00011', whatsapp_phone: '99999 00022', tel: 'tel:+919999900011', wa: 'https://wa.me/919999900022' } };
+let contacts = {};
 let fixtureMenu = menu, fixtureCategories = categories;
 const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#E9C9B8"/><circle cx="160" cy="120" r="80" fill="#F6EEE8"/><circle cx="160" cy="120" r="46" fill="#C65A3A"/></svg>';
 
@@ -42,7 +45,7 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       const json = value => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
       const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
       if (url.pathname.startsWith('/storage/v1/object/public/menu-images/')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: photo });
-      if (url.pathname === '/rest/v1/businesses') return json(business);
+      if (url.pathname === '/rest/v1/businesses') return json({ ...business, ...contacts });
       if (url.pathname === '/rest/v1/menu_items') return json(fixtureMenu);
       if (url.pathname === '/rest/v1/menu_categories') return json(fixtureCategories);
       if (url.pathname === '/auth/v1/user' || url.pathname === '/rest/v1/orders') return json(url.pathname === '/rest/v1/orders' ? [] : null);
@@ -56,6 +59,43 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
   const dishHeadings = page => page.locator('#regular-menu').getByRole('heading', { level: 3 });
   const scroller = page => page.evaluateHandle(() => [...document.querySelectorAll('div')].find(node => node.scrollHeight > node.clientHeight + 50 && /auto|scroll/.test(getComputedStyle(node).overflowY) && node.querySelector('#regular-menu')));
   const settle = async (page, handle) => { let last = -1; for (let i = 0; i < 40; i++) { const now = await handle.evaluate(node => node.scrollTop); if (now === last) return now; last = now; await page.waitForTimeout(150); } return last; };
+  // #202 "Prefer Call?": real anchors (never clicked: headless Chromium hangs mouse input after a tel: navigation), so assert hrefs and accessible names.
+  const preferCall = async () => {
+    const own = phones[slug];
+    for (const [label, viewport] of [['mobile-390x844', { width: 390, height: 844 }], ['desktop-1280x800', { width: 1280, height: 800 }]]) {
+      contacts = { contact_phone: own.contact_phone, whatsapp_phone: own.whatsapp_phone, ordering_enabled: true };
+      const { context, page } = await open(viewport);
+      const strip = page.locator('#prefer-call');
+      await strip.getByText('Prefer Call?', { exact: true }).waitFor();
+      const call = strip.getByRole('link', { name: `Call ${name}`, exact: true }), chat = strip.getByRole('link', { name: `WhatsApp ${name}`, exact: true });
+      assert.equal(await call.getAttribute('href'), own.tel); assert.equal(await chat.getAttribute('href'), own.wa);
+      assert.equal(await chat.getAttribute('target'), '_blank'); assert.match(await chat.getAttribute('rel'), /noopener/);
+      for (const link of [call, chat]) { const box = await link.boundingBox(); assert.ok(box && box.height >= 48 && box.width >= 48, 'Prefer Call target'); }
+      const top = await strip.boundingBox(); assert.ok(top && top.y + top.height <= viewport.height, `visible without scrolling (${top?.y})`);
+      const order = await page.evaluate(() => { const strip = document.getElementById('prefer-call'), search = document.querySelector('[aria-label="Search dishes"]'); return !!(strip.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING); });
+      assert.ok(order, 'the strip comes before search and the dishes');
+      assert.equal((await page.content()).replace(/\D/g, '').includes(Object.values(phones).find(value => value !== own).tel.replace(/\D/g, '').slice(2)), false, "never the other brand's number");
+      await shot(page, `prefer-call-${label}`);
+      // It does not get in the way of ordering.
+      await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click();
+      await page.getByRole('button', { name: /^Cart \(1\)/ }).waitFor();
+      assert.deepEqual(errors, []); await context.close();
+    }
+    // Phone only: no WhatsApp. Closed restaurant: still shown. No call number (or an invalid one, or WhatsApp only): hidden, no dead control.
+    const hidden = async (value, why) => { contacts = value; const { context, page } = await open({ width: 390, height: 844 }); await page.locator('#regular-menu').waitFor(); assert.equal(await page.locator('#prefer-call').count(), 0, why); assert.equal(await page.getByText('Prefer Call?').count(), 0, why); await context.close(); };
+    contacts = { contact_phone: own.contact_phone, whatsapp_phone: null };
+    { const { context, page } = await open({ width: 390, height: 844 }); await page.getByRole('link', { name: `Call ${name}`, exact: true }).waitFor(); assert.equal(await page.getByRole('link', { name: `WhatsApp ${name}`, exact: true }).count(), 0); await context.close(); }
+    business.accepting_orders = false; contacts = { contact_phone: own.contact_phone, whatsapp_phone: own.whatsapp_phone };
+    { const { context, page } = await open({ width: 390, height: 844 }); await page.getByRole('link', { name: `Call ${name}`, exact: true }).waitFor(); await context.close(); }
+    business.accepting_orders = true;
+    await hidden({ contact_phone: null, whatsapp_phone: own.whatsapp_phone }, 'hidden without a call number');
+    await hidden({ contact_phone: '12345', whatsapp_phone: null }, 'hidden for an invalid number');
+    await hidden({}, 'hidden when nothing is configured');
+    business.is_demo = true;
+    await hidden({ contact_phone: own.contact_phone, whatsapp_phone: own.whatsapp_phone }, 'hidden for a sample business');
+    business.is_demo = false; contacts = {};
+    console.log(`PASS: ${slug} Prefer Call? links, names, targets, placement, hidden states`);
+  };
   try {
     if (brand) {
       // Kokani's own menu (carousel, a la carte list) is covered by kokani39.mjs; here: it has search (#57) and is still orderable.
@@ -68,6 +108,7 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       assert.deepEqual(errors, []);
       await context.close();
       console.log('PASS: kokani-dine-inn menu has search and can add to cart');
+      await preferCall();
       continue;
     }
     for (const [label, viewport] of [['mobile-390x844', { width: 390, height: 844 }], ['desktop-1280x800', { width: 1280, height: 800 }]]) {
@@ -167,6 +208,7 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
       await context.close();
       console.log(`PASS: ammu-sammu ${label} special card, search, add/stepper with focus, chips jump and follow`);
     }
+    await preferCall();
     // The 20-distinct-dish cart limit: the message must be seen where the customer is (far down the grid), as an alert.
     {
       const extras = category(4, 'Extras');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Order } from '@market/core';
-import { businessContactLinks, indianPhone, selectedSupportOrder, supportConfig, supportLinks } from './support-model.ts';
+import { businessContactLinks, preferCall, indianPhone, selectedSupportOrder, supportConfig, supportLinks } from './support-model.ts';
 
 test('Indian mobile and landline formats produce normalized dialer links', () => {
   for (const phone of ['98765 43210', '+91 98765-43210', '919876543210', '09876543210']) assert.equal(supportLinks({ phone, whatsapp: phone }).call, 'tel:+919876543210');
@@ -38,4 +38,15 @@ test('selection remains on an active order and falls back to newest when it beco
   assert.equal(selectedSupportOrder(rows, 'old')?.id, 'old');
   assert.equal(selectedSupportOrder([{ ...rows[1], status: 'delivered' }, rows[0]], 'old')?.id, 'new');
   assert.equal(selectedSupportOrder([], 'old'), null);
+});
+test('Prefer Call? uses the restaurant\'s own numbers and is hidden without a valid call number or for sample businesses', () => {
+  assert.deepEqual(preferCall({ contactPhone: '98765 43210', whatsappPhone: '91234 56789' }, 'Ammu Sammu'), {
+    heading: 'Prefer Call?', call: { label: 'Call', name: 'Call Ammu Sammu', href: 'tel:+919876543210' }, whatsapp: { label: 'WhatsApp', name: 'WhatsApp Ammu Sammu', href: 'https://wa.me/919123456789' } });
+  assert.deepEqual(preferCall({ contactPhone: '02356 222333', whatsappPhone: '02356222333' }, 'Kokani Dine Inn')?.whatsapp, null, 'landline is not a WhatsApp number');
+  assert.equal(preferCall({ contactPhone: '99999 00011', whatsappPhone: null }, 'Kokani Dine Inn')?.whatsapp, null);
+  assert.equal(preferCall({ contactPhone: null, whatsappPhone: '91234 56789' }, 'Ammu Sammu'), null);
+  assert.equal(preferCall({ contactPhone: '12345' }, 'Ammu Sammu'), null);
+  assert.equal(preferCall(null, 'Ammu Sammu'), null);
+  assert.equal(preferCall({ contactPhone: '98765 43210' }, 'Ammu Sammu', true), null, 'hidden for sample businesses');
+  assert.doesNotMatch(JSON.stringify(preferCall({ contactPhone: '98765 43210', whatsappPhone: '91234 56789' }, 'Ammu Sammu')), /text=/);
 });
