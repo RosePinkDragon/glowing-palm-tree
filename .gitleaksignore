@@ -1,0 +1,7 @@
+# These five historical fingerprints are the same synthetic caller UUID used in the #242 retry test.
+# The UUID is test input and grants no access. Limit the exception to those commits, path, rule, and line.
+17ff7b22e95b845e62fc0066146a8b9b105c2a66:packages/services/src/index.test.ts:generic-api-key:527
+3d3f8f2d3243db9fdba4b833b7c8deac141e104b:packages/services/src/index.test.ts:generic-api-key:527
+7b7426861c5bf1306db680531cfc332f70effad9:packages/services/src/index.test.ts:generic-api-key:527
+ac5433adc7aed31a8083365511114b28c43fd3f8:packages/services/src/index.test.ts:generic-api-key:527
+b41a8ea31e7dd629bfa9f27eb7689cbeca22482e:packages/services/src/index.test.ts:generic-api-key:527

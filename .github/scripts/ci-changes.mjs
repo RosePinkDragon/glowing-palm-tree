@@ -1,6 +1,6 @@
 // Decides which App CI jobs a change needs (#231). Deliberately conservative: a path this file does not
 // recognise, an empty or failed diff, a push to main, a manual run, and any change to a workflow, package.json
-// or the lockfile all run everything. The flags only ever remove work for paths that are known to be safe.
+// or the lockfile all run everything. Every diff, including docs-only, reaches the secret scanner.
 import { appendFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
@@ -28,11 +28,11 @@ const docs = [
 ];
 
 const matches = (patterns, file) => patterns.some(pattern => pattern.test(file));
-const allFlags = { app: true, browser: true, db: true, functions: true, scripts: true, workflows: true, docs_only: false, all: true };
+const allFlags = { secrets: true, static_analysis: true, app: true, browser: true, db: true, functions: true, scripts: true, workflows: true, docs_only: false, all: true };
 
 export function classify(files, { event = 'pull_request' } = {}) {
   if (event !== 'pull_request' || !files.length) return { ...allFlags };
-  const flags = { app: false, browser: false, db: false, functions: false, scripts: false, workflows: false, docs_only: false, all: false };
+  const flags = { secrets: true, static_analysis: false, app: false, browser: false, db: false, functions: false, scripts: false, workflows: false, docs_only: false, all: false };
   let unknown = false;
   let docsOnly = true;
   for (const file of files) {
@@ -53,6 +53,7 @@ export function classify(files, { event = 'pull_request' } = {}) {
   if (unknown) flags.all = true;
   if (flags.all) return { ...allFlags, workflows: flags.workflows };
   if (flags.app) flags.browser = true;
+  flags.static_analysis = flags.app || flags.scripts || flags.functions;
   flags.docs_only = docsOnly;
   return flags;
 }
