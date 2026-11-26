@@ -135,14 +135,13 @@ jobs:
             commands: |
               npm run test:browser
               node tests/browser/quick-checkout187.mjs
-              node tests/browser/hours253.mjs
-              node tests/browser/owner-hours253.mjs
           - shard: cart-photos
             commands: |
               node tests/browser/cart.mjs
               node tests/browser/photos.mjs
               node tests/browser/customer-offers182.mjs
               node tests/browser/states57.mjs
+              node tests/browser/hours253.mjs
           - shard: brand-menu-kokani-checkout
             commands: |
               node tests/browser/brand39.mjs
@@ -162,6 +161,7 @@ jobs:
               node tests/browser/owner-offers182.mjs
               node tests/browser/dish-title203.mjs
               node tests/browser/discard-confirm200.mjs
+              node tests/browser/owner-hours253.mjs
     env:
       EXPO_PUBLIC_SUPABASE_URL: https://market-fixture.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_fixture_only
