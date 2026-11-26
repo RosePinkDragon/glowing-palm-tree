@@ -50,6 +50,22 @@ export function supportLinks(config: { phone: string; whatsapp: string }) {
 export function businessContactLinks(business: { contactPhone?: string | null; whatsappPhone?: string | null } | null | undefined) {
   return supportLinks({ phone: business?.contactPhone ?? '', whatsapp: business?.whatsappPhone ?? '' });
 }
+/**
+ * #202 "Prefer Call?" on the customer menu. Built from the restaurant's own configured numbers (same source as Help & support).
+ * Hidden (null) for sample/demo businesses and when there is no valid call number, so there is never a dead or placeholder button.
+ * Shown whether the restaurant is open or closed: calling is useful either way. WhatsApp is offered only with a valid mobile number
+ * and carries no prefilled text or personal data.
+ */
+export function preferCall(business: { contactPhone?: string | null; whatsappPhone?: string | null } | null | undefined, restaurant: string, demo = false) {
+  if (demo) return null;
+  const links = businessContactLinks(business);
+  if (!links.call) return null;
+  return {
+    heading: 'Prefer Call?',
+    call: { label: 'Call', name: `Call ${restaurant}`, href: links.call },
+    whatsapp: links.whatsapp ? { label: 'WhatsApp', name: `WhatsApp ${restaurant}`, href: links.whatsapp } : null,
+  };
+}
 export const isSupportOrder = (order: Order) => ['placed', 'accepted', 'preparing', 'out_for_delivery'].includes(order.status);
 export function selectedSupportOrder(orders: readonly Order[], selectedId: string | null): Order | null {
   return orders.find(order => order.id === selectedId && isSupportOrder(order)) ?? orders.find(isSupportOrder) ?? null;

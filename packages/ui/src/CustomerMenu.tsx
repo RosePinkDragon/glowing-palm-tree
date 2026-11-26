@@ -10,6 +10,7 @@ import { MarketIcon } from './MarketIcons';
 import { noMatchCopy } from './states-model';
 import { activeSectionId, customerSections, featuredLabel, featuredMenuItems, gridColumns, searchMenuItems } from './menu-model';
 import { useMarketFonts, useMarketTheme } from './theme';
+import { PreferCall } from './PreferCall';
 
 const gap = 14;
 /** Scroll position reported by the screen's ScrollView, so the menu can highlight the category being read. */
@@ -65,8 +66,8 @@ const reducedMotion = () => Platform.OS === 'web' && typeof window !== 'undefine
  * `carta` is Kokani Dine Inn's: the signature carousel lives in CartaHeader above the notices; here are the facts line,
  * the same sticky chips and cart-limit alert, and the text à la carte list.
  */
-export function MenuBody({ variant, facts, businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, undoSlot, onAdd, onRemove, onOpen }: {
-  variant: 'photo-grid' | 'carta'; facts?: string; businessId: BusinessSlug; items: readonly MenuItem[]; cart: readonly CartLine[]; contentWidth: number; bleed: number; orderingAllowed: boolean; demo: boolean; locked: boolean; viewportRevision: number;
+export function MenuBody({ variant, facts, businessId, contact, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, undoSlot, onAdd, onRemove, onOpen }: {
+  variant: 'photo-grid' | 'carta'; facts?: string; businessId: BusinessSlug; contact?: Parameters<typeof PreferCall>[0]['business']; items: readonly MenuItem[]; cart: readonly CartLine[]; contentWidth: number; bleed: number; orderingAllowed: boolean; demo: boolean; locked: boolean; viewportRevision: number;
   scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>; viewportListener: MutableRefObject<((viewport: MenuViewport) => void) | null>;
   /** Cart error from the last add/remove (e.g. the 20-dish limit), shown with the sticky chips so it is seen wherever the customer is in the grid. */
   message: string; onDismissMessage: () => void;
@@ -130,6 +131,7 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
 
   return <View onLayout={event => { layout.current.root = layoutY(event); }} style={{ gap: 18, paddingBottom: cart.length ? 64 : 0 }}>
     {carta && facts ? <Text style={{ color: colors.muted, textAlign: 'center', ...f.body(14, 20) }}>{facts}</Text> : null}
+    {contact !== undefined ? <PreferCall business={contact} demo={demo} /> : null}
     <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingLeft: 14 }}>
       <MarketIcon name="search" color={colors.muted} size={18} />
       <TextInput accessibilityLabel="Search dishes" placeholder="Search dishes" placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} returnKeyType="search" autoCorrect={false} autoCapitalize="none"
