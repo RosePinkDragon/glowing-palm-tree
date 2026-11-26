@@ -36,7 +36,7 @@ alter table customer_lifecycle_private.accounts
 -- One row, changed in one place: update customer_lifecycle_private.retention_settings set order_snapshot_retention = interval '...'.
 create table customer_lifecycle_private.retention_settings (
   singleton boolean primary key default true check (singleton),
-  order_snapshot_retention interval not null default interval '365 days' check (order_snapshot_retention > interval '0')
+  order_snapshot_retention interval not null default interval '365 days' check (order_snapshot_retention >= interval '1 day')
 );
 insert into customer_lifecycle_private.retention_settings default values;
 alter table customer_lifecycle_private.retention_settings enable row level security;
@@ -83,7 +83,7 @@ alter table public.orders
   add constraint orders_snapshot_blank_when_purged check (customer_pii_purged_at is null or (customer_name is null and customer_phone is null
     and delivery_address_line is null and latitude is null and longitude is null and address_label is null and address_custom_label is null
     and address_house is null and address_street_area is null and address_landmark is null and address_location_source is null
-    and saved_address_id is null and saved_address_version is null and placed_from_distance_m is null));
+    and saved_address_id is null and saved_address_version is null and placed_from_distance_m is null and kitchen_distance_m is null));
 create index orders_purge_due_idx on public.orders (customer_deleted_at) where customer_pii_purged_at is null and customer_id is null;
 
 -- The link is cut either by request_account_deletion or by the foreign key's SET NULL: stamp the time in both.
@@ -142,6 +142,50 @@ begin
   return jsonb_build_object('id',o.id,'business_id',o.business_id,'status',o.status,'version',o.version,'subtotal_paise',o.subtotal_paise,'delivery_fee_paise',o.delivery_fee_paise,'total_paise',o.total_paise,'created_at',o.created_at);
 end $$;
 
+-- The customer-owned active data, removed on the first request and again on every repeat (the RLS active-session helper takes no
+-- lock, so a profile or address written at the very moment of deletion can land after the first pass; a repeat call or the
+-- trusted finisher cleans it up). Idempotent. Called with the accounts lock held.
+create function customer_lifecycle_private.clear_account_active_data(caller uuid, cutoff timestamptz) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  -- Device tokens (every audience): lock in id order, keep completed push audit rows with the token reference removed, drop
+  -- pending jobs with their tokens (same order as leave_business).
+  perform d.id from public.device_tokens d where d.user_id = caller order by d.id for update;
+  update public.notification_outbox q set device_token_id = null from public.device_tokens d
+    where q.device_token_id = d.id and q.completed_at is not null and d.user_id = caller;
+  delete from public.notification_outbox q using public.device_tokens d where q.device_token_id = d.id and q.completed_at is null and d.user_id = caller;
+  delete from public.device_tokens where user_id = caller;
+  perform public.purge_customer_notifications(caller, null, cutoff);
+
+  delete from public.customer_addresses where customer_id = caller;
+  delete from public.profiles where user_id = caller;
+  delete from public.customer_businesses where customer_id = caller;
+  delete from customer_lifecycle_private.leave_requests where customer_id = caller;
+  delete from offers_private.code_attempts where customer_id = caller;
+  delete from public.checkout_pricing_rejections where customer_id = caller;
+
+end $$;
+revoke all on function customer_lifecycle_private.clear_account_active_data(uuid, timestamptz) from public, anon, authenticated, service_role;
+
+-- An order whose customer was removed by a direct auth.users delete can still be transitioned by the owner: the feed row has no
+-- recipient, so skip it. Identical to the baseline function except for the one added line (guard on a null customer).
+create or replace function public.record_customer_notification() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if tg_op = 'UPDATE' and new.status is not distinct from old.status then return new; end if;
+  if new.customer_id is null then return new; end if;
+  insert into public.customer_notifications(user_id,business_id,order_id,event_status,title,body)
+  values(new.customer_id,new.business_id,new.id,new.status,'Order update',case new.status
+    when 'placed' then 'Your order was placed.'
+    when 'accepted' then 'Your order was accepted.'
+    when 'preparing' then 'Your order is being prepared.'
+    when 'out_for_delivery' then 'Your order is out for delivery.'
+    when 'delivered' then 'Your order was delivered.'
+    when 'cancelled' then 'Your order was cancelled.' end)
+  on conflict on constraint customer_notification_event_unique do nothing;
+  return new;
+end $$;
+
 -- 3. The deletion request -----------------------------------------------------------------------
 -- Everything commits together or nothing does. A second call (a retry after a lost response, or after signing in again with
 -- the same phone) finds the account already pending and returns the same confirmation without doing anything.
@@ -155,6 +199,7 @@ begin
   select state, deletion_requested_at into account_state, requested
     from customer_lifecycle_private.accounts where customer_id = caller for update;
   if account_state = 'deletion_pending' then
+    perform customer_lifecycle_private.clear_account_active_data(caller, clock_timestamp());
     return jsonb_build_object('customer_id', caller, 'state', 'deletion_pending', 'requested_at', coalesce(requested, clock_timestamp()));
   end if;
 
@@ -179,21 +224,7 @@ begin
   cutoff := clock_timestamp();
   update customer_lifecycle_private.accounts set state = 'deletion_pending', deletion_requested_at = cutoff where customer_id = caller;
 
-  -- Device tokens (every audience): lock in id order, keep completed push audit rows with the token reference removed, drop
-  -- pending jobs with their tokens (same order as leave_business).
-  perform d.id from public.device_tokens d where d.user_id = caller order by d.id for update;
-  update public.notification_outbox q set device_token_id = null from public.device_tokens d
-    where q.device_token_id = d.id and q.completed_at is not null and d.user_id = caller;
-  delete from public.notification_outbox q using public.device_tokens d where q.device_token_id = d.id and q.completed_at is null and d.user_id = caller;
-  delete from public.device_tokens where user_id = caller;
-  perform public.purge_customer_notifications(caller, null, cutoff);
-
-  delete from public.customer_addresses where customer_id = caller;
-  delete from public.profiles where user_id = caller;
-  delete from public.customer_businesses where customer_id = caller;
-  delete from customer_lifecycle_private.leave_requests where customer_id = caller;
-  delete from offers_private.code_attempts where customer_id = caller;
-  delete from public.checkout_pricing_rejections where customer_id = caller;
+  perform customer_lifecycle_private.clear_account_active_data(caller, cutoff);
 
   -- Owner leftovers: the membership, and the owner's name on past history ("Former owner").
   delete from public.business_memberships where user_id = caller;
@@ -235,9 +266,9 @@ begin
   update public.orders set
     customer_name = null, customer_phone = null, delivery_address_line = null, latitude = null, longitude = null,
     address_label = null, address_custom_label = null, address_house = null, address_street_area = null, address_landmark = null,
-    address_location_source = null, saved_address_id = null, saved_address_version = null, placed_from_distance_m = null,
+    address_location_source = null, saved_address_id = null, saved_address_version = null, placed_from_distance_m = null, kitchen_distance_m = null,
     customer_pii_purged_at = clock_timestamp()
-  where customer_id is null and customer_pii_purged_at is null
+  where customer_id is null and customer_pii_purged_at is null and status in ('delivered', 'cancelled')
     and customer_deleted_at < clock_timestamp() - customer_lifecycle_private.order_snapshot_retention();
   get diagnostics purged = row_count;
   return purged;

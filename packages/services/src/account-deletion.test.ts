@@ -89,3 +89,17 @@ test('guests and the owner app fail closed without calling the RPC', async () =>
     assert.equal(calls.length, 0);
   });
 });
+
+test('an order whose customer details were purged maps to a safe placeholder for owners', async () => {
+  const { mapOrder } = await import('./index.ts');
+  const purged = { id: '40000000-0000-4000-8000-000000000001', status: 'delivered' as const, version: 5, subtotal_paise: 100, delivery_fee_paise: 0, total_paise: 100,
+    customer_name: null, customer_phone: null, delivery_address_line: null, latitude: null, longitude: null, created_at: stamp,
+    address_label: null, address_house: null, address_street_area: null, address_location_source: null, saved_address_id: null, placed_from_distance_m: null, kitchen_distance_m: null,
+    order_items: [{ diet: null, menu_item_id: 'm', name: 'Dish', quantity: 1, unit_price_paise: 100, line_total_paise: 100 }] };
+  const order = mapOrder(purged, 'ammu-sammu');
+  assert.deepEqual(order.delivery, { name: 'Deleted customer', phone: '', addressLine: 'Address removed' });
+  assert.equal(order.location, undefined);
+  assert.equal(order.address, undefined);
+  assert.equal(order.totalPaise, 100);
+  assert.equal(order.status, 'delivered');
+});

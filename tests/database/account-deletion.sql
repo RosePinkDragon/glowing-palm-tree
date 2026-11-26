@@ -3,8 +3,8 @@
 -- Users: 1 deletes, 2 is an untouched control customer, 3 and 4 co-own Ammu Sammu, 5 solely owns Kokani Dine Inn, 6 has an active
 -- order, 7 has a dead session, 8 is deleted directly (the fallback path with no RPC), 9 is a customer with a late-cancelled order.
 begin;
-insert into auth.users(id) select ('51000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,9) n;
-insert into auth.sessions(id,user_id) select ('51000000-0000-4000-b000-'||lpad(n::text,12,'0'))::uuid, ('51000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,9) n;
+insert into auth.users(id) select ('51000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,10) n;
+insert into auth.sessions(id,user_id) select ('51000000-0000-4000-b000-'||lpad(n::text,12,'0'))::uuid, ('51000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,10) n;
 insert into public.business_memberships(business_id,user_id,role,display_name) values
  ('10000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000003','admin','Owner Three'),
  ('10000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000004','admin','Owner Four'),
@@ -56,6 +56,7 @@ insert into public.checkout_pricing_rejections(customer_id,business_id,idempoten
   select public.t_user(n),'10000000-0000-4000-8000-000000000001',gen_random_uuid(),'h','{}' from generate_series(1,2) n;
 -- Orders: customer 1 has a delivered and a cancelled order (the notification trigger adds a feed row each), customer 2 one delivered, 6 one placed, 9 none yet.
 select public.t_order(1,1,'1','delivered'), public.t_order(2,1,'2','cancelled'), public.t_order(3,2,'1','delivered'), public.t_order(4,6,'1','placed');
+update public.orders set kitchen_distance_m=500 where id='51000000-0000-4000-9000-000000000001';
 insert into public.order_items(order_id,name,unit_price_paise,quantity,line_total_paise) select id,'Dish',100,1,100 from public.orders where customer_id in (public.t_user(1),public.t_user(2));
 insert into public.order_status_history(order_id,status,changed_by) values ('51000000-0000-4000-9000-000000000001','delivered',public.t_user(4)),('51000000-0000-4000-9000-000000000001','placed',null);
 insert into public.order_status_actors(history_id,business_id,actor_id,actor_name) select id,'10000000-0000-4000-8000-000000000001',public.t_user(4),'Owner Four' from public.order_status_history where changed_by=public.t_user(4);
@@ -143,6 +144,19 @@ select public.test_assert((select r from first_call)=public.request_account_dele
 reset role;
 select public.test_assert((select s.orders=(select jsonb_agg(to_jsonb(o) order by o.id) from public.orders o) and s.accounts=(select jsonb_agg(to_jsonb(a) order by a.customer_id) from customer_lifecycle_private.accounts a) from snapshot_after s),'a second call changes nothing');
 
+-- 2b. Data that landed on the pending account after the first pass (the RLS helper is lock-free) is removed by the next request.
+insert into public.profiles(user_id,full_name) values (public.t_user(1),'Late profile');
+insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source) values (public.t_user(1),'home','H','R',0.5,0.5,'pin');
+insert into public.customer_businesses(customer_id,business_id) values (public.t_user(1),'10000000-0000-4000-8000-000000000001');
+insert into offers_private.code_attempts(customer_id,business_id) values (public.t_user(1),'10000000-0000-4000-8000-000000000001');
+insert into public.device_tokens(user_id,business_id,audience,token,session_id) values (public.t_user(1),'10000000-0000-4000-8000-000000000001','customer','late-token',public.t_session(1));
+select public.test_assert((public.t_data(1)->>'profiles')::int=1 and (public.t_data(1)->>'addresses')::int=1 and (public.t_data(1)->>'tokens')::int=1,'late data is present before the repeat call');
+select public.t_as(1);
+set local role authenticated;
+select public.test_assert((select r from first_call)=public.request_account_deletion(),'the repeat call still returns the original confirmation');
+reset role;
+select public.test_assert(public.t_data(1)=jsonb_build_object('profiles',0,'addresses',0,'tokens',0,'notifications',0,'relationships',0,'leave_requests',0,'code_attempts',0,'rejections',0,'orders',0,'redemptions',0,'memberships',0),'a repeat call removes data that landed after the first pass');
+
 -- 3. A pending account can do nothing, even with a fresh live session: no profile, no address, no checkout, no restaurant link.
 select public.t_fails(1,$q$insert into public.profiles(full_name) values ('Back again')$q$,'PT409','ACCOUNT_LIFECYCLE_PENDING');
 select public.t_fails(1,$q$insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('home','H','R',0.5,0.5,'pin')$q$,'PT409','ACCOUNT_LIFECYCLE_PENDING');
@@ -221,8 +235,29 @@ do $$ begin
   begin update public.orders set customer_pii_purged_at=now() where id='51000000-0000-4000-9000-000000000001'; raise exception 'purge stamp with snapshots present'; exception when check_violation then null; end;
   begin update public.orders set customer_pii_purged_at=now() where id='51000000-0000-4000-9000-000000000003'; raise exception 'linked order purged'; exception when check_violation then null; end;
   begin update customer_lifecycle_private.retention_settings set order_snapshot_retention=interval '0'; raise exception 'zero retention accepted'; exception when check_violation then null; end;
+  begin update customer_lifecycle_private.retention_settings set order_snapshot_retention=interval '23 hours'; raise exception 'retention under the floor accepted'; exception when check_violation then null; end;
   begin insert into customer_lifecycle_private.retention_settings(singleton) values (false); raise exception 'second settings row'; exception when check_violation then null; end;
 end $$;
+
+-- 8b. A direct auth.users delete while an order is in progress: the order is unlinked, the owner can still move it to cancelled or delivered,
+-- and the purge never touches it until it is final.
+select public.t_order(6,10,'1','placed'), public.t_order(7,10,'1','placed');
+delete from auth.users where id=public.t_user(10);
+select public.test_assert((select count(*)=2 and bool_and(customer_id is null and customer_deleted_at is not null and customer_name is not null) from public.orders where id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007')),'active orders survive a direct auth delete, unlinked');
+update public.orders set customer_deleted_at=now()-interval '1000 days' where id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007');
+select public.test_assert(public.purge_deleted_customer_order_snapshots()=0,'the purge skips active orders however old');
+select public.test_assert((select count(*)=2 and bool_and(customer_name is not null and customer_pii_purged_at is null) from public.orders where id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007')),'active orders keep their snapshot');
+select public.t_as(3); set local role authenticated;
+select public.transition_order('51000000-0000-4000-9000-000000000006','cancelled',1);
+select public.transition_order('51000000-0000-4000-9000-000000000007','accepted',1);
+select public.transition_order('51000000-0000-4000-9000-000000000007','preparing',2);
+select public.transition_order('51000000-0000-4000-9000-000000000007','out_for_delivery',3);
+select public.transition_order('51000000-0000-4000-9000-000000000007','delivered',4);
+reset role;
+select public.test_assert((select count(*)=2 and count(*) filter (where status='cancelled')=1 and count(*) filter (where status='delivered')=1 from public.orders where id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007')),'the owner finished both orders after the customer vanished');
+select public.test_assert(not exists(select 1 from public.customer_notifications where order_id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007')),'no feed row for a customer who no longer exists');
+
+update public.orders set customer_deleted_at=now() where id in ('51000000-0000-4000-9000-000000000006','51000000-0000-4000-9000-000000000007');
 
 -- 9. Retention purge. Time is simulated by moving customer_deleted_at back; the setting is read at purge time.
 select public.test_assert(public.purge_deleted_customer_order_snapshots()=0,'nothing is due right after deletion');
@@ -237,7 +272,7 @@ reset role;
 select public.test_assert((select n=1 from purged),'exactly the order past the period is purged');
 select public.test_assert((select customer_id is null and customer_pii_purged_at is not null and customer_name is null and customer_phone is null and delivery_address_line is null
   and latitude is null and longitude is null and address_label is null and address_custom_label is null and address_house is null and address_street_area is null and address_landmark is null
-  and address_location_source is null and saved_address_id is null and saved_address_version is null and placed_from_distance_m is null
+  and address_location_source is null and saved_address_id is null and saved_address_version is null and placed_from_distance_m is null and kitchen_distance_m is null
   and status='delivered' and total_paise=150 and order_number is not null and business_id is not null from public.orders where id='51000000-0000-4000-9000-000000000001'),'purged order: snapshots blank, record kept');
 select public.test_assert((select customer_name='Customer 1' and latitude=19.03 from public.orders where id='51000000-0000-4000-9000-000000000002'),'a not-yet-due order of the same customer keeps its snapshot');
 select public.test_assert((select b.orders=(select jsonb_agg(to_jsonb(o) order by o.id) from public.orders o where customer_id=public.t_user(2)) from before_user2 b),'non-deleted customer orders are never purged');
