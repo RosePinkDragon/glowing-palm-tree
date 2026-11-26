@@ -1,9 +1,9 @@
 import { useRef, type ComponentRef } from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
-import { formatINRFromPaise, removeCartItem, setCartItemQuantity, MAX_QUANTITY, type CartLine } from '@market/core';
+import { addCartItem, formatINRFromPaise, removeCartItem, setCartItemQuantity, MAX_QUANTITY, type CartLine, type MenuItem } from '@market/core';
 import { MarketButton, MarketStatus } from './components';
-import { StateScreen } from './StateScreen';
-import { emptyCartCopy } from './states-model';
+import { MinimumBar, StateScreen } from './StateScreen';
+import { emptyCartCopy, minimumCopy, type MinimumOrder } from './states-model';
 import { CheckoutRecipient } from './CheckoutRecipient';
 import { CheckoutAddressSummary, type CheckoutAddresses } from './CheckoutAddress';
 import type { RecipientMode } from './recipient-model';
@@ -23,6 +23,8 @@ export type CartPageProps = {
   demo: boolean; cartMessage: string; ready: boolean; cartError: string; cart: CartLine[];
   locked: boolean; orderingAllowed: boolean; hasUnavailable: boolean;
   subtotalPaise: number; deliveryFeePaise: number; minOrderPaise: number;
+  /** #57: items against the restaurant's minimum, and a couple of dishes that would close the gap. */
+  minimum: MinimumOrder; suggestions: MenuItem[];
   /** #182: what the server's offer takes off, and the offer row (CartOffer) shown above the bill. */
   discountPaise?: number; offerSlot?: React.ReactNode;
   details: { name: string; phone: string }; setDetails: (details: { name: string; phone: string }) => void; recipient: { mode: RecipientMode; setMode: (mode: RecipientMode) => void };
@@ -118,6 +120,7 @@ export function CartPage(p: CartPageProps) {
     {p.cartMessage ? <ReorderNotice message={p.cartMessage} /> : null}
     {p.demo ? <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>Example items and prices are for browsing only. Checkout is unavailable.</Text> : null}
     {!p.ready && !p.cartError ? <MarketStatus kind="loading" title="Loading your cart and menu" /> : empty ? <StateScreen icon="plate" title={emptyCopy.title} message={emptyCopy.message} action={emptyCopy.action} onAction={p.onBrowse} /> : <>
+      {p.minimum.applies ? <MinimumBar minimum={p.minimum} slug={businessId} /> : null}
       <CheckoutAddressSummary ctrl={p.addrs} />
       <CheckoutRecipient mode={p.recipient.mode} setMode={p.recipient.setMode} details={p.details} setDetails={p.setDetails} locked={p.locked} />
       <Card gap={14}>
@@ -130,6 +133,16 @@ export function CartPage(p: CartPageProps) {
           <Text style={{ color: colors.primary, fontSize: 15, ...bold }}>{voice === 'we' ? 'Add more dishes' : 'Add more items'}</Text>
         </Pressable>
       </Card>
+      {p.minimum.applies && p.suggestions.length ? <Card gap={10}>
+        <Eyebrow>{minimumCopy(p.minimum, businessId).suggestionsTitle}</Eyebrow>
+        {p.suggestions.map(dish => <View key={dish.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <Text style={{ flex: 1, color: colors.ink, fontSize: 16, lineHeight: 24, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}>{dish.name} · {money(dish.pricePaise)}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Add ${dish.name}`} accessibilityState={{ disabled: p.locked || !p.orderingAllowed }} disabled={p.locked || !p.orderingAllowed} onPress={() => p.change(lines => addCartItem(lines, dish), true)}
+            style={({ pressed }) => ({ minHeight: 48, minWidth: 72, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface, opacity: p.locked || !p.orderingAllowed ? 0.5 : pressed ? 0.8 : 1 })}>
+            <Text accessible={false} style={{ color: colors.primary, fontSize: 15, ...bold }}>Add</Text>
+          </Pressable>
+        </View>)}
+      </Card> : null}
       {p.offerSlot}
       <Card gap={8}>
         <Eyebrow>{band ? 'Bill' : 'Bill summary'}</Eyebrow>
@@ -157,10 +170,10 @@ export function CartPage(p: CartPageProps) {
       {p.localError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{p.localError}</Text> : null}
       {<View ref={bar} style={{ ...stick, flexDirection: 'row', alignItems: 'center', gap: 14, padding: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
         <View style={{ paddingLeft: 4 }}>
-          <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 16 }}>To pay</Text>
-          <Text style={{ color: colors.ink, fontSize: 18, lineHeight: 24, ...bold }}>{money(total)}</Text>
+          <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 16 }}>{p.minimum.applies ? minimumCopy(p.minimum, businessId).subtotalLabel : 'To pay'}</Text>
+          <Text style={{ color: colors.ink, fontSize: 18, lineHeight: 24, ...bold }}>{money(p.minimum.applies ? p.subtotalPaise : total)}</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: p.placeDisabled || !p.orderingAllowed }} disabled={p.placeDisabled || !p.orderingAllowed} onPress={p.onPlace}
+        <Pressable accessibilityRole="button" {...(p.minimum.applies ? { 'aria-describedby': 'minimum-order-text' } : {})} accessibilityState={{ disabled: p.placeDisabled || !p.orderingAllowed }} disabled={p.placeDisabled || !p.orderingAllowed} onPress={p.onPlace}
           style={({ pressed }) => ({ flex: 1, minHeight: 52, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.primary, opacity: p.placeDisabled || !p.orderingAllowed ? 0.5 : pressed ? 0.85 : 1 })}>
           <Text style={{ color: colors.onPrimary, fontSize: 16, lineHeight: 22, ...bold }}>{p.placeLabel}</Text>
         </Pressable>

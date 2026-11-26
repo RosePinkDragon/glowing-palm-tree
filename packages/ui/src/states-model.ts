@@ -1,5 +1,5 @@
 // Copy and decisions for the customer apps' "nothing to show" and "can't reach the server" screens (#57), kept free of JSX so tests can check them.
-import type { BusinessSlug } from '@market/core';
+import { formatINRFromPaise, type BusinessSlug, type CartLine, type MenuItem } from '@market/core';
 
 /** Why a load failed: no connection, the server had a problem, or the sign-in is no longer valid. Each gets its own message. */
 export type FailureKind = 'offline' | 'server' | 'auth';
@@ -71,4 +71,35 @@ export function noOrdersCopy(name: string): StateCopy {
 /** No saved addresses (design p. 16): addresses are shared by both apps; adding one can use the phone's location. */
 export function noAddressesCopy(other: string): { title: string; message: string } {
   return { title: 'No saved addresses yet', message: `Use your current location or add an address. It's saved for next time, in this app and the ${other} app.` };
+}
+
+/** Below the restaurant's minimum order (#57). Only the items count, never delivery or a discount: the server refuses `subtotal < min_order_paise` on items alone. */
+export type MinimumOrder = { applies: boolean; subtotalPaise: number; minPaise: number; shortfallPaise: number; progress: number };
+export function minimumOrder(subtotalPaise: number, minPaise: number | null | undefined): MinimumOrder {
+  const min = Number.isFinite(minPaise) && (minPaise as number) > 0 ? Math.floor(minPaise as number) : 0;
+  const subtotal = Number.isFinite(subtotalPaise) && subtotalPaise > 0 ? Math.floor(subtotalPaise) : 0;
+  const applies = min > 0 && subtotal < min;
+  return { applies, subtotalPaise: subtotal, minPaise: min, shortfallPaise: applies ? min - subtotal : 0, progress: min > 0 ? Math.min(1, subtotal / min) : 1 };
+}
+
+/** The words of the below-minimum bar, the progress label and the disabled main button (design p. 24). */
+export function minimumCopy(m: MinimumOrder, slug: BusinessSlug) {
+  const more = formatINRFromPaise(m.shortfallPaise);
+  return { lead: `Add ${more} more to order.`, rest: `The minimum order is ${formatINRFromPaise(m.minPaise)}, not counting delivery.`, progress: `${formatINRFromPaise(m.subtotalPaise)} of ${formatINRFromPaise(m.minPaise)}`,
+    button: `Add ${more} more to order`, subtotalLabel: slug === 'ammu-sammu' ? 'Items' : 'Dishes', suggestionsTitle: slug === 'ammu-sammu' ? 'Goes well with your order' : 'To round it off' };
+}
+
+/** A couple of dishes to close the gap: available, real (not sample), not already in the cart. Dishes that reach the minimum come first (cheapest first), then the rest by price, highest first. */
+export function suggestDishes(menu: readonly MenuItem[], cart: readonly CartLine[], shortfallPaise: number, limit = 2): MenuItem[] {
+  const inCart = new Set(cart.map(line => line.item.id));
+  const pool = menu.filter(item => item.isAvailable && !item.isDemo && !inCart.has(item.id) && item.pricePaise > 0);
+  const closes = pool.filter(item => item.pricePaise >= shortfallPaise).sort((a, b) => a.pricePaise - b.pricePaise || a.name.localeCompare(b.name));
+  const rest = pool.filter(item => item.pricePaise < shortfallPaise).sort((a, b) => b.pricePaise - a.pricePaise || a.name.localeCompare(b.name));
+  return [...closes, ...rest].slice(0, limit);
+}
+
+/** Menu search with no match (design p. 30): Ammu Sammu "No dishes match", Kokani Dine Inn "Nothing matches". */
+export function noMatchCopy(query: string, slug: BusinessSlug) {
+  const text = query.trim();
+  return slug === 'ammu-sammu' ? { title: `No dishes match “${text}”`, message: 'Check the spelling, or try one of these:' } : { title: `Nothing matches “${text}”`, message: 'Check the spelling, or look through a section:' };
 }

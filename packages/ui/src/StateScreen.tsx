@@ -1,7 +1,8 @@
 import { Text, View } from 'react-native';
+import type { BusinessSlug } from '@market/core';
 import { MarketButton } from './components';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
-import { offlineBarText } from './states-model';
+import { minimumCopy, offlineBarText, type MinimumOrder } from './states-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
 /**
@@ -36,5 +37,24 @@ export function OfflineBar({ offline }: { offline: boolean }) {
       <MarketIcon name="offline" color={colors.onNotice} size={20} />
       <Text style={{ color: colors.onNotice, fontSize: 16, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) }}>{offlineBarText}</Text>
     </View> : null}
+  </View>;
+}
+
+/**
+ * "Add ₹N more" bar at the top of checkout (design p. 24): amber on Ammu Sammu, deep green on Kokani Dine Inn, with a progress line.
+ * A polite live region, so a screen reader hears the amount change as dishes are added. Its text is also the reason the main button is disabled.
+ */
+export function MinimumBar({ minimum, slug }: { minimum: MinimumOrder; slug: BusinessSlug }) {
+  const { colors, statusHeader } = useMarketTheme();
+  const fonts = useMarketFonts();
+  const dark = statusHeader === 'band', copy = minimumCopy(minimum, slug);
+  const ink = dark ? '#FFFFFF' : colors.ink, fill = dark ? colors.bandAccent : colors.warning, track = dark ? 'rgba(255,255,255,0.18)' : 'rgba(122,75,0,0.18)';
+  const bold = fonts.bodyBold ? { fontFamily: fonts.bodyBold } : { fontWeight: '700' as const };
+  return <View role="status" accessibilityLiveRegion="polite" nativeID="minimum-order-bar" style={{ gap: 10, padding: 16, borderRadius: dark ? 14 : 20, backgroundColor: dark ? colors.band : colors.warningTint }}>
+    <Text nativeID="minimum-order-text" style={{ color: ink, fontSize: 16, lineHeight: 24, ...(fonts.body ? { fontFamily: fonts.body } : {}) }}><Text style={bold}>{copy.lead}</Text> {copy.rest}</Text>
+    <View role="progressbar" aria-label="Progress to the minimum order" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(minimum.progress * 100)} aria-valuetext={copy.progress} style={{ height: 8, borderRadius: 4, backgroundColor: track, overflow: 'hidden' }}>
+      <View style={{ width: `${Math.round(minimum.progress * 100)}%`, height: 8, borderRadius: 4, backgroundColor: fill }} />
+    </View>
+    <Text style={{ color: ink, fontSize: 14, lineHeight: 20 }}>{copy.progress}</Text>
   </View>;
 }

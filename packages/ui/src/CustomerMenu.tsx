@@ -7,6 +7,7 @@ import { DishAction, DishTitle, chipTarget, menuControls, photoOpener, useFamili
 import { CartaSection } from './CustomerCarta';
 import { DishPhoto } from './DishPhoto';
 import { MarketIcon } from './MarketIcons';
+import { noMatchCopy } from './states-model';
 import { activeSectionId, customerSections, featuredLabel, featuredMenuItems, gridColumns, searchMenuItems } from './menu-model';
 import { useMarketFonts, useMarketTheme } from './theme';
 
@@ -62,7 +63,7 @@ const reducedMotion = () => Platform.OS === 'web' && typeof window !== 'undefine
  * Customer menu body. `photo-grid` is Ammu Sammu's (design p. 3): search, Today's special (dishes the owner marked featured and available),
  * sticky category chips that jump to and follow the sections, and a photo grid with + Add / stepper.
  * `carta` is Kokani Dine Inn's: the signature carousel lives in CartaHeader above the notices; here are the facts line,
- * the same sticky chips and cart-limit alert, and the text à la carte list. No search (the design has none).
+ * the same sticky chips and cart-limit alert, and the text à la carte list.
  */
 export function MenuBody({ variant, facts, businessId, items, cart, contentWidth, bleed, orderingAllowed, demo, locked, viewportRevision, scrollRef, viewportListener, message, onDismissMessage, undoSlot, onAdd, onRemove, onOpen }: {
   variant: 'photo-grid' | 'carta'; facts?: string; businessId: BusinessSlug; items: readonly MenuItem[]; cart: readonly CartLine[]; contentWidth: number; bleed: number; orderingAllowed: boolean; demo: boolean; locked: boolean; viewportRevision: number;
@@ -79,12 +80,14 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
   const [query, setQuery] = useState('');
   const [active, setActive] = useState<string | null>(null);
   const [chipsHeight, setChipsHeight] = useState(64);
-  const sections = useMemo(() => customerSections(items, carta ? '' : query), [items, query, carta]);
+  const sections = useMemo(() => customerSections(items, query), [items, query]);
+  const allSections = useMemo(() => customerSections(items), [items]);
   const specials = useMemo(() => carta ? [] : featuredMenuItems(searchMenuItems(items, query)), [items, query, carta]);
   const controls: Controls = menuControls(cart, { orderingAllowed, demo, locked, onAdd, onRemove, onOpen, viewportRevision });
   const columns = gridColumns(contentWidth);
   const cardWidth = Math.floor((contentWidth - gap * (columns - 1)) / columns);
-  const searching = !carta && query.trim().length > 0;
+  const searching = query.trim().length > 0;
+  const noMatch = noMatchCopy(query, businessId);
   const found = sections.reduce((total, section) => total + section.items.length, 0);
 
   // Section tops in scroll-content coordinates: this view, the sections wrapper and each section report their own offset.
@@ -113,6 +116,7 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
     const target = id === null ? 0 : Math.max(0, tops().find(entry => entry.id === id)!.top - chipsHeight - 12);
     scrollRef.current?.scrollTo({ y: target, animated: !reducedMotion() });
   };
+  const latestJump = useRef(jump); latestJump.current = jump; // the chips under "no match" jump after the search clears and the sections are back
   const layoutY = (event: LayoutChangeEvent) => event.nativeEvent.layout.y;
   const sticky = Platform.OS === 'web' ? ({ position: 'sticky', top: 0 } as object) : null;
   const pad = bleed;
@@ -126,12 +130,12 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
 
   return <View onLayout={event => { layout.current.root = layoutY(event); }} style={{ gap: 18, paddingBottom: cart.length ? 64 : 0 }}>
     {carta && facts ? <Text style={{ color: colors.muted, textAlign: 'center', ...f.body(14, 20) }}>{facts}</Text> : null}
-    {carta ? null : <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingLeft: 14 }}>
+    <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, backgroundColor: colors.surface, paddingLeft: 14 }}>
       <MarketIcon name="search" color={colors.muted} size={18} />
       <TextInput accessibilityLabel="Search dishes" placeholder="Search dishes" placeholderTextColor={colors.muted} value={query} onChangeText={setQuery} returnKeyType="search" autoCorrect={false} autoCapitalize="none"
         style={[{ flex: 1, minHeight: 46, paddingHorizontal: 10, color: colors.ink, fontSize: 16 }, f.body(16, 22) as object]} />
       {searching ? <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={{ width: chipTarget, minHeight: chipTarget, alignItems: 'center', justifyContent: 'center' }}><MarketIcon name="close" color={colors.ink} size={18} /></Pressable> : null}
-    </View>}
+    </View>
     {searching ? <Text accessibilityLiveRegion="polite" style={{ color: colors.muted, marginTop: -8, ...f.body(14, 20) }}>{found === 0 ? 'No dishes found' : `${found} ${found === 1 ? 'dish' : 'dishes'} found`}</Text> : null}
     {specials.length ? <View nativeID="featured-menu" style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
       {specials.map(item => <SpecialCard key={item.id} item={item} controls={controls} label={featuredLabel(businessId, 'customer')} width={columns >= 3 ? cardWidth * 2 + gap : '100%'} />)}
@@ -163,7 +167,18 @@ export function MenuBody({ variant, facts, businessId, items, cart, contentWidth
           </>}
         </View>)}
       </View>
-    </View> : searching ? <MarketStatus kind="empty" title={`No dishes match “${query.trim()}”`} message="Check the spelling or try a shorter name." action={<MarketButton label="Clear search" variant="secondary" onPress={() => setQuery('')} />} />
+    </View> : searching ? <View style={{ alignItems: 'center', gap: 14, paddingVertical: 28 }}>
+      <View accessible={false} aria-hidden style={{ width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: carta ? 'transparent' : colors.tint, borderWidth: carta ? 1 : 0, borderColor: colors.accent }}><MarketIcon name="search" color={colors.primary} size={40} /></View>
+      <Text accessibilityRole="header" aria-level={2} style={{ color: colors.ink, textAlign: 'center', ...f.heading(26, 34) }}>{noMatch.title}</Text>
+      <Text style={{ color: colors.muted, textAlign: 'center', ...f.body(15, 23) }}>{noMatch.message}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
+        {allSections.map(section => <Pressable key={section.id} accessibilityRole="button" accessibilityLabel={`Show ${section.name}`} onPress={() => { setQuery(''); setTimeout(() => latestJump.current(section.id), 250); }}
+          style={{ minHeight: chipTarget, justifyContent: 'center', paddingHorizontal: 18, borderRadius: 22, borderWidth: 1, borderColor: carta ? colors.primary : colors.border, backgroundColor: colors.surface }}>
+          <Text accessible={false} style={{ color: colors.ink, ...f.semi(15, 22) }}>{section.name}</Text>
+        </Pressable>)}
+      </View>
+      <MarketButton label="Clear search" variant="secondary" onPress={() => setQuery('')} />
+    </View>
       : <MarketStatus kind="empty" title="No menu items yet" message="Please check back later." />}
   </View>;
 }

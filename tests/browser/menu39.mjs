@@ -58,16 +58,16 @@ for (const [brand, slug] of ['ammu-sammu', 'kokani-dine-inn'].entries()) {
   const settle = async (page, handle) => { let last = -1; for (let i = 0; i < 40; i++) { const now = await handle.evaluate(node => node.scrollTop); if (now === last) return now; last = now; await page.waitForTimeout(150); } return last; };
   try {
     if (brand) {
-      // Kokani's own menu (carousel, a la carte list) is covered by kokani39.mjs; here: still no search and still orderable.
+      // Kokani's own menu (carousel, a la carte list) is covered by kokani39.mjs; here: it has search (#57) and is still orderable.
       const { context, page } = await open({ width: 390, height: 844 });
       await page.getByRole('heading', { name: 'À la carte', level: 2 }).waitFor();
-      assert.equal(await page.getByLabel('Search dishes').count(), 0);
+      assert.equal(await page.getByLabel('Search dishes').count(), 1);
       assert.equal(await page.getByRole('heading', { name: 'Signature dishes', exact: true }).count(), 1);
       await page.locator('#regular-menu').getByRole('button', { name: 'Add to cart', exact: true }).first().click();
       await page.getByRole('button', { name: /^Cart \(1\)/ }).waitFor();
       assert.deepEqual(errors, []);
       await context.close();
-      console.log('PASS: kokani-dine-inn menu has no search and can add to cart');
+      console.log('PASS: kokani-dine-inn menu has search and can add to cart');
       continue;
     }
     for (const [label, viewport] of [['mobile-390x844', { width: 390, height: 844 }], ['desktop-1280x800', { width: 1280, height: 800 }]]) {

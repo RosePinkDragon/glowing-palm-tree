@@ -63,7 +63,7 @@ const photo = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">
       const mobile = viewport.width < 760;
       await page.getByRole('heading', { name, level: 1 }).waitFor();
       await page.getByText('Min. order ₹150 · Delivery ₹30 · Cash on delivery', { exact: true }).waitFor();
-      assert.equal(await page.getByLabel('Search dishes').count(), 0, 'the design has no search on this menu');
+      assert.equal(await page.getByLabel('Search dishes').count(), 1, 'the à la carte list is searchable (#57)');
 
       // Carousel: owner-featured, available dishes only (Bangda tikhale is featured but unavailable); labelled and horizontally scrollable.
       const carousel = page.locator('#featured-menu');
