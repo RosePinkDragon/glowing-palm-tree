@@ -58,7 +58,7 @@ begin
   end if;
   if jsonb_typeof(p_delivery) is distinct from 'object' or
      coalesce(length(trim(p_delivery->>'name')),0) not between 1 and 120 or
-     (coalesce(char_length(p_delivery->>'phone'),0) not between 1 and 40 or coalesce(pg_catalog.regexp_replace(p_delivery->>'phone', '[[:space:]().-]', '', 'g'), '') !~ '^(\+91|91|0)?[6-9][0-9]{9}$') or
+     (coalesce(char_length(p_delivery->>'phone'),0) not between 1 and 40 or coalesce(p_delivery->>'phone', '') !~ '^[[:space:]]*\+?[0-9[:space:]().-]+$' or coalesce(pg_catalog.regexp_replace(p_delivery->>'phone', '[[:space:]().-]', '', 'g'), '') !~ '^(\+91|91|0)?[6-9][0-9]{9}$') or
      not (p_delivery ? 'address_id') or p_delivery ? 'address_line' or
      coalesce(p_delivery->>'address_id','') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' or
      coalesce(p_delivery->>'address_version','') !~ '^[1-9][0-9]{0,8}$' then

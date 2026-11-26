@@ -13,14 +13,29 @@ do $$ declare n integer; items jsonb := '[{"menu_item_id":"20000000-0000-4000-80
 end $$;
 SQL
 race_budget_order() {
-  docker exec -i "$container" psql -X -q -v ON_ERROR_STOP=1 -v key="$1" -U postgres -d "$db" <<'SQL'
+  docker exec -i -e PGAPPNAME="$2" "$container" psql -X -q -v ON_ERROR_STOP=1 -v key="$1" -v delay="$3" -U postgres -d "$db" <<'SQL'
+begin;
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000098',false);
 select public.place_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',public.test_delivery('Budget race'),null,:'key'::uuid,public.test_quote('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]'));
+select pg_sleep(:'delay'::integer);
+commit;
 SQL
 }
-race_budget_order 90000000-0000-4000-8000-000000000001 > /tmp/checkout-budget-race-1-$$.log 2>&1 & budget_a=$!
-race_budget_order 90000000-0000-4000-8000-000000000002 > /tmp/checkout-budget-race-2-$$.log 2>&1 & budget_b=$!
+race_budget_order 90000000-0000-4000-8000-000000000001 checkout_budget_first 8 > /tmp/checkout-budget-race-1-$$.log 2>&1 & budget_a=$!
+first_ready=0
+for _ in {1..60}; do
+  if [[ "$(docker exec "$container" psql -X -qAt -U postgres -d "$db" -c "select count(*) from pg_stat_activity where application_name='checkout_budget_first' and wait_event='PgSleep'")" == 1 ]]; then first_ready=1; break; fi
+  sleep 0.1
+done
+[[ "$first_ready" == 1 ]] || { cat /tmp/checkout-budget-race-1-$$.log; echo 'First order did not hold its transaction open' >&2; exit 1; }
+race_budget_order 90000000-0000-4000-8000-000000000002 checkout_budget_second 0 > /tmp/checkout-budget-race-2-$$.log 2>&1 & budget_b=$!
+second_blocked=0
+for _ in {1..60}; do
+  if [[ "$(docker exec "$container" psql -X -qAt -U postgres -d "$db" -c "select count(*) from pg_stat_activity a where a.application_name='checkout_budget_second' and exists (select 1 from pg_stat_activity b where b.application_name='checkout_budget_first' and b.pid = any(pg_blocking_pids(a.pid)))")" == 1 ]]; then second_blocked=1; break; fi
+  sleep 0.1
+done
+[[ "$second_blocked" == 1 ]] || { cat /tmp/checkout-budget-race-{1,2}-$$.log; echo 'Second order did not block on the first' >&2; exit 1; }
 budget_a_status=0; wait "$budget_a" || budget_a_status=$?
 budget_b_status=0; wait "$budget_b" || budget_b_status=$?
 if ! { [[ "$budget_a_status" == 0 && "$budget_b_status" != 0 ]] || [[ "$budget_a_status" != 0 && "$budget_b_status" == 0 ]]; }; then
