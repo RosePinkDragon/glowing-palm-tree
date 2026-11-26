@@ -153,7 +153,8 @@ const prepareCart = async (page, add = true) => {
   assert.equal(await second.getByRole('button', { name: 'Place order', exact: true }).isDisabled(), true);
   failCatalog = true;
   await second.reload({ waitUntil: 'networkidle' });
-  await second.getByText(/Fixture catalog failure/).filter({ visible: true }).waitFor();
+  await second.getByRole('heading', { name: "We can't load the menu right now", exact: true }).filter({ visible: true }).waitFor(); // a catalog 500 is a server fault, not offline (#57)
+  assert.equal(await second.getByText("You're offline").count(), 0);
   await second.getByRole('button', { name: 'Retry order recovery', exact: true }).click();
   await second.getByText('Order AMS-2026110001', { exact: true }).filter({ visible: true }).waitFor();
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);

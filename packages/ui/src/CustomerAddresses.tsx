@@ -5,6 +5,8 @@ import { MarketButton, MarketCard, MarketStatus, MarketText } from './components
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
 import { AddressForm } from './AddressForm';
 import { MarketPill } from './MarketChips';
+import { StateScreen } from './StateScreen';
+import { friendlyErrorText, noAddressesCopy } from './states-model';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { addressErrorMessage, bothAppsNote, formatDistance, maxSavedAddresses } from './address-model';
 import { sameIdentity } from './checkout-state';
@@ -58,9 +60,9 @@ export function CustomerAddresses({ market }: { market: Market }) {
       <Text style={{ flex: 1, color: colors.ink, fontSize: 14, lineHeight: 21 }}>We deliver in Khed and nearby villages. Addresses outside our area are shown but can't be used for an order.</Text>
     </View>
     {notice ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: colors.positive, fontSize: 15 }}>{notice}</Text> : null}
-    {error ? <MarketCard><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{error}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={refresh} /></MarketCard> : null}
+    {error ? <MarketCard><Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: 15, lineHeight: 23 }}>{friendlyErrorText(error)}</Text><MarketButton label="Retry addresses" variant="secondary" onPress={refresh} /></MarketCard> : null}
     {addresses === null ? <MarketStatus kind="loading" title="Loading addresses" /> : null}
-    {addresses && !addresses.length && !error ? <MarketCard><MarketStatus kind="empty" title="No saved addresses yet" message={`Add an address to save it for next time, in this app and the ${other} app.`} /></MarketCard> : null}
+    {addresses && !addresses.length && !error ? <StateScreen card icon="pin" level={3} {...noAddressesCopy(other)} /> : null}
     {addresses?.length ? <MarketCard>{addresses.map((address, index) => {
       const distance = formatDistance(address.distanceM), title = addressTitle(address), out = !address.inArea;
       return <View key={address.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingTop: index ? 12 : 0, borderTopWidth: index ? 1 : 0, borderTopColor: colors.border }}>
