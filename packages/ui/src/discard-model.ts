@@ -5,6 +5,7 @@ import type { AddressForm } from './address-model.ts';
 import type { DishDraft } from './menu-model.ts';
 import { parseRupees } from './admin-model.ts';
 import type { DetailsForm } from './restaurant-details-model.ts';
+import { normalizeHours, type HoursForm } from './opening-hours-form.ts';
 
 export const discardCopy = {
   title: 'Discard changes?',
@@ -45,6 +46,9 @@ export function normalizeDetails(form: DetailsForm) {
   return { contactPhone: phone(form.contactPhone), whatsappPhone: phone(form.whatsappPhone), deliveryFee: amount(form.deliveryFee), minOrder: amount(form.minOrder) };
 }
 export const detailsAreDirty = (baseline: DetailsForm, current: DetailsForm) => !sameValues(normalizeDetails(baseline), normalizeDetails(current));
+
+/** #253: the opening hours are part of Restaurant details, so an unsaved change to them counts too. */
+export const hoursAreDirty = (baseline: HoursForm, current: HoursForm) => !sameValues(normalizeHours(baseline), normalizeHours(current));
 
 function sameValues(a: object, b: object) {
   const x = a as Record<string, unknown>, y = b as Record<string, unknown>;

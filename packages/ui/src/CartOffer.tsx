@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { formatINRFromPaise, type CartLine } from '@market/core';
 import { AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, View } from 'react-native';
-import type { ActiveOffer, OfferError, OfferNudge, OrderQuote, PricingTerms } from '@market/services';
+import { OutsideHoursError, type ActiveOffer, type OfferError, type OfferNudge, type OrderQuote, type PricingTerms } from '@market/services';
 import { MarketButton, MarketField } from './components';
 import { MarketIcon } from './MarketIcons';
 import { bannerText, nudgeText, offerChangedMessage, offerErrorMessage } from './offer-model';
@@ -101,7 +101,9 @@ const debounceMs = 350;
  * simply falls back to its own prices. Signed out, only the
  * public list of automatic offers is read. Nothing here places an order.
  */
-export function useOfferQuote(p: { services: OfferServices; quoting: boolean; listing: boolean; lines: CartLine[]; signature: string; identityKey: string }) {
+export function useOfferQuote(p: { services: OfferServices; quoting: boolean; listing: boolean; lines: CartLine[]; signature: string; identityKey: string;
+  /** The server refused the quote because the restaurant is outside its opening hours (#253): the screen shows the closed notice instead of dropping prices unexplained. */
+  onOutsideHours?: (error: OutsideHoursError) => void }) {
   const { services, quoting, listing, lines, signature, identityKey } = p;
   const [code, setCode] = useState<string | null>(null);
   const [message, setMessage] = useState('');
@@ -111,6 +113,7 @@ export function useOfferQuote(p: { services: OfferServices; quoting: boolean; li
   const [active, setActive] = useState<ActiveOffer[]>([]);
   const latest = useRef({ lines, signature, held, code }); latest.current = { lines, signature, held, code };
   const seq = useRef(0);
+  const outside = useRef(p.onOutsideHours); outside.current = p.onOutsideHours;
 
   useEffect(() => { seq.current++; setCode(null); setMessage(''); setHeld(null); }, [identityKey]);
   useEffect(() => { setMessage(''); }, [signature]); // a refusal was about the cart as it was
@@ -131,7 +134,7 @@ export function useOfferQuote(p: { services: OfferServices; quoting: boolean; li
         if (quote.offerError && quote.offerError.reason !== 'min_order') { setCode(null); setMessage(offerErrorMessage(quote.offerError)); setHeld({ signature, code: null, quote }); } // the quote is already priced without the code
         else if (quote.offerError) setHeld({ signature, code, quote }); // below the minimum: keep the code, show the shortfall
         else setHeld({ signature, code, quote });
-      }).catch(() => { if (id === seq.current) setHeld({ signature, code, quote: null }); });
+      }).catch(error => { if (id !== seq.current) return; if (error instanceof OutsideHoursError) outside.current?.(error); setHeld({ signature, code, quote: null }); });
     }, debounceMs);
     return () => clearTimeout(timer);
   }, [services, quoting, signature, code, tries]);
@@ -145,7 +148,7 @@ export function useOfferQuote(p: { services: OfferServices; quoting: boolean; li
       const quote = await services.quoteOrder(latest.current.lines, entered);
       if (quote.offerError && quote.offerError.reason !== 'min_order') { setMessage(offerErrorMessage(quote.offerError)); setHeld({ signature: at, code: null, quote }); }
       else { setCode(entered); setHeld({ signature: at, code: entered, quote }); } // a code below its minimum is kept (the quote carries the shortfall)
-    } catch { setMessage('Could not check the code. Try again.'); } finally { setApplying(false); }
+    } catch (error) { if (error instanceof OutsideHoursError) outside.current?.(error); else setMessage('Could not check the code. Try again.'); } finally { setApplying(false); }
   }, [services]);
   const remove = useCallback(() => { setCode(null); setMessage(''); }, []);
   /** Quote again after a failure or timeout. The cart is pending (and ordering waits) until it answers or times out. */
