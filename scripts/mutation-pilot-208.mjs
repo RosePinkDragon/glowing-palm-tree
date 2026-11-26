@@ -23,13 +23,19 @@ const tests = {
   identity: ['packages/services/src/customer-orders.test.ts', 'in-flight customer reads reject'],
   auth: ['packages/services/src/customer-orders.test.ts', 'customer APIs fail closed'],
   offer: ['packages/services/src/offers.test.ts', 'revised pricing keeps'],
+  key: ['packages/services/src/index.test.ts', 'checkout passes frozen terms'],
+  business: ['packages/services/src/customer-orders.test.ts', 'active orders page independently'],
+  validation: ['packages/core/src/domain.test.ts', 'delivery validation trims'],
 };
-const ranges = { cart: [31, 49], identity: [190, 207], auth: [173, 189], offer: [50, 64] };
+const ranges = { cart: [31, 49], identity: [190, 207], auth: [173, 189], offer: [50, 64], key: [488, 522], business: [132, 145], validation: [50, 64] };
 const mutations = [
   { id: 'cart-subtotal', test: 'cart', file: 'packages/core/src/domain.ts', from: 'subtotal += lineTotal;', to: 'subtotal += item.pricePaise;' },
   { id: 'identity-generation', test: 'identity', file: 'packages/services/src/index.ts', from: 'disposed || generation !== started || (userId !== undefined && sessionUserId !== undefined && sessionUserId !== userId)', to: 'disposed || (userId !== undefined && sessionUserId !== undefined && sessionUserId !== userId)' },
   { id: 'customer-audience', test: 'auth', file: 'packages/services/src/index.ts', from: "if (audience !== 'customer') throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to view your order history.');", to: "if (false) throw new ServiceError('CUSTOMER_REQUIRED', 'Use the customer app to view your order history.');" },
   { id: 'offer-total', test: 'offer', file: 'packages/services/src/index.ts', from: 'q.total_paise !== subtotal + q.delivery_fee_paise - discount', to: 'false' },
+  { id: 'checkout-key-reuse', test: 'key', file: 'packages/services/src/index.ts', from: 'p_idempotency_key: input.idempotencyKey, p_accepted_pricing: input.pricing', to: 'p_idempotency_key: crypto.randomUUID(), p_accepted_pricing: input.pricing' },
+  { id: 'customer-business-filter', test: 'business', file: 'packages/services/src/index.ts', from: "scope.db.from('orders').select(customerOrderSelect).eq('business_id', scope.businessId).eq('customer_id', scope.userId);", to: "scope.db.from('orders').select(customerOrderSelect).eq('customer_id', scope.userId);" },
+  { id: 'recipient-name-limit', test: 'validation', file: 'packages/core/src/domain.ts', from: 'name.length < 1 || name.length > 120', to: 'name.length < 1 || name.length > 121' },
 ];
 function test(name) {
   const [file, pattern] = tests[name];
@@ -64,5 +70,5 @@ try {
     results.push({ id: mutant.id, file: mutant.file, test: tests[mutant.test][0], category, ms: r.ms, output: r.status === 0 ? undefined : r.output });
   }
   console.log(JSON.stringify({ revision: sha, node: process.version, elapsedMs: Date.now() - started, baseline, control, results }, null, 2));
-  if (results.some(r => r.category === 'setup-or-other-failure' || r.category === 'timeout' || r.category === 'uncovered')) process.exitCode = 1;
+  if (results.some(r => r.category === 'setup-or-other-failure' || r.category === 'timeout' || r.category === 'uncovered' || r.category === 'survived')) process.exitCode = 1;
 } finally { rmSync(temp, { recursive: true, force: true }); }
