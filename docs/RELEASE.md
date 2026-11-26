@@ -214,6 +214,10 @@ A formal GitHub approval requires a distinct eligible reviewer; agent review rep
 insert into public.businesses (slug, name, order_prefix, is_demo) values
   ('ammu-sammu', 'Ammu Sammu', 'AMS', false),
   ('kokani-dine-inn', 'Kokani Dine Inn', 'KDI', false);
+-- Opening hours (#253), India time; 00:00 as the closing time is midnight. The migration sets these only for rows that
+-- already exist when it runs, so on a fresh project run them after the insert above (owners edit them later).
+update public.businesses set opens_at = time '11:00', closes_at = time '00:00' where slug = 'kokani-dine-inn' and opens_at is null;
+update public.businesses set opens_at = time '09:00', closes_at = time '19:30' where slug = 'ammu-sammu' and opens_at is null;
 ```
 
 **Warning: `order_prefix` is immutable.** It must match `^[A-Z][A-Z0-9]{1,9}$` (two to ten characters, an uppercase letter first, then uppercase letters or digits) and be unique. It becomes the start of every order number (for example `AMS-2026110001`), and a database trigger rejects any later change to it. Choose it once and carefully; the apps, tests and seed use `AMS` and `KDI`. Do not insert a row with a placeholder prefix. Also set contact phone numbers, delivery fee and minimum order through the owner settings or a trusted update, and leave `ordering_enabled` false until the delivery area below is set.
@@ -585,6 +589,17 @@ Screens and services, plus one later migration: no customer screens, no dish-lev
 - Signed in, the cart is priced by the server: `quote_order` (debounced) supplies the discount, offer and nudge, and `capturePricing` copies the server's `discount_paise` and `offer` into the accepted pricing. Without them `place_order` answers `pricing_changed` for every cart an automatic offer applies to.
 - A refused code is dropped and never re-sent (each rejected lookup counts toward 10 per 10 minutes). The saved attempt keeps the code, so recovery replays the same request. `OFFER_CHANGED` / `OFFER_RATE_LIMITED` release the spent attempt, show the reason and repriced total, and wait for another tap on Place order.
 - Signed-out visitors see the active automatic offer on the menu and in the cart ("Sign in to apply"); there is no code entry. Order receipts and the owners' order details show the discount; "Collect in cash" is the discounted `total_paise`.
+
+## Opening hours (#253, slice 1: database and services)
+
+No screens in this slice; one migration (`20261126200000_opening_hours.sql`), services and core helpers.
+
+- `businesses.opens_at` and `closes_at` are `time(0)` in India time (Asia/Kolkata), whole minutes, one window per day. Both null means no hours (open all day), which is also what the seed and every fresh restaurant row has until set. The window is `[opens_at, closes_at)`: opening inclusive, closing exclusive. `closes_at = 00:00` means midnight at the end of the day (Kokani Dine Inn is 11:00 to 00:00); `24:00` is never stored (the owner RPC turns it into 00:00; the check rejects it). The check also rejects half a window, an empty window (`opens_at = closes_at`) and a window that crosses midnight into the next day.
+- The migration sets Kokani Dine Inn 11:00 to 00:00 and Ammu Sammu 09:00 to 19:30 only where both columns are null and the row exists; for a fresh project see the SQL in [Supabase and launch data](#supabase-and-launch-data), step 5.
+- `public.business_open_at(opens, closes, at)` is the pure window test; `public.business_open_now(business_id, at default now())` reads the business (unknown means closed). Both are readable by guests.
+- Enforcement is `offers_private.price_items`, which `quote_order` and `place_order` both call. `place_order` reaches it only after its replay and stored-rejection lookups, so an order already placed still replays outside hours, and the owner's switch (`accepting_orders`, #58) is checked first. Outside hours it raises SQLSTATE `PT409` (HTTP 409, like the switch) with DETAIL `OUTSIDE_HOURS` and HINT the opening time as `HH:MM`; nothing is written and the idempotency key is not consumed. Services raise `OutsideHoursError` (code `NOT_ACCEPTING_ORDERS`, `reason: 'OUTSIDE_HOURS'`, `opensAt`, `opensAtLabel`) from both `quoteOrder` and `placeOrder`.
+- Owners edit hours with `public.save_opening_hours(slug, opens, closes, expected_version)` (services: `saveOpeningHours`), a separate RPC so `save_restaurant_settings` keeps its signature. It uses the same checks and lock order as `save_restaurant_settings` (users KEY SHARE, sessions SHARE through `require_active_session`, the business row FOR NO KEY UPDATE, the owner's membership FOR SHARE), the same `settings_version`, and the version trigger now also fires on `opens_at` and `closes_at`, so an open settings form and an open hours form each go stale when the other saves (`SETTINGS_CHANGED`). Both null clears the hours. Checkout holds the business row FOR SHARE, so a checkout in flight finishes before an edit lands. No new lock.
+- `tests/database/opening-hours.sql` runs last in the shared-fixture chain. The transaction clock cannot be faked, so boundaries are proven on `business_open_at` with explicit instants and enforcement with windows built around the current India time (checked for every minute of the day).
 
 ## Appendix: local development fixtures (#212)
 

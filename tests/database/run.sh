@@ -25,7 +25,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers active-session active-session-rls sample-dishes profiles)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
-shared_fixture=(isolation checkout checkout-budget notifications notification-routing accepting-orders pricing)
+shared_fixture=(isolation checkout checkout-budget notifications notification-routing accepting-orders pricing opening-hours)
 for db in all_fresh all_existing; do
   docker exec "$container" createdb -U postgres "$db"
   sql_file tests/database/fixture.sql

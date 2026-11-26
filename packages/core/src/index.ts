@@ -38,3 +38,4 @@ export const businesses: Record<BusinessSlug, { name: string; locale: string; cu
   'kokani-dine-inn': { name: 'Kokani Dine Inn', locale: 'en-IN', currency: 'INR' },
 };
 export * from './otp.ts';
+export * from './hours.ts';

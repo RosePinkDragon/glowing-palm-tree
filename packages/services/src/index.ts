@@ -1,16 +1,19 @@
 import { createClient, type SupabaseClient, type SupportedStorage } from '@supabase/supabase-js';
-import { businesses, normalizeFullName, FULL_NAME_MESSAGE, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type MenuItem, type Order, type OrderStatus } from '@market/core';
+import { businesses, clockFromDatabase, formatClock, validateOpeningHours, normalizeFullName, FULL_NAME_MESSAGE, isAddressLabel, isAddressLocationSource, isDiet, validateAddressDraft, type AddressDraft, type OrderAddress, type SavedAddress, type Diet, type AppAudience, type BusinessSlug, type CartLine, type DailySummary, type LocationFix, type OpeningHours, type OpeningHoursField, type MenuItem, type Order, type OrderStatus } from '@market/core';
 import { storage } from './storage';
 
 export type { SupportedStorage } from '@supabase/supabase-js';
 export interface PublicConfig { url?: string; anonKey?: string }
-export interface Business { contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
+export interface Business { /** Opening hours in India time (#253); null or missing means open all day. Use isOpenNow(business, now) from @market/core. */ openingHours?: OpeningHours | null; contactPhone?: string | null; whatsappPhone?: string | null; settingsVersion?: number; id: string; slug: BusinessSlug; name: string; deliveryFeePaise: number; minOrderPaise: number; isDemo: boolean; orderingEnabled: boolean; acceptingOrders: boolean }
 export interface RestaurantSettings { contactPhone: string | null; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; version: number }
 export interface OwnerProfile { displayName: string; readonly phone: string | null }
 /** Delivery-area status from the business row (the polygon is never fetched): a verified radius, another verified source, or not verified. */
 export type DeliveryAreaStatus = { kind: 'radius'; radiusM: number } | { kind: 'verified' } | { kind: 'unverified' };
 /** What the owner's Restaurant details screen reads: the editable settings plus developer-controlled facts shown read-only. */
-export interface RestaurantSettingsView extends RestaurantSettings { orderPrefix: string; deliveryArea: DeliveryAreaStatus }
+export interface RestaurantSettingsView extends RestaurantSettings { orderPrefix: string; deliveryArea: DeliveryAreaStatus; /** The owner-editable window (#253); null is open all day. Saved separately with saveOpeningHours. */ openingHours: OpeningHours | null }
+/** Input of saveOpeningHours: both times as 24-hour "HH:MM" ("24:00" is midnight), or both null for open all day. expectedVersion is the settings version last read. */
+export interface SaveOpeningHoursInput { opensAt: string | null; closesAt: string | null; expectedVersion: number }
+export interface SavedOpeningHours { openingHours: OpeningHours | null; version: number }
 export interface SaveRestaurantSettingsInput { contactPhone: string; whatsappPhone: string | null; deliveryFeePaise: number; minOrderPaise: number; expectedVersion: number }
 type SettingsField = keyof SaveRestaurantSettingsInput;
 /** National, trunk-prefixed, or +91 Indian numbers become canonical E.164. */
@@ -112,6 +115,24 @@ export class ServiceError extends Error {
   override readonly cause?: unknown;
   constructor(code: string, message: string, cause?: unknown) { super(message); this.name = 'ServiceError'; this.code = code; this.cause = cause; }
 }
+export class OpeningHoursValidationError extends ServiceError {
+  readonly fields: Partial<Record<OpeningHoursField, string>>;
+  constructor(fields: Partial<Record<OpeningHoursField, string>>) { super('INVALID_SETTINGS', 'Check the opening hours.'); this.name = 'OpeningHoursValidationError'; this.fields = fields; }
+}
+/**
+ * The server refused a quote or a new order because the restaurant is outside its opening hours (#253). It is a
+ * NOT_ACCEPTING_ORDERS error (screens already treat that as closed) with `reason: 'OUTSIDE_HOURS'` and `opensAt`
+ * ("HH:MM" India time, null if unknown) plus `opensAtLabel` ("9 am") for "Opens at 9 am". Nothing was ordered and no key was spent.
+ */
+export class OutsideHoursError extends ServiceError {
+  readonly reason = 'OUTSIDE_HOURS' as const;
+  readonly opensAt: string | null;
+  readonly opensAtLabel: string | null;
+  constructor(opensAt: string | null, cause?: unknown) {
+    super('NOT_ACCEPTING_ORDERS', opensAt ? `The restaurant is closed right now. It opens at ${formatClock(opensAt)}.` : 'The restaurant is closed right now.', cause);
+    this.name = 'OutsideHoursError'; this.opensAt = opensAt; this.opensAtLabel = opensAt ? formatClock(opensAt) : null;
+  }
+}
 export class RestaurantSettingsValidationError extends ServiceError {
   readonly fields: Partial<Record<SettingsField, string>>;
   constructor(fields: Partial<Record<SettingsField, string>>) { super('INVALID_SETTINGS', 'Check the restaurant details.'); this.name = 'RestaurantSettingsValidationError'; this.fields = fields; }
@@ -156,7 +177,18 @@ export function mapRestaurantSettingsView(value: unknown): RestaurantSettingsVie
     const metres = radius ? Number(radius[1]) : 0;
     deliveryArea = metres >= 500 && metres <= 50000 ? { kind: 'radius', radiusM: metres } : { kind: 'verified' };
   }
-  return { ...settings, orderPrefix: row.order_prefix, deliveryArea };
+  return { ...settings, orderPrefix: row.order_prefix, deliveryArea, openingHours: mapOpeningHours(row.opens_at, row.closes_at) };
+}
+/** Strict: both null (or absent) is no hours; otherwise both must be whole-minute times and form a valid window. */
+export function mapOpeningHours(opens: unknown, closes: unknown): OpeningHours | null {
+  if ((opens === null || opens === undefined) && (closes === null || closes === undefined)) return null;
+  const opensAt = clockFromDatabase(opens), closesAt = clockFromDatabase(closes);
+  if (!opensAt || !closesAt || Object.keys(validateOpeningHours(opensAt, closesAt).errors).length) throw new ServiceError('INVALID_RESPONSE', 'The server returned invalid opening hours.');
+  return { opensAt, closesAt };
+}
+/** PT409 with detail OUTSIDE_HOURS and the opening time as the hint. Must run before the generic PT409 (switch off) mapping. */
+function outsideHoursError(error: { code?: string; details?: string | null; hint?: string | null } | null): void {
+  if (error?.code === 'PT409' && error.details === 'OUTSIDE_HOURS') throw new OutsideHoursError(clockFromDatabase(error.hint ?? null), error);
 }
 
 export type OfferErrorCode = 'OFFER_NOT_FOUND' | 'OFFER_NOT_ELIGIBLE' | 'OFFER_USED_UP' | 'OFFER_CHANGED' | 'OFFER_RATE_LIMITED';
@@ -637,11 +669,11 @@ export function createMarketServices(options: ServiceOptions) {
     return client;
   };
   const getBusiness = async (): Promise<Business> => {
-    if (!client) return { id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
-    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone, whatsapp_phone, settings_version').eq('slug', slug).single();
+    if (!client) return { openingHours: null, id: slug, slug, name: businesses[slug].name, deliveryFeePaise: 0, minOrderPaise: 0, isDemo: true, orderingEnabled: false, acceptingOrders: false };
+    const { data, error } = await client.from('businesses').select('id, slug, name, delivery_fee_paise, min_order_paise, is_demo, ordering_enabled, accepting_orders, contact_phone, whatsapp_phone, settings_version, opens_at, closes_at').eq('slug', slug).single();
     fail(error, 'Could not load business');
     if (!data) throw new ServiceError('NOT_FOUND', 'Business not found.');
-    return { contactPhone: data.contact_phone ?? null, whatsappPhone: data.whatsapp_phone ?? null, settingsVersion: data.settings_version, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
+    return { openingHours: mapOpeningHours(data.opens_at, data.closes_at), contactPhone: data.contact_phone ?? null, whatsappPhone: data.whatsapp_phone ?? null, settingsVersion: data.settings_version, id: data.id, slug, name: data.name, deliveryFeePaise: data.delivery_fee_paise, minOrderPaise: data.min_order_paise, isDemo: data.is_demo, orderingEnabled: data.ordering_enabled, acceptingOrders: data.accepting_orders === true };
   };
   const getMenu = async (): Promise<MenuItem[]> => {
     if (!client) return [{ id: `sample-${slug}`, businessId: slug, name: 'Sample dish', description: 'Sample menu item for browsing only.', category: 'Samples', categoryId: `sample-category-${slug}`, categorySortOrder: 0, diet: null, pricePaise: 0, isAvailable: false, isDemo: true, isFeatured: false, sortOrder: 0 }];
@@ -1096,7 +1128,7 @@ export function createMarketServices(options: ServiceOptions) {
   const getRestaurantSettings = async (): Promise<RestaurantSettingsView> => {
     const db = requireClient(), started = generation;
     const business = await requireAdminBusiness();
-    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version, order_prefix, service_area_source, service_area_version, service_area_verified_at').eq('id', business.id).single();
+    const { data, error } = await db.from('businesses').select('contact_phone, whatsapp_phone, delivery_fee_paise, min_order_paise, settings_version, order_prefix, service_area_source, service_area_version, service_area_verified_at, opens_at, closes_at').eq('id', business.id).single();
     if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details.');
     fail(error, 'Could not load restaurant details');
     return mapRestaurantSettingsView(data);
@@ -1129,6 +1161,44 @@ export function createMarketServices(options: ServiceOptions) {
     const saved = mapRestaurantSettings(data);
     if (saved.contactPhone !== valid.contactPhone || saved.whatsappPhone !== valid.whatsappPhone || saved.deliveryFeePaise !== valid.deliveryFeePaise || saved.minOrderPaise !== valid.minOrderPaise || saved.version !== valid.expectedVersion + 1) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the saved restaurant details. Refresh before trying again.');
     return saved;
+  };
+  /**
+   * Save the opening hours (#253) through public.save_opening_hours, with the same optimistic version as saveRestaurantSettings
+   * (a change by another owner, or to the other settings, is SETTINGS_CHANGED). Invalid windows throw OpeningHoursValidationError
+   * (fields opensAt, closesAt, openingHours) before any request. Both times null clears the hours (open all day).
+   */
+  const saveOpeningHours = async (input: SaveOpeningHoursInput): Promise<SavedOpeningHours> => {
+    const checked = validateOpeningHours(input.opensAt, input.closesAt);
+    if (Object.keys(checked.errors).length) throw new OpeningHoursValidationError(checked.errors);
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 1 || input.expectedVersion > 2147483647) throw new ServiceError('INVALID_SETTINGS', 'Refresh the restaurant details before saving.');
+    const hours = checked.hours;
+    const db = requireClient(), started = generation;
+    if (audience !== 'admin') throw new ServiceError('ADMIN_REQUIRED', 'Use an owner account to change restaurant details.');
+    const initial = await db.auth.getSession(); fail(initial.error, 'Could not restore session');
+    const expected = initial.data.session ? sessionIdentity(initial.data.session.access_token) : null;
+    if (!expected || initial.data.session?.user.id !== expected.userId) throw new ServiceError('SESSION_CHANGED', 'Sign in again before changing restaurant details.');
+    await requireAdminBusiness();
+    const current = await db.auth.getSession(); fail(current.error, 'Could not restore session');
+    const token = current.data.session?.access_token;
+    const identity = token ? sessionIdentity(token) : null;
+    if (disposed || generation !== started || !identity || identity.userId !== expected.userId || identity.sessionId !== expected.sessionId || current.data.session?.user.id !== identity.userId) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details before saving.');
+    const { data, error } = await db.rpc('save_opening_hours', {
+      p_business_slug: slug, p_opens_at: hours?.opensAt ?? null, p_closes_at: hours?.closesAt ?? null, p_expected_version: input.expectedVersion,
+    }).setHeader('Authorization', `Bearer ${token}`);
+    if (disposed || generation !== started) throw new ServiceError('SESSION_CHANGED', 'Your session changed. Refresh restaurant details to check the saved values.');
+    inactiveSessionError(error);
+    if (error?.code === '40001') throw new ServiceError('SETTINGS_CHANGED', 'Another owner changed restaurant details. Refresh and review them before saving again.', error);
+    if (error?.code === '42501') throw new ServiceError('ADMIN_REQUIRED', 'Your owner access changed. Sign in again before saving restaurant details.', error);
+    if (error?.code === '22023') {
+      const field = error.details as OpeningHoursField;
+      if (field === 'opensAt' || field === 'closesAt' || field === 'openingHours') throw new OpeningHoursValidationError({ [field]: error.message });
+      throw new ServiceError('INVALID_SETTINGS', 'Check the opening hours and try again.', error);
+    }
+    fail(error, 'Could not save opening hours');
+    const row = data as Record<string, unknown> | null;
+    const saved = row && typeof row === 'object' ? mapOpeningHours(row.opens_at, row.closes_at) : undefined;
+    if (!row || saved === undefined || row.settings_version !== input.expectedVersion + 1 || (saved?.opensAt ?? null) !== (hours?.opensAt ?? null) || (saved?.closesAt ?? null) !== (hours?.closesAt ?? null)) throw new ServiceError('INVALID_RESPONSE', 'The server did not confirm the saved opening hours. Refresh before trying again.');
+    return { openingHours: saved, version: row.settings_version as number };
   };
   const getCategories = async (): Promise<MenuCategory[]> => {
     if (!client) return [{ id: `sample-category-${slug}`, businessId: slug, name: 'Samples', sortOrder: 0 }];
@@ -1303,6 +1373,7 @@ export function createMarketServices(options: ServiceOptions) {
     finally { clearTimeout(timer); }
     const { data, error } = reply;
     if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to get your prices.', error);
+    outsideHoursError(error);
     demoRestaurantError(error);
     fail(error, 'Could not price the order');
     if (!data || data.outcome !== 'quoted') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid quote.');
@@ -1457,6 +1528,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (error?.code === 'PT429' && error.details === 'ORDER_RATE_LIMITED') throw new ServiceError('ORDER_RATE_LIMITED', 'You have placed several orders recently. Please wait before placing another order.', error);
     // Outside the area, or the restaurant's area isn't set up: either way nothing was written.
     if (error?.code === '22023' && /delivery unavailable/i.test(error.message)) throw new ServiceError('DELIVERY_UNAVAILABLE', 'We can\'t deliver to this address. Choose another address.', error);
+    outsideHoursError(error);
     if (error?.code === NOT_ACCEPTING_ORDERS_SQLSTATE) throw new ServiceError('NOT_ACCEPTING_ORDERS', 'The restaurant is not taking orders right now.', error);
     demoRestaurantError(error);
     fail(error, 'Could not place order');
@@ -1590,7 +1662,7 @@ export function createMarketServices(options: ServiceOptions) {
   const registerDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('register_device_token', token, sessionAccessToken);
   const unregisterDeviceToken = (token: string, sessionAccessToken: string) => deviceTokenRpc('unregister_device_token', token, sessionAccessToken);
   const dispose = () => { if (disposed) return; disposed = true; clearSubscriptions(); for (const unsubscribe of [...publicSubscriptions]) unsubscribe(); authListener?.unsubscribe(); };
-  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
+  return { mode: client ? 'backend' as const : 'demo' as const, audience, persistenceAvailable: persistence.isAvailable, dispose, auth, joinBusiness, leaveBusiness, getMyRestaurants, getBusiness, getMenu, getOrders, getOrderHistory, getActiveOrders, getCustomerOrder, getProfile, saveProfile, listNotifications, markNotificationRead, markAllNotificationsRead, getUnreadNotificationCount, isAdmin, getOwnerDisplayName, getOwnerProfile, setOwnerDisplayName, getRestaurantSettings, saveRestaurantSettings, saveOpeningHours, getCategories, saveCategory, deleteCategory, saveMenuItem, deleteMenuItem, setMenuItemAvailability, reorderMenuItems, reorderCategories, getDailySummary, uploadMenuPhoto, removeMenuPhoto, retryMenuPhotoCleanup, placeOrder, listActiveOffers, checkOfferCode, quoteOrder, listOffers, getDayOffers, createOffer, updateOffer, pauseOffer, resumeOffer, endOffer, listAddresses, saveAddress, deleteAddress, transitionOrder, subscribeOrders, setAcceptingOrders, subscribeBusinessState, registerDeviceToken, unregisterDeviceToken };
 }
 
 export type MarketServices = ReturnType<typeof createMarketServices>;
