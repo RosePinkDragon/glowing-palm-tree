@@ -191,7 +191,7 @@ async function history(slug, brand, variant) {
     // A's snapshot is what the held answer carries; the server's current list for A changes before the late answer lands.
     fx.rows.splice(0, 1, aRow('20750000-0000-4000-8000-000000000a02', 'A fresh thali'));
     await w.switchTo(variant); await w.go('Your orders');
-    await text(variant === 'B' ? '1 orders loaded' : '1 orders loaded').waitFor();
+    await text('1 orders loaded').first().waitFor();
     await text(variant === 'B' ? '1 × B own thali · ₹250' : '1 × A fresh thali · ₹250').first().waitFor();
     const before = await w.storage(); gate.release(); await page.waitForTimeout(1500);
     const body = await w.body();
