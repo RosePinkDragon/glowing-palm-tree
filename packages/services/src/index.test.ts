@@ -520,6 +520,40 @@ test('checkout passes frozen terms and treats only validated no-order responses 
 });
 
 
+test('placeOrder preserves the caller’s idempotency key after an uncertain outcome', async () => {
+  const item = { id: '20000000-0000-4000-8000-000000000001', businessId: slug, name: 'Dish', description: '', category: 'Main', categoryId: 'main', categorySortOrder: 0, pricePaise: 100, isAvailable: true, isDemo: false, isFeatured: false, sortOrder: 0 };
+  const orderId = '40000000-0000-4000-8000-000000000001';
+  const pricing = { lines: [{ menu_item_id: item.id, quantity: 1, unit_price_paise: 100, line_total_paise: 100 }], delivery_fee_paise: 20, min_order_paise: 0, subtotal_paise: 100, total_paise: 120 };
+  const key = 'ABCDEF12-1234-4ABC-8DEF-1234567890AB';
+  const request = { lines: [{ item, quantity: 1 }], pricing, delivery: { name: 'Name', phone: '123' }, location: null, savedAddress: { id: '48200000-0000-4000-8000-000000000001', version: 1 }, idempotencyKey: key };
+  const originalFetch = globalThis.fetch;
+  const calls: Record<string, unknown>[] = [];
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/rpc/place_order')) {
+      calls.push(JSON.parse(String(init?.body)));
+      if (calls.length === 1) throw new Error('Synthetic connection lost');
+      return Response.json({ outcome: 'placed', id: orderId });
+    }
+    if (path.endsWith('/businesses')) return Response.json({ id: 'tenant', slug, name: 'Test', delivery_fee_paise: 20, min_order_paise: 0, is_demo: false, ordering_enabled: true, accepting_orders: true });
+    if (path.endsWith('/orders')) {
+      return Response.json({ id: orderId, status: 'placed', version: 1, subtotal_paise: 100, delivery_fee_paise: 20, total_paise: 120, customer_name: 'Name', customer_phone: '123', delivery_address_line: 'Address', created_at: '2026-11-14', order_items: [{ ...pricing.lines[0], name: 'Dish' }], order_status_history: [] });
+    }
+    throw new Error('Unexpected request ' + path);
+  };
+  const service = createMarketServices({ businessSlug: slug, audience: 'customer', config: { url: 'https://retry.example.test', anonKey: 'sb_publishable_test' }, storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+  try {
+    await assert.rejects(service.placeOrder(request), /Synthetic connection lost/);
+    assert.equal((await service.placeOrder(request)).id, orderId);
+    assert.deepEqual(calls.map(call => call.p_idempotency_key), [key, key]);
+    assert.deepEqual(calls.map(call => call.p_accepted_pricing), [pricing, pricing]);
+    assert.deepEqual(calls[1], calls[0], 'recovery sends the same accepted request');
+  } finally {
+    service.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('catalog reads scope the business and request stable item ordering', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async input => {

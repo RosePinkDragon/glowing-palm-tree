@@ -58,7 +58,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - name: Audit pinned npm dependencies
+        run: node .github/scripts/dependency-audit.mjs
+      - run: npm ci --no-audit
       - name: Typecheck
         if: needs.changes.outputs.app == 'true'
         run: npm run typecheck
