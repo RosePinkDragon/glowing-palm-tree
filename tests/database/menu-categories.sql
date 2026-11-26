@@ -79,7 +79,7 @@ reset role;
 -- Fictional local boundary. Exercise accepted-pricing checkout against the final schema.
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''category test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,min_order_paise=0,delivery_fee_paise=0 where slug=''ammu-sammu''',ns);
+  execute format('update public.businesses set is_demo=false,service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''category test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,min_order_paise=0,delivery_fee_paise=0 where slug=''ammu-sammu''',ns);
 end $$;
 select set_config('test.category.items','[{"menu_item_id":"24300000-0000-4000-8000-000000000002","quantity":1,"diet":"veg"}]',true);
 select set_config('test.category.pricing','{"lines":[{"menu_item_id":"24300000-0000-4000-8000-000000000002","quantity":1,"unit_price_paise":10000,"line_total_paise":10000}],"subtotal_paise":10000,"delivery_fee_paise":0,"min_order_paise":0,"total_paise":10000}',true);

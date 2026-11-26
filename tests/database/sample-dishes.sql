@@ -10,7 +10,7 @@ insert into public.customer_addresses(customer_id,label,house,street_area,latitu
  select ('24300000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'home','Sample house','Sample road',0.5,0.5,'pin' from generate_series(1,2) n;
 do $$ declare ns text; begin
   select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='postgis';
-  execute format('update public.businesses set service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''sample test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=0,min_order_paise=0 where slug=''ammu-sammu''',ns);
+  execute format('update public.businesses set is_demo=false,service_area=%I.st_geomfromtext(''MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))'',4326),service_area_source=''sample test'',service_area_version=''test'',service_area_verified_at=now(),ordering_enabled=true,accepting_orders=true,delivery_fee_paise=0,min_order_paise=0 where slug=''ammu-sammu''',ns);
 end $$;
 insert into public.menu_categories(id,business_id,name,sort_order) values ('24300000-0000-4000-8000-0000000000c1','10000000-0000-4000-8000-000000000001','Sample mains',90);
 -- d1, d2 real; d3 sample and available (the case under test); d4 sample and unavailable; d5 real, becomes a sample later.
@@ -47,19 +47,20 @@ create function public.s_place(key integer, cart jsonb) returns jsonb language s
   select public.place_order('ammu-sammu',cart,public.test_delivery('Sample'),null,('24300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid,public.test_quote('ammu-sammu',cart)) $$;
 create function public.s_place_ok(key integer, cart jsonb) returns jsonb language sql as $$
   select public.place_order('ammu-sammu',cart,public.test_delivery('Sample'),null,('24300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid,public.quote_order('ammu-sammu',cart,null)->'pricing') $$;
--- Run a statement and require the same refusal an unavailable dish gets: 22023 'item unavailable'.
-create function public.s_refused(stmt text) returns void language plpgsql as $$
-declare before_state jsonb := public.s_state();
+-- Require the expected 22023 refusal and verify the checkout state is unchanged.
+create function public.s_refused(stmt text, expected_message text default 'item unavailable', expected_detail text default '') returns void language plpgsql as $$
+declare before_state jsonb := public.s_state(); actual_detail text;
 begin
   begin execute stmt;
   exception when others then
-    if sqlstate = '22023' and sqlerrm = 'item unavailable' then
+    get stacked diagnostics actual_detail = pg_exception_detail;
+    if sqlstate = '22023' and sqlerrm = expected_message and actual_detail = expected_detail then
       perform public.test_assert(public.s_state() = before_state, 'a refused call leaves the database unchanged: ' || stmt);
       return;
     end if;
     raise exception 'wrong error for [%]: % %', stmt, sqlstate, sqlerrm;
   end;
-  raise exception 'statement accepted a sample dish: [%]', stmt;
+  raise exception 'statement unexpectedly succeeded: [%]', stmt;
 end $$;
 
 set local role authenticated;
@@ -70,6 +71,10 @@ select public.test_assert((public.quote_order('ammu-sammu',public.s_cart(array['
 select set_config('test.q1',public.quote_order('ammu-sammu',public.s_cart(array['d1','d2']),null)->>'pricing',false);
 select public.test_assert((public.s_place_ok(1,public.s_cart(array['d1','d2']))->>'outcome')='placed', 'a real cart is still placed');
 select public.test_assert((select count(*)=1 from public.orders where idempotency_key='24300000-0000-4000-9000-000000000001'), 'the real order exists');
+
+-- The seeded Demo meal is also refused at a real restaurant.
+select public.s_refused($q$select public.quote_order('ammu-sammu','[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]',null)$q$);
+select public.s_refused($q$select public.s_place(8,'[{"menu_item_id":"20000000-0000-4000-8000-000000000001","quantity":1}]')$q$);
 
 -- 2. An available sample dish is refused by both functions, with the unavailable-dish error. -----------------------
 select public.s_refused(format('select public.quote_order(%L,%L::jsonb,null)','ammu-sammu',public.s_cart(array['d3'])));
@@ -95,14 +100,36 @@ update public.menu_items set is_demo=true where id='24300000-0000-4000-8000-0000
 set local role authenticated;
 select public.s_as(1);
 select public.s_refused(format('select public.quote_order(%L,%L::jsonb,null)','ammu-sammu',public.s_cart(array['d5'])));
+select set_config('test.before_replay',public.s_state()::text,true);
 -- Order 1 held d1 and d2 (real). Turn both into sample dishes: the retry of that exact request still returns the order.
 reset role;
 update public.menu_items set is_demo=true where id in ('24300000-0000-4000-8000-0000000000d1','24300000-0000-4000-8000-0000000000d2');
 set local role authenticated;
 select public.s_as(1);
 select public.test_assert((public.place_order('ammu-sammu',public.s_cart(array['d1','d2']),public.test_delivery('Sample'),null,'24300000-0000-4000-9000-000000000001',current_setting('test.q1')::jsonb)->>'id')::uuid = (select id from public.orders where idempotency_key='24300000-0000-4000-9000-000000000001'), 'the retry of an order placed before the dishes were samples still returns it');
-select public.test_assert((select count(*)=1 from public.orders where customer_id='24300000-0000-4000-8000-000000000001') and (public.s_state()->>'redemptions')::int=1, 'the replay created nothing');
+select public.test_assert(public.s_state() = current_setting('test.before_replay')::jsonb, 'the replay created nothing');
 -- A new order for the same dishes is now refused.
 select public.s_refused(format('select public.s_place(7,%L::jsonb)',public.s_cart(array['d1','d2'])));
+-- #245: Only the restaurant's demo flag changes. Its real dishes, open state and delivery area still qualify.
+reset role;
+update public.menu_items set is_demo=false where id in ('24300000-0000-4000-8000-0000000000d1','24300000-0000-4000-8000-0000000000d2');
+update public.businesses set is_demo=true where slug='ammu-sammu';
+set local role authenticated;
+select public.s_as(1);
+select public.s_refused($q$select public.quote_order('ammu-sammu',public.s_cart(array['d1','d2']),null)$q$,
+  'demo restaurant cannot take orders', 'DEMO_RESTAURANT');
+select public.s_refused($q$select public.place_order('ammu-sammu',public.s_cart(array['d1','d2']),public.test_delivery('Sample'),null,
+  '24300000-0000-4000-9000-000000000009',current_setting('test.q1')::jsonb)$q$, 'demo restaurant cannot take orders', 'DEMO_RESTAURANT');
+select public.test_assert((public.place_order('ammu-sammu',public.s_cart(array['d1','d2']),public.test_delivery('Sample'),null,
+  '24300000-0000-4000-9000-000000000001',current_setting('test.q1')::jsonb)->>'id')::uuid =
+  (select id from public.orders where idempotency_key='24300000-0000-4000-9000-000000000001'), 'an order is still replayable after the restaurant becomes demo');
+select public.test_assert(public.s_state() = current_setting('test.before_replay')::jsonb, 'refusal and replay change no checkout state');
+
+reset role;
+update public.businesses set is_demo=false where slug='ammu-sammu';
+set local role authenticated;
+select public.s_as(2);
+select public.test_assert(public.quote_order('ammu-sammu',public.s_cart(array['d1','d2']),null)->>'outcome'='quoted', 'the real restaurant quotes again');
+select public.test_assert(public.s_place_ok(9,public.s_cart(array['d1','d2']))->>'outcome'='placed', 'the real restaurant accepts a new order');
 reset role;
 rollback;

@@ -139,6 +139,16 @@ const orderRow = (extra: Record<string, unknown> = {}) => ({ id: orderId, status
   customer_name: 'Name', customer_phone: '123', delivery_address_line: 'Address', created_at: '2026-11-20T10:00:00Z',
   order_items: [{ menu_item_id: dishId, diet: null, name: 'Dish', quantity: 2, unit_price_paise: 30000, line_total_paise: 60000 }], order_status_history: [{ status: 'placed', created_at: '2026-11-20T10:00:00Z' }], ...extra });
 
+test('demo restaurant refusal maps to the same customer message for quotes and placement', async () => {
+  const refused = () => Response.json({ code: '22023', message: 'demo restaurant cannot take orders', details: 'DEMO_RESTAURANT' }, { status: 400 });
+  await withService({ quote_order: refused, place_order: refused }, async (service, calls) => {
+    const expected = { code: 'NOT_ACCEPTING_ORDERS', message: 'This is a sample restaurant. Ordering is unavailable.' };
+    await assert.rejects(service.quoteOrder(lines), expected);
+    await assert.rejects(service.placeOrder(request(plain)), expected);
+    assert.deepEqual(calls.map(call => call.path), ['quote_order', 'place_order']);
+  });
+});
+
 test('placeOrder passes the code, handles offer_changed and verifies the stored discount', async () => {
   let response: unknown = { outcome: 'placed', id: orderId, discount_paise: 10000 };
   let order: Record<string, unknown> = orderRow();
