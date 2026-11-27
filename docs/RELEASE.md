@@ -529,6 +529,17 @@ their own name/phone snapshots. `full_name` is trimmed, 1 to 120 characters (CHE
   account switch or disposal are refused with `SESSION_CHANGED`. Errors: `PROFILE_INVALID_NAME`, `SIGN_IN_REQUIRED`, `PROFILE_REQUEST_FAILED`.
   No UI uses them yet (slice 2).
 
+## Checkout budget support (#216)
+
+Use the SQL editor or the service role only after verifying the owner's request and that the order belongs to their restaurant. Use the internal customer ID from that order. `public.manage_order_budget(slug, customer_id)` returns the current `used`, `limit` and last `reset_at` values for that customer and restaurant. Pass `true` as the third argument to reset the budget.
+
+```sql
+select public.manage_order_budget('ammu-sammu', '<customer-uuid>'::uuid);
+select public.manage_order_budget('ammu-sammu', '<customer-uuid>'::uuid, true);
+```
+
+The 20-order rolling window counts cancelled orders. A reset starts a fresh budget for that customer and restaurant and preserves orders and replay keys. Create live orders through checkout so the order time is recorded under the same account lock as the reset. The budget uses the recorded order time for privileged imports. New checkout snapshots store the recipient phone as `+91` plus ten digits. Existing order snapshots keep their original format.
+
 ## Customer account deletion (#51, slice 1: database and services)
 
 Added by the forward-only migration `20261126210000_account_deletion.sql` (it must sort after every migration on `main`, including `20261126200000_opening_hours.sql`). Database and services only: no screens, no web page (slice 2); the Edge Function that removes Auth users is described below. Nothing here touches a remote project.
