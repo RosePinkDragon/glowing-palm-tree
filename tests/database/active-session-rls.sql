@@ -19,7 +19,8 @@ insert into public.menu_items(id,business_id,name,category_id,price_paise,diet,s
 insert into public.offers(id,business_id,name,kind,value,apply_mode) values
  ('21320000-0000-4000-8000-0000000000e1','10000000-0000-4000-8000-000000000001','RLS offer','percent',10,'automatic');
 insert into public.customer_addresses(id,customer_id,label,house,street_area,latitude,longitude,location_source) values
- ('21320000-0000-4000-8000-0000000000a1','21320000-0000-4000-8000-000000000001','home','RLS house','RLS road',0.5,0.5,'pin');
+ ('21320000-0000-4000-8000-0000000000a1','21320000-0000-4000-8000-000000000001','home','RLS house','RLS road',0.5,0.5,'pin'),
+ ('21320000-0000-4000-8000-0000000000a2','21320000-0000-4000-8000-000000000002','home','Other house','RLS road',0.5,0.5,'pin');
 -- A notification for customer 1, which needs a real order (the order's own trigger writes one; replace it with a known id).
 insert into public.orders(id,business_id,customer_id,customer_name,customer_phone,delivery_address_line,latitude,longitude,address_label,address_house,address_street_area,address_location_source,saved_address_id,saved_address_version,subtotal_paise,delivery_fee_paise,total_paise,idempotency_key,request_hash) values
  ('21320000-0000-4000-8000-0000000000f2','10000000-0000-4000-8000-000000000001','21320000-0000-4000-8000-000000000001','RLS','1','RLS road',0.5,0.5,'home','RLS house','RLS road','pin','21320000-0000-4000-8000-0000000000a1',1,100,0,100,'21320000-0000-4000-9000-000000000001','rls');
@@ -48,6 +49,7 @@ create function public.t_state() returns jsonb language sql security definer set
     'offers', (select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]') from public.offers t),
     'addresses', (select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]') from public.customer_addresses t),
     'notifications', (select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]') from public.customer_notifications t),
+    'profiles', (select coalesce(jsonb_agg(to_jsonb(t) order by t.user_id),'[]') from public.profiles t),
     'devices', (select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]') from public.device_tokens t)) $$;
 -- As user n: the statement must fail with the active-session refusal (42501, 'invalid session', detail INVALID_SESSION).
 create function public.t_denied(n integer, mode text, stmt text) returns void language plpgsql as $$
@@ -118,7 +120,7 @@ select public.test_assert(has_schema_privilege('authenticated','session_rls_priv
 select public.test_assert((select prosecdef and provolatile='s' and proconfig = array['search_path=""'] and pronargs=0 and prorettype='boolean'::regtype from pg_proc where oid='session_rls_private.require_active_session()'::regprocedure), 'the predicate is stable, definer, argument-free, boolean, with an empty search_path');
 select public.test_assert((select count(*)=0 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='require_active_session'), 'the predicate is not exposed in public');
 -- Exactly the write policies under test carry it; no SELECT policy does; every in-scope write policy does.
-select public.test_assert((select count(*)=12 from pg_policies where schemaname='public' and tablename<>'profiles' and (coalesce(qual,'')||coalesce(with_check,'')) like '%require_active_session%'), 'twelve policies use the predicate (profiles, #45, is covered by profiles.sql)');
+select public.test_assert((select count(*)=12 from pg_policies where schemaname='public' and tablename not in ('profiles','device_tokens') and (coalesce(qual,'')||coalesce(with_check,'')) like '%require_active_session%'), 'twelve existing policies use the predicate (profiles and devices checked separately)');
 select public.test_assert((select count(*)=0 from pg_policies where schemaname='public' and cmd='SELECT' and (coalesce(qual,'')||coalesce(with_check,'')) like '%require_active_session%'), 'no SELECT policy uses the predicate');
 select public.test_assert((select count(*)=0 from pg_policies where schemaname='public' and cmd in ('INSERT','UPDATE','DELETE') and tablename in ('menu_items','menu_categories','offers','customer_addresses')
   and ((cmd in ('UPDATE','DELETE') and qual not like '%require_active_session%') or (cmd in ('INSERT','UPDATE') and with_check not like '%require_active_session%'))), 'every direct write policy of the four tables requires the session');
@@ -187,6 +189,21 @@ reset role;
 delete from auth.sessions where id in (public.t_session(1), public.t_session(3));
 set local role authenticated;
 select public.t_refuse_all('own');
+-- A signed-out session receives the same refusal regardless of the target or row count.
+do $$ declare before_state jsonb := public.t_state(); begin
+  perform public.t_denied(1, 'own', $s$update public.customer_addresses set house='RLS refused' where id='21320000-0000-4000-8000-0000000000a2'$s$);
+  perform public.t_denied(1, 'own', $s$update public.customer_addresses set house='RLS refused' where id='21320000-0000-4000-8000-0000000000a3'$s$);
+  perform public.t_denied(1, 'own', $s$delete from public.customer_addresses where false$s$);
+  perform public.t_denied(1, 'own', $s$update public.customer_notifications set read_at=now() where false$s$);
+  perform public.t_denied(1, 'own', $s$update public.profiles set full_name='RLS refused' where false$s$);
+  perform public.t_denied(3, 'own', $s$update public.menu_items set name='RLS refused' where false$s$);
+  perform public.t_denied(3, 'own', $s$delete from public.menu_categories where false$s$);
+  perform public.t_denied(3, 'own', $s$update public.offers set name='RLS refused' where false$s$);
+  perform public.test_assert(public.t_state() = before_state, 'session refusal leaves all tables unchanged');
+end $$;
+select public.t_as(1);
+select public.test_assert(exists(select 1 from public.customer_addresses where id='21320000-0000-4000-8000-0000000000a1'),
+  'the existing address SELECT policy still works with a dead session');
 reset role;
 insert into auth.sessions(id,user_id) values (public.t_session(1),public.t_user(1)), (public.t_session(3),public.t_user(3));
 update auth.sessions set not_after = clock_timestamp() - interval '1 second' where id in (public.t_session(1), public.t_session(3));
@@ -208,6 +225,7 @@ reset role;
 insert into auth.sessions(id,user_id) values (public.t_session(1),public.t_user(1));
 set local role authenticated;
 select public.t_ok(1, $s$update public.customer_addresses set house='RLS back again' where id='21320000-0000-4000-8000-0000000000a1'$s$);
+select public.t_rls_refused(1, $s$update public.customer_addresses set house='RLS missing' where id='21320000-0000-4000-8000-0000000000a3'$s$);
 -- The read marker is one-way, so the happy path for it runs last.
 select public.t_ok(1, $s$update public.customer_notifications set read_at=now() where id='21320000-0000-4000-8000-0000000000f1'$s$);
 -- The inactive predicate answers only about the caller: an unauthenticated role cannot even reach it.
@@ -241,4 +259,55 @@ select public.t_perm_denied(3, 'own', $s$insert into public.device_tokens(user_i
 select public.t_perm_denied(1, 'missing', $s$update public.device_tokens set token='rls-changed' where id='21320000-0000-4000-8000-0000000000b1'$s$);
 reset role;
 select public.test_assert(public.t_state()::text = :'devices_before', 'refused device token writes leave the table unchanged');
+
+-- 7. Statement-level session refusal takes precedence over row validation. ----------------------------------------
+insert into public.customer_addresses(customer_id,label,house,street_area,latitude,longitude,location_source)
+select public.t_user(1),'work','House '||n,'RLS road',0.5,0.5,'pin' from generate_series(1,19) n;
+insert into public.offers(business_id,name,kind,value,apply_mode,code) values
+ ('10000000-0000-4000-8000-000000000001','Existing RLS code','percent',5,'code','RLSTOP');
+create function public.t_validation_precedence(n integer, stmt text, expected_code text, expected_message text) returns void language plpgsql as $$
+begin
+  perform public.t_as(n);
+  begin
+    execute stmt;
+    raise exception 'expected row validation to refuse the active session statement';
+  exception when others then
+    if sqlstate <> expected_code or sqlerrm <> expected_message then raise; end if;
+  end;
+  perform public.t_denied(n, 'missing', stmt);
+end $$;
+set local role authenticated;
+do $$ declare before_state jsonb := public.t_state(); begin
+  perform public.t_validation_precedence(1,
+    $s$insert into public.customer_addresses(label,house,street_area,latitude,longitude,location_source) values ('work','One too many','RLS road',0.5,0.5,'pin')$s$,
+    '23514', 'saved address limit reached');
+  perform public.t_validation_precedence(3,
+    $s$insert into public.offers(business_id,name,kind,value,apply_mode,code) values ('10000000-0000-4000-8000-000000000001','Duplicate RLS code','percent',5,'code','RLSTOP')$s$,
+    '23505', 'code is already in use by another active or scheduled offer');
+  perform public.t_validation_precedence(3,
+    $s$insert into public.menu_items(business_id,name,category_id,price_paise) values ('10000000-0000-4000-8000-000000000001','Unclassified dish','21320000-0000-4000-8000-0000000000c1',100)$s$,
+    '22023', 'diet classification required');
+  perform public.test_assert(public.t_state() = before_state, 'both refusal paths leave all tables unchanged');
+end $$;
+reset role;
+
+-- 8. A rollback-only grant exercises the device guard and separate write-only RLS policies. ------------------------
+savepoint simulated_device_grant;
+grant insert, update, delete on public.device_tokens to authenticated;
+set local role authenticated;
+select public.t_denied(1, 'missing', $s$update public.device_tokens set token='RLS refused' where false$s$);
+select public.t_rls_refused(2, $s$delete from public.device_tokens where id='21320000-0000-4000-8000-0000000000b1'$s$);
+select public.t_ok(1, $s$update public.device_tokens set token='RLS updated token' where id='21320000-0000-4000-8000-0000000000b1'$s$);
+reset role;
+alter table public.device_tokens disable trigger require_active_session;
+set local role authenticated;
+select public.t_denied(1, 'missing', $s$insert into public.device_tokens(user_id,business_id,audience,token) values ('21320000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','customer','RLS refused')$s$);
+select public.t_denied(1, 'missing', $s$update public.device_tokens set token='RLS refused' where id='21320000-0000-4000-8000-0000000000b1'$s$);
+select public.t_denied(1, 'missing', $s$delete from public.device_tokens where id='21320000-0000-4000-8000-0000000000b1'$s$);
+select public.test_assert(exists(select 1 from public.device_tokens where id='21320000-0000-4000-8000-0000000000b1'),
+  'the device SELECT policy still works with a dead session');
+reset role;
+rollback to savepoint simulated_device_grant;
+select public.test_assert(not has_table_privilege('authenticated','public.device_tokens','insert,update,delete'),
+  'the simulated device write grant was rolled back');
 rollback;
