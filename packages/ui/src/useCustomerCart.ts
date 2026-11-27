@@ -3,11 +3,16 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { BusinessSlug, CartLine, MenuItem, Order } from '@market/core';
 import { cartKey, CartReviewRequiredError, CustomerCartStore, importCart, reconcileCart, type CartLock } from './cart-state';
-import { activeContact, chooseMode, editActive, emptyContact, emptyRecipient, ownNameKey, parseOwnName, prefillOwn, restoreDelivery, serializeOwnName, type Contact, type RecipientMode, type RecipientState } from './recipient-model';
+import { activeContact, chooseMode, editActive, emptyContact, emptyRecipient, ownNameKey, planOwnName, prefillOwn, restoreDelivery, type Contact, type ProfileRead, type RecipientMode, type RecipientState } from './recipient-model';
+
+const noProfile: ProfileRead = { status: 'idle', name: null };
+/** The old device-only own name. Storage can be blocked or full: reading gives null and removing is skipped, neither ever fails checkout. */
+const readDeviceName = async (userId: string) => { try { return await AsyncStorage.getItem(ownNameKey(userId)); } catch { return null; } };
+const removeDeviceName = async (userId: string) => { try { await AsyncStorage.removeItem(ownNameKey(userId)); } catch { /* it is only a leftover; the next checkout tries again */ } };
 
 /** The draft has its own key and lifecycle; submitted checkout snapshots are separate. */
 /** `prefill` is off on the demo menu, which must not read or store anyone's contact details (#187). */
-export function useCustomerCart(businessId: BusinessSlug, userId: string | null, authReady: boolean, identityVersion: number, menu: MenuItem[], catalogReady: boolean, prefill: { enabled: boolean; phone: string | null | undefined } = { enabled: false, phone: null }) {
+export function useCustomerCart(businessId: BusinessSlug, userId: string | null, authReady: boolean, identityVersion: number, menu: MenuItem[], catalogReady: boolean, prefill: { enabled: boolean; phone: string | null | undefined; profile?: ProfileRead } = { enabled: false, phone: null }) {
   const store = useMemo(() => {
     const lock: CartLock | undefined = Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.locks
       ? (key, work) => navigator.locks.request(key, work) : undefined;
@@ -40,17 +45,23 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     }
     previousIdentity.current = { userId, identityVersion };
   }, [userId, identityVersion]);
-  // Fill the account holder's own Mobile (the verified login number) and Name (remembered on this device) without ever overwriting typing.
-  const sessionPhone = prefill.phone;
+  // Fill the account holder's own Mobile (the verified login number) and Name (the shared profile, #45) without ever overwriting typing:
+  // prefillOwn only touches fields the customer has not edited, so a profile that loads late or refreshes never replaces a manual change.
+  // A name kept on this device by an older version is used only once the profile has confirmed it has none (see planOwnName).
+  const sessionPhone = prefill.phone, read = prefill.profile ?? noProfile, readStatus = read.status, readName = read.name;
   useEffect(() => {
     const run = ++prefillRun.current;
     if (!prefill.enabled || !authReady || !userId) return;
-    update(state => prefillOwn(state, null, sessionPhone));
-    AsyncStorage.getItem(ownNameKey(userId)).then(raw => parseOwnName(raw), () => null).then(name => {
+    const confirmed: ProfileRead = { status: readStatus, name: readName };
+    update(state => prefillOwn(state, planOwnName(confirmed, null).prefill, sessionPhone));
+    if (readStatus !== 'ready') return;
+    void readDeviceName(userId).then(raw => {
       if (prefillRun.current !== run || currentIdentity.current.userId !== userId || currentIdentity.current.identityVersion !== identityVersion) return;
-      update(state => prefillOwn(state, name, sessionPhone));
+      const plan = planOwnName(confirmed, raw);
+      if (plan.prefill) update(state => prefillOwn(state, plan.prefill, sessionPhone));
+      if (plan.removeKey) void removeDeviceName(userId);
     });
-  }, [userId, authReady, identityVersion, prefill.enabled, sessionPhone, update]);
+  }, [userId, authReady, identityVersion, prefill.enabled, sessionPhone, readStatus, readName, update]);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onStorage = (event: StorageEvent) => { if (event.key === null || event.key === cartKey(businessId)) void store.refresh().catch(() => {}); };
@@ -98,15 +109,11 @@ export function useCustomerCart(businessId: BusinessSlug, userId: string | null,
     // Do not hold signing out hostage to storage or a lock in another window.
     void store.reset().catch(() => {});
   };
-  /** After an order placed as "Me": keep only the customer's own name for next time. Best effort; never blocks or fails the order. */
-  // This is device-only for now; it moves to the shared profile when #45 is built.
-  const rememberOwnName = async (forUser: string, name: string) => {
-    if (!prefill.enabled) return;
-    try { await AsyncStorage.setItem(ownNameKey(forUser), serializeOwnName(name)); } catch { /* the next order simply asks for the name again */ }
-  };
+  /** The profile now holds the name, so the old device copy is finished with. Never throws. */
+  const forgetDeviceName = (forUser: string) => prefill.enabled ? removeDeviceName(forUser) : Promise.resolve();
   return {
     cart, menu: activeMenu, setCart, changeCart, importLines, ready, saving: snapshot.saving, cartError: snapshot.error,
-    retryCart: store.refresh, resetCart: store.reset, clearForSignOut, rememberOwnName,
+    retryCart: store.refresh, resetCart: store.reset, clearForSignOut, forgetDeviceName,
     details: leavingIdentity ? emptyContact : activeContact(recipient), setDetails,
     recipient: leavingIdentity ? { ...emptyRecipient, setMode, own: emptyContact } : { ...recipient, setMode }, restoreRecipient,
     receipt: userId && receiptState.userId === userId ? receiptState.order : null, setReceipt,

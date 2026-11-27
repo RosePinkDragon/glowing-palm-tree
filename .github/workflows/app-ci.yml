@@ -198,6 +198,7 @@ jobs:
               node tests/browser/checkout48.mjs
               node tests/browser/sample-dish201.mjs
               node tests/browser/checkout-signin213.mjs
+              node tests/browser/checkout-me45.mjs
               node tests/browser/stale-identity207.mjs
           - shard: inbox-leave
             commands: |

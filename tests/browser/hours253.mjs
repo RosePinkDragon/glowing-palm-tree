@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #253 slice 2, customer apps: opening hours. Real built exports of both brands, installed SDK, synthetic HTTP only.
 // Every restaurant here has explicit hours and the page's clock is set per journey (the shared test seed has none), so nothing
@@ -65,6 +66,7 @@ try {
             state.order = { ...historical, subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })) };
             return json({ outcome: 'placed', id: orderId });
           }
+          case '/rest/v1/profiles': return profilesUnavailable(route); // checkout reads the profile (#45): unavailable here
           default: throw new Error(`Unexpected hours fixture ${request.method()} ${url.pathname}`);
         }
       });

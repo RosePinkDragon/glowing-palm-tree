@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #48 checkout slice: address picker, direct / remote / no-location confirmation, rejections and idempotent retry,
 // in both brands. Real customer exports and the installed SDK, with deterministic synthetic HTTP.
@@ -67,6 +68,7 @@ try {
         if (fixture.mode === 'lost') { fixture.mode = 'placed'; return route.abort('failed'); } // committed; the response was lost
         return json({ outcome: 'placed', id: orderId });
       }
+      if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // checkout reads the profile (#45): unavailable here
       throw new Error(`Unexpected checkout request ${method} ${url.pathname}`);
     });
     const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));

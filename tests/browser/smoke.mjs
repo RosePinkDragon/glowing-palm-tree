@@ -466,6 +466,7 @@ const prepareCart = async (page, add = true) => {
         }
         if (url.pathname === '/rest/v1/rpc/list_addresses') return json([]); // signed-in carts read saved addresses (#48)
         if (url.pathname === '/rest/v1/customer_businesses') return json([]);
+        if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // checkout reads the profile (#45): unavailable here
         throw new Error('Unhandled diet fixture: ' + request.method() + ' ' + url.pathname);
       });
       const page = await dietContext.newPage(); page.on('pageerror', error => dietErrors.push(error.message));

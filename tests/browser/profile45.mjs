@@ -62,6 +62,14 @@ async function run(slug, brand) {
   const signOut = async () => { await button('Account').click(); await button('Log out').first().click(); await button('Account').waitFor(); };
   const openEditProfile = async () => { await button('Account').click(); await button('Account options').click(); await button('Edit profile').click(); };
   const writes = () => profiles.writes.map(write => write.body);
+  // Profile requests in flight, so a test can wait for the reads to finish instead of sleeping (#265 review).
+  let inFlight = 0, profileReads = 0; const isProfile = request => new URL(request.url()).pathname === '/rest/v1/profiles' && request.method() === 'GET';
+  page.on('request', request => { if (isProfile(request)) { inFlight++; profileReads++; } }); const done = request => { if (isProfile(request)) inFlight--; }; page.on('requestfinished', done); page.on('requestfailed', done);
+  // Settled: nothing in flight and the count unchanged over several frames.
+  const readsSettled = async () => { let last = -1, steady = 0; while (steady < 4) { await page.evaluate(() => new Promise(frame => requestAnimationFrame(() => requestAnimationFrame(frame)))); if (inFlight === 0 && profileReads === last) steady++; else steady = 0; last = profileReads; } return profileReads; };
+  // Samples the screen (text and field values) for a name, so a flash of it between renders is caught too.
+  const watchFor = name => page.evaluate(secret => { window.__seen = false; clearInterval(window.__watch); window.__watch = setInterval(() => { if ((document.body.innerText + Array.from(document.querySelectorAll('input')).map(input => input.value).join(' ')).includes(secret)) window.__seen = true; }, 10); }, name);
+  const seen = () => page.evaluate(() => window.__seen);
   // The account drawer's header (#45 slice 2b): the canonical profile name (never user_metadata), the formatted verified phone and the initials.
   const drawer = async (title, initials, phone = '+91 98765 43210') => {
     await button('Account').click(); await page.getByRole('dialog').getByRole('heading', { name: title, exact: true }).waitFor();
@@ -147,7 +155,8 @@ async function run(slug, brand) {
     await button('Account').click(); await page.getByRole('dialog').getByRole('heading', { name: 'Your account', exact: true }).waitFor(); await text('+91 98765 43210').waitFor();
     assert.equal(await page.getByTestId('account-avatar').filter({ visible: true }).innerText(), '', 'no initials without a name');
     const neutral = await page.locator('body').innerText(); for (const secret of ['Asha', 'Stale Metadata Name']) assert.equal(neutral.includes(secret), false, `${secret} is not shown while the profile is unavailable`);
-    await shot('drawer-unavailable-390'); await closeDrawer(); await text("We couldn't load your profile").waitFor(); await page.waitForTimeout(600); // closing the drawer may read again; let it settle
+    await shot('drawer-unavailable-390'); await closeDrawer(); await text("We couldn't load your profile").waitFor(); const settledReads = await readsSettled(); // closing the drawer may read again; wait for it to finish
+    assert.equal(await readsSettled(), settledReads, 'no further reads are pending once the screen is settled');
     profiles.mode = 'live'; await button('Retry').click(); await field('Full name').waitFor(); assert.equal(await field('Full name').inputValue(), 'Asha P.');
 
     // 5. Another account on this device: never the previous name, and its own name step.
@@ -158,6 +167,13 @@ async function run(slug, brand) {
     await field('Full name').fill('Meera Joshi'); await button('Continue').click(); await stepTitle().waitFor({ state: 'hidden' });
     assert.equal(profiles.names[users[1].id], 'Meera Joshi'); assert.equal(profiles.names[users[0].id], 'Asha P.', 'each account has its own record');
     assert.equal((await drawer('Meera Joshi', 'MJ', '+91 91234 56780')).includes('Asha'), false, 'the next account never sees the previous name in the drawer'); await closeDrawer();
+    // 5b. Same page, no reload: sign out A, sign in B whose profile is unavailable, then delayed. A's name is never on screen, drawer open or not.
+    await signOut(); await watchFor('Meera'); profiles.mode = 'unavailable'; await signIn(users[2]); // watching starts once A is signed out (the drawer shows A's name while A signs out)
+    await drawer('Your account', '', '+91 90000 11111'); await closeDrawer(); await readsSettled(); assert.equal(await seen(), false, 'unavailable profile: the previous account\'s name never showed');
+    await signOut(); profiles.mode = 'live'; profiles.delay = 1500; profiles.names[users[2].id] = 'Neha Rao'; await watchFor('Meera'); await signIn(users[2]);
+    await button('Account').click(); await page.getByRole('dialog').getByRole('heading', { name: 'Neha Rao', exact: true }).waitFor(); // the drawer is neutral until the slow read lands
+    assert.equal(await seen(), false, 'delayed profile: the previous account\'s name never showed'); await closeDrawer();
+    profiles.delay = 0; delete profiles.names[users[2].id]; await signOut(); await signIn(users[1]); await readsSettled();
 
     // 6. A restored session (a cold start) is never interrupted by the step, and Edit profile offers the empty field to fill.
     delete profiles.names[users[1].id]; await page.goto(server.url, { waitUntil: 'networkidle' }); await page.waitForTimeout(800);
