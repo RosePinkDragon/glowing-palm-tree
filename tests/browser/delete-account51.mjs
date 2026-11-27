@@ -174,6 +174,27 @@ async function run(slug, brand) {
     rpc.delay = 0; await button('Back to menu').click(); await title.waitFor({ state: 'hidden' });
     await button('Account').click(); await button('Get code').waitFor();
 
+    // 7c. A different account signs in (in another tab) while A's request is in flight: the cart and checkout attempt are device-wide and now B's, so
+    // they survive; A's own keys are removed.
+    await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
+    await openEditProfile(); await page.evaluate(([id, slugA]) => localStorage.setItem(`market:leave:${slugA}:${id}`, '{"version":1}'), [uid, slug]);
+    rpc.mode = 'slow'; rpc.delay = 9000; rpc.calls.length = 0;
+    await openSheet(); await sheetButton('Delete my account').click(); await sheetButton('Deleting…').waitFor();
+    const second = await context.newPage(); await second.route(url => url.pathname === '/rest/v1/profiles', profilesUnavailable); await second.goto(server.url, { waitUntil: 'networkidle' });
+    const secondButton = name => second.getByRole('button', { name, exact: true }).filter({ visible: true });
+    await secondButton('Account').click(); await secondButton('Log out').first().click(); await secondButton('Account').waitFor();
+    await secondButton('Account').click(); await otpSignIn(second, { email: users[1].email }); await secondButton('Account').waitFor();
+    const bCart = JSON.stringify({ version: 1, revision: 1, businessId: slug, ownerId: users[1].id, lines: [] });
+    await second.evaluate(([cart, key]) => { localStorage.setItem(`market:checkout:${key}`, 'b-attempt'); localStorage.setItem(`market:cart:${key}`, cart); }, [bCart, slug]);
+    await title.waitFor(); await second.close();
+    const kept = await stored();
+    assert.equal(kept[`market:checkout:${slug}`], 'b-attempt', "B's checkout attempt survives A's clean-up"); assert.equal(JSON.parse(kept[`market:cart:${slug}`] ?? 'null')?.ownerId, users[1].id, "B's cart survives (the app may bump its revision)");
+    assert.equal(kept[`market:leave:${slug}:${uid}`], undefined, "A's own keys are removed");
+    rpc.delay = 0; await button('Back to menu').click(); await title.waitFor({ state: 'hidden' });
+    await page.evaluate(slugA => { localStorage.removeItem(`market:checkout:${slugA}`); }, slug);
+    await button('Sign out').click(); await button('Account').waitFor(); // B is new here, so the name step stands in front: leave by signing out
+    await button('Account').click(); await button('Get code').waitFor();
+
     // 8. Signed in again to the account that is still waiting for its login to be removed: asking again carries on to the same final state.
     await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
     rpc.mode = 'pending'; rpc.delay = 0; await openEditProfile(); await openSheet(); await sheetButton('Delete my account').click();

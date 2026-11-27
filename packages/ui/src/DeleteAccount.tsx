@@ -5,7 +5,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { businesses, type BusinessSlug } from '@market/core';
 import { MarketButton } from './components';
 import { AccessiblePanel, capturePanelFocus, restorePanelFocus } from './AccessiblePanel';
-import { clearLocalKeys, deleteAccountCopy, deleteAccountEntry, deletedNotice, deletionFailure, type DeletionFailure } from './account-deletion-model';
+import { clearLocalKeys, keysToClear, deleteAccountCopy, deleteAccountEntry, deletedNotice, deletionFailure, type DeletionFailure } from './account-deletion-model';
 import { cartKey } from './cart-state';
 import { attemptKey, sameIdentity } from './checkout-state';
 import { leaveRequestKey } from './leave-model';
@@ -19,7 +19,9 @@ type Market = ReturnType<typeof useMarket>;
 const keepId = 'delete-account-keep';
 
 /** Everything this phone saved for the account, in both restaurants' namespaces (guarded storage: a blocked key never stops the sign-out). */
-const localKeys = (userId: string) => [...(Object.keys(businesses) as BusinessSlug[]).flatMap(slug => [cartKey(slug), attemptKey(slug), preferenceKey(slug, 'customer', userId), leaveRequestKey(slug, userId)]), ownNameKey(userId)];
+const slugs = Object.keys(businesses) as BusinessSlug[];
+const deviceWideKeys = () => slugs.flatMap(slug => [cartKey(slug), attemptKey(slug)]);
+const accountKeys = (userId: string) => [...slugs.flatMap(slug => [preferenceKey(slug, 'customer', userId), leaveRequestKey(slug, userId)]), ownNameKey(userId)];
 
 /**
  * "Delete my account" (#51): a quiet row on Edit profile that opens a warning sheet. The server closes the account at once (one call, safe to repeat),
@@ -39,7 +41,7 @@ export function DeleteAccount({ market, signOut, onDeleted, go, login }: { marke
     // Sign out first: it also resets the cart draft, which writes an empty record for this account; the clean-up then removes that too.
     let signedOut = true;
     if (sameIdentity(started, market.identity.current)) { try { await signOut(); } catch { signedOut = false; } }
-    await clearLocalKeys(AsyncStorage, localKeys(id));
+    await clearLocalKeys(AsyncStorage, keysToClear(deviceWideKeys(), accountKeys(id), id, market.identity.current.userId));
     setOpen(false); setFailure(null);
     onDeleted({ signedOut });
   };

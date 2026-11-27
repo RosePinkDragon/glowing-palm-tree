@@ -60,3 +60,12 @@ export async function clearLocalKeys(storage: KeyStorage, keys: readonly string[
   for (const key of new Set(keys)) { try { await storage.removeItem(key); } catch { failed.push(key); } }
   return failed;
 }
+
+/**
+ * Which keys to clear. The cart and the checkout attempt are one per restaurant on the device, not per account: they go only when the account
+ * being deleted is still the one signed in (or nobody is). If another account has signed in meanwhile they are that account's now, so only the
+ * deleted account's own keys go.
+ */
+export function keysToClear(deviceWide: readonly string[], accountScoped: readonly string[], requesterId: string, currentUserId: string | null): string[] {
+  return currentUserId === null || currentUserId === requesterId ? [...deviceWide, ...accountScoped] : [...accountScoped];
+}

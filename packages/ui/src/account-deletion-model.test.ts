@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@market/services';
-import { ORDER_RECORD_RETENTION_COPY, accountPendingCopy, clearLocalKeys, deleteAccountCopy, deletedNotice, deletionFailure } from './account-deletion-model.ts';
+import { ORDER_RECORD_RETENTION_COPY, accountPendingCopy, clearLocalKeys, deleteAccountCopy, deletedNotice, deletionFailure, keysToClear } from './account-deletion-model.ts';
 
 test('the warning names both restaurants, the retention copy once, and says it cannot be undone', () => {
   const copy = deleteAccountCopy('Ammu Sammu', 'Kokani Dine Inn');
@@ -40,4 +40,11 @@ test('clearing the phone removes every key, once, and a blocked key neither stop
   assert.deepEqual(removed, ['a', 'c']);
   assert.deepEqual(failed, ['b']);
   assert.deepEqual(await clearLocalKeys({ removeItem: async () => {} }, []), []);
+});
+
+test('another account that signed in meanwhile keeps the device-wide cart and checkout attempt', () => {
+  const wide = ['market:cart:a', 'market:checkout:a'], own = ['market:leave:a:u1', 'market:own-name:u1'];
+  assert.deepEqual(keysToClear(wide, own, 'u1', 'u1'), [...wide, ...own], 'still the same account: everything');
+  assert.deepEqual(keysToClear(wide, own, 'u1', null), [...wide, ...own], 'nobody signed in: everything');
+  assert.deepEqual(keysToClear(wide, own, 'u1', 'u2'), own, 'a different account: only the deleted account\'s own keys');
 });
