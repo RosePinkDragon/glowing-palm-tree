@@ -32,7 +32,7 @@ async function run(slug, brand) {
     if (['phx_join', 'heartbeat', 'phx_leave'].includes(event)) { const response = { status: 'ok', response: { postgres_changes: changes } }; socket.send(JSON.stringify(array ? [join, ref, topic, 'phx_reply', response] : { join_ref: join, ref, topic, event: 'phx_reply', payload: response })); }
   }));
   // What request_account_deletion answers: ok | active | owner | offline | session | fail | pending | slow.
-  const rpc = { mode: 'ok', calls: [], delay: 0 };
+  const rpc = { mode: 'ok', calls: [], delay: 0, answered: 0 };
   let signedOutByServer = 0;
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
@@ -60,12 +60,15 @@ async function run(slug, brand) {
       if (rpc.mode === 'session') return fail(403, { code: '42501', details: 'INVALID_SESSION' });
       if (rpc.mode === 'fail') return fail(500, { code: 'XX000', message: 'internal table detail private', details: 'private' });
       if (rpc.mode === 'pending') return fail(409, { code: 'PT409', details: 'ACCOUNT_LIFECYCLE_PENDING' });
+      rpc.answered++;
       return json({ customer_id: who, state: 'deletion_pending', requested_at: '2026-11-27T10:00:00Z' });
     }
     const offerMock = offerRpcMock(url, json); if (offerMock) return offerMock;
     throw new Error(`Unexpected request ${request.method()} ${url.pathname}`);
   });
   const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
+  // CPU_THROTTLE=4 reruns the whole journey on a slow CPU, which is how timing races are reproduced.
+  if (process.env.CPU_THROTTLE) await (await context.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
   const profiles = profileFixture(page); profiles.mode = 'live'; profiles.names[users[0].id] = 'Asha Patil';
   const visible = locator => locator.filter({ visible: true });
   const button = name => visible(page.getByRole('button', { name, exact: true }));
@@ -73,12 +76,18 @@ async function run(slug, brand) {
   const sheetButton = name => dialog().getByRole('button', { name, exact: true });
   const text = value => visible(page.getByText(value, { exact: true }));
   const shot = async name => { await page.waitForTimeout(500); await page.screenshot({ path: `${shots}/${slug}-${name}.png`, fullPage: true }); };
-  const signIn = async user => { await button('Account').click(); await otpSignIn(page, { email: user.email }); };
-  const openEditProfile = async () => { await button('Account').click(); await button('Account options').click(); await button('Edit profile').click(); await visible(page.getByLabel('Full name', { exact: true })).waitFor(); };
+  // The Account button exists signed out too, so "signed in" means the session has been stored: wait for it before reloading or opening the drawer.
+  const sessionStored = () => page.waitForFunction(() => Object.keys(localStorage).some(key => /^market:https%3A.*:customer$/.test(key)));
+  const otp = async user => { await otpSignIn(page, { email: user.email }); await sessionStored(); await button('Get code').waitFor({ state: 'hidden' }); };
+  const signIn = async user => { await button('Account').click(); await otp(user); };
+  // After a reload the Account button does nothing until the stored session has been restored, so click it again until the drawer is really open.
+  const openDrawerOn = async (target, ready) => { for (let attempt = 0; attempt < 12; attempt++) { await target.getByRole('button', { name: 'Account', exact: true }).filter({ visible: true }).click(); if (await target.getByRole('button', { name: ready, exact: true }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) return; } throw new Error(`The account drawer did not open (${ready})`); };
+  const openEditProfile = async ({ loaded = true } = {}) => { await openDrawerOn(page, 'Account options'); await button('Account options').click(); await button('Edit profile').click(); if (loaded) await visible(page.getByLabel('Full name', { exact: true })).waitFor(); };
   const entry = () => visible(page.getByRole('button', { name: 'Delete my account, removes it from both apps', exact: true }));
   const openSheet = async () => { await entry().click(); await dialog().getByRole('heading', { name: 'Delete your account?', exact: true }).waitFor(); };
   const stored = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(key => [key, localStorage.getItem(key)])));
-  const userKeys = /^market:(cart|checkout|own-name|preferences|leave):|auth-token/;
+  // The stored sign-in is `market:<url>:<restaurant>:customer` (sessionStorageKey in the services).
+  const userKeys = /^market:(cart|checkout|own-name|preferences|leave):|^market:https%3A.*:customer$/;
   const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent ?? '');
   try {
     await page.goto(server.url, { waitUntil: 'networkidle' });
@@ -138,7 +147,7 @@ async function run(slug, brand) {
     await dialog().getByRole('heading', { name: 'Sign in again', exact: true }).waitFor(); await text('Your sign-in has ended. Sign in again, then delete your account. Nothing has been deleted.').waitFor();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Sign in');
     await sheetButton('Sign in').click(); await button('Get code').waitFor();
-    await otpSignIn(page, { email: users[0].email }); await visible(page.getByLabel('Full name', { exact: true })).waitFor();
+    await otp(users[0]); await visible(page.getByLabel('Full name', { exact: true })).waitFor();
 
     // 7. Success: busy state while the server works, then this phone is cleared and signed out and the final state appears.
     rpc.mode = 'slow'; rpc.delay = 900; rpc.calls.length = 0;
@@ -160,13 +169,13 @@ async function run(slug, brand) {
     await button('Account').click(); await button('Get code').waitFor(); // signed out: the sign-in card, not the account drawer
     // 7b. The session changes while the request is in flight (a sign-out in another tab): the server account is pending all the same, so this
     // phone is still cleaned and the notice still shows.
-    await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
+    await otp(users[0]); await button('Account').waitFor();
     await openEditProfile(); await page.evaluate(([id, slugA]) => localStorage.setItem(`market:leave:${slugA}:${id}`, '{"version":1}'), [uid, slug]);
     rpc.mode = 'slow'; rpc.delay = 2500; rpc.calls.length = 0;
     await openSheet(); await sheetButton('Delete my account').click(); await sheetButton('Deleting…').waitFor();
     const other = await context.newPage(); await other.route(url => url.pathname === '/rest/v1/profiles', profilesUnavailable);
     await other.goto(server.url, { waitUntil: 'networkidle' });
-    await other.getByRole('button', { name: 'Account', exact: true }).filter({ visible: true }).click();
+    await openDrawerOn(other, 'Log out');
     await other.getByRole('button', { name: 'Log out', exact: true }).filter({ visible: true }).first().click();
     await other.getByRole('button', { name: 'Account', exact: true }).filter({ visible: true }).waitFor(); await other.close();
     await title.waitFor(); assert.equal(rpc.calls.length, 1);
@@ -176,16 +185,19 @@ async function run(slug, brand) {
 
     // 7c. A different account signs in (in another tab) while A's request is in flight: the cart and checkout attempt are device-wide and now B's, so
     // they survive; A's own keys are removed.
-    await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
+    await otp(users[0]); await button('Account').waitFor();
     await openEditProfile(); await page.evaluate(([id, slugA]) => localStorage.setItem(`market:leave:${slugA}:${id}`, '{"version":1}'), [uid, slug]);
-    rpc.mode = 'slow'; rpc.delay = 9000; rpc.calls.length = 0;
+    rpc.mode = 'slow'; rpc.delay = 9000; rpc.calls.length = 0; const answeredBefore = rpc.answered;
     await openSheet(); await sheetButton('Delete my account').click(); await sheetButton('Deleting…').waitFor();
     const second = await context.newPage(); await second.route(url => url.pathname === '/rest/v1/profiles', profilesUnavailable); await second.goto(server.url, { waitUntil: 'networkidle' });
     const secondButton = name => second.getByRole('button', { name, exact: true }).filter({ visible: true });
-    await secondButton('Account').click(); await secondButton('Log out').first().click(); await secondButton('Account').waitFor();
-    await secondButton('Account').click(); await otpSignIn(second, { email: users[1].email }); await secondButton('Account').waitFor();
+    await openDrawerOn(second, 'Log out'); await secondButton('Log out').first().click(); await secondButton('Account').waitFor();
+    await secondButton('Account').click(); await otpSignIn(second, { email: users[1].email });
+    await second.waitForFunction(() => Object.keys(localStorage).some(key => /^market:https%3A.*:customer$/.test(key))); await second.getByRole('button', { name: 'Get code', exact: true }).filter({ visible: true }).waitFor({ state: 'hidden' });
     const bCart = JSON.stringify({ version: 1, revision: 1, businessId: slug, ownerId: users[1].id, lines: [] });
     await second.evaluate(([cart, key]) => { localStorage.setItem(`market:checkout:${key}`, 'b-attempt'); localStorage.setItem(`market:cart:${key}`, cart); }, [bCart, slug]);
+    // B's keys were written while A's request was still pending (otherwise this proves nothing about the order).
+    assert.equal(rpc.answered, answeredBefore, "A's request had not been answered yet"); assert.equal(await title.count(), 0, 'the notice was not shown yet');
     await title.waitFor(); await second.close();
     const kept = await stored();
     assert.equal(kept[`market:checkout:${slug}`], 'b-attempt', "B's checkout attempt survives A's clean-up"); assert.equal(JSON.parse(kept[`market:cart:${slug}`] ?? 'null')?.ownerId, users[1].id, "B's cart survives (the app may bump its revision)");
@@ -196,14 +208,14 @@ async function run(slug, brand) {
     await button('Account').click(); await button('Get code').waitFor();
 
     // 8. Signed in again to the account that is still waiting for its login to be removed: asking again carries on to the same final state.
-    await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
+    await otp(users[0]); await button('Account').waitFor();
     rpc.mode = 'pending'; rpc.delay = 0; await openEditProfile(); await openSheet(); await sheetButton('Delete my account').click();
     await title.waitFor(); await button('Back to menu').click();
 
     // 8b. Deleting never depends on the profile: with the profile unavailable the row is still there and the flow completes.
     profiles.mode = 'unavailable'; rpc.mode = 'ok'; rpc.calls.length = 0;
     await signIn(users[0]); await button('Account').waitFor();
-    await button('Account').click(); await button('Account options').click(); await button('Edit profile').click();
+    await openEditProfile({ loaded: false });
     await text("We couldn't load your profile").waitFor(); await entry().waitFor();
     await openSheet(); await sheetButton('Delete my account').click();
     await title.waitFor(); assert.equal(rpc.calls.length, 1); await button('Back to menu').click();
@@ -212,7 +224,7 @@ async function run(slug, brand) {
     // 8c. A demo restaurant never offers deletion (it has no real account to delete).
     await signIn(users[0]); business.is_demo = true; await page.goto(server.url, { waitUntil: 'networkidle' });
     await openEditProfile(); await button('Done').waitFor(); assert.equal(await entry().count(), 0, 'no Delete row for a demo restaurant');
-    business.is_demo = false; await page.goto(server.url, { waitUntil: 'networkidle' }); await button('Account').click(); await button('Log out').first().click(); await button('Account').waitFor();
+    business.is_demo = false; await page.goto(server.url, { waitUntil: 'networkidle' }); await openDrawerOn(page, 'Log out'); await button('Log out').first().click(); await button('Account').waitFor();
 
     // 9. A pending account's other calls say so instead of a generic failure: saving the name on a sign-in that has none.
     await page.route(url => url.pathname === '/rest/v1/profiles', route => route.request().method() === 'POST'
