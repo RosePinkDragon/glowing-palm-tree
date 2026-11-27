@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
-import { otpSignIn } from './otp-login.mjs';
+import { otpSignIn, profileFixture } from './otp-login.mjs';
 
 // Actual exports → installed SDK → deterministic scoped HTTP fixture → drawer/detail.
 const api = 'https://market-fixture.supabase.co';
@@ -514,11 +514,14 @@ try {
         await layoutPage.goto(server.url, { waitUntil: 'networkidle' });
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByLabel('Mobile number', { exact: true }).waitFor();
-        fixture.authSession = { ...session, user: { ...user, user_metadata: { full_name: 'Rohan Sawant' } } };
+        fixture.authSession = { ...session, user: { ...user, user_metadata: { full_name: 'Stale Metadata Name' } } };
+        Object.assign(profileFixture(layoutPage), { mode: 'live', names: { [userId]: 'Rohan Sawant' } }); // the drawer shows the profile name, never user_metadata
         await otpSignIn(layoutPage, { email: user.email });
         await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await layoutPage.getByRole('heading', { name: 'Rohan Sawant', exact: true }).waitFor();
+        assert.equal((await layoutPage.locator('body').innerText()).includes('Stale Metadata Name'), false, 'user_metadata is never the drawer name');
+        await layoutPage.getByRole('dialog').getByText('Phone not added', { exact: true }).waitFor();
         await stableDialog(layoutPage);
         const avatar = layoutPage.getByTestId('account-avatar');
         assert.equal(await avatar.innerText(), 'RS', 'avatar uses the customer’s initials');
@@ -526,7 +529,7 @@ try {
         assert.ok(Math.abs(avatarStyle.width - 60) < 0.1, 'avatar is 60px wide'); assert.ok(Math.abs(avatarStyle.height - 60) < 0.1, 'avatar is 60px high'); assert.equal(avatarStyle.radius, 30);
         assert.equal(avatarStyle.border, brand ? 'rgb(198, 172, 112)' : 'rgb(255, 255, 255)');
         await layoutPage.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click();
-        fixture.authSession = null;
+        fixture.authSession = null; profileFixture(layoutPage).mode = 'unavailable';
         await layoutPage.getByRole('button', { name: 'Account', exact: true }).click();
         await otpSignIn(layoutPage, { email: user.email });
         await layoutPage.getByRole('button', { name: 'Sign out', exact: true }).waitFor();

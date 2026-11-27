@@ -27,6 +27,8 @@ export async function answerProfile(state, route) {
   }
   throw new Error(`Unexpected profile request ${request.method()}`);
 }
+/** For journeys with their own strict route handler that open the account drawer: answers the profile read as unavailable, like the default above. */
+export const profilesUnavailable = route => answerProfile({ mode: 'unavailable' }, route);
 export const fixturePhone = '9876543210', fixtureCode = '123456';
 const mapOtpRoutes = async page => {
   if (installed.has(page)) return; installed.add(page);

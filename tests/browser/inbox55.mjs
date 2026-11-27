@@ -3,6 +3,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #55 notifications inbox: list, paging, unread -> read, badge, empty, error + retry, signed out; both brands.
 // Real customer exports and the installed SDK, with deterministic synthetic RPC responses.
@@ -76,6 +77,7 @@ try {
             return json(after.slice(0, body.p_limit + 1));
           }
         }
+        if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // the drawer reads the profile (#45): unavailable here
         throw new Error(`Unexpected inbox fixture ${request.method()} ${url.pathname}`);
       });
       const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));

@@ -73,7 +73,7 @@ export function CustomerProfile({ market, onDone }: { market: Market; onDone: ()
       <View testID="profile-avatar" accessible={false} aria-hidden style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: ammu ? colors.tint : colors.band, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: ammu ? colors.primary : colors.bandAccent, fontSize: 22, ...heading }}>{initials}</Text></View>
       <Text style={{ flex: 1, color: colors.muted, fontSize: 15, lineHeight: 23 }}>Your name and number go to the restaurant with each order so the rider can reach you. The same profile works in the {other} app.</Text>
     </View>
-    <MarketField inputRef={form.field} label="Full name" value={form.value} onChangeText={form.change} error={form.fieldError} autoComplete="name" textContentType="name" maxLength={200} onSubmitEditing={() => void form.submit()} returnKeyType="done" />
+    <MarketField inputRef={form.field} label="Full name" value={form.value} onChangeText={form.change} error={form.fieldError} autoComplete="name" textContentType="name" maxLength={120} onSubmitEditing={() => void form.submit()} returnKeyType="done" />
     <MarketField label="Mobile number" value={phone || 'Phone not added'} editable={false} />
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
       <Text style={{ color: colors.positive, fontSize: 14, fontWeight: '700' }}>{phone ? 'Verified' : ''}</Text>
@@ -106,7 +106,7 @@ export function NameStep({ market, signOut }: { market: Market; signOut: () => P
         {!ammu ? <Text style={{ color: colors.bandAccent, fontSize: 12, letterSpacing: 1.5, fontWeight: '700' }}>ALMOST DONE</Text> : null}
         <Text ref={title} accessibilityRole="header" aria-level={1} {...({ tabIndex: -1 } as object)} style={{ color: colors.ink, fontSize: 30, lineHeight: 38, ...heading }}>Welcome! What's your name?</Text>
         <Text style={{ color: colors.muted, fontSize: 16, lineHeight: 24 }}>It goes on your orders, so the rider knows who to ask for.</Text>
-        <MarketField inputRef={form.field} label="Full name" value={form.value} onChangeText={form.change} error={form.fieldError} autoComplete="name" textContentType="name" maxLength={200} onSubmitEditing={() => void form.submit()} returnKeyType="done" />
+        <MarketField inputRef={form.field} label="Full name" value={form.value} onChangeText={form.change} error={form.fieldError} autoComplete="name" textContentType="name" maxLength={120} onSubmitEditing={() => void form.submit()} returnKeyType="done" />
         <FailureText text={form.failure} node={form.alert} />
         <MarketButton label={form.saving ? 'Saving…' : 'Continue'} disabled={form.saving || busy} onPress={() => void form.submit()} />
         <MarketButton label={busy ? 'Signing out…' : 'Sign out'} variant="secondary" disabled={form.saving || busy} onPress={() => void leave()} />
