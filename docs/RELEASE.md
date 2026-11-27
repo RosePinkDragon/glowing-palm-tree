@@ -538,7 +538,7 @@ select public.manage_order_budget('ammu-sammu', '<customer-uuid>'::uuid);
 select public.manage_order_budget('ammu-sammu', '<customer-uuid>'::uuid, true);
 ```
 
-The 20-order rolling window counts cancelled orders. A reset starts a fresh budget for that customer and restaurant and preserves orders and replay keys. Create live orders through checkout so the order time is recorded under the same account lock as the reset. The budget uses the recorded order time for privileged imports. New checkout snapshots store the recipient phone as `+91` plus ten digits. Existing order snapshots keep their original format.
+The 20-order rolling window counts cancelled orders. A reset starts a fresh budget for that customer and restaurant and preserves orders and replay keys. Resetting an account while deletion is pending returns SQLSTATE `PT409` with detail `ACCOUNT_LIFECYCLE_PENDING`. Create live orders through checkout so the order time is recorded under the same account lock as the reset. The budget uses the recorded order time for privileged imports. New checkout snapshots store the recipient phone as `+91` plus ten digits. Existing order snapshots keep their original format.
 
 ## Customer account deletion (#51, slice 1: database and services)
 
