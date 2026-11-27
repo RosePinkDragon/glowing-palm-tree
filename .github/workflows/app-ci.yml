@@ -258,6 +258,10 @@ jobs:
         run: |
           deno test supabase/functions/request-owner-code/handler_test.ts supabase/functions/send-sms-hook/hook_test.ts
           deno check supabase/functions/request-owner-code/index.ts supabase/functions/send-sms-hook/index.ts
+      - name: Typecheck and test the account deletion finisher
+        run: |
+          deno test supabase/functions/finish-account-deletions/finish_test.ts
+          deno check supabase/functions/finish-account-deletions/index.ts
       - name: Typecheck and test dish photo validation and lifecycle
         working-directory: supabase/functions/menu-photos
         run: deno test --frozen --allow-read photos_test.ts && deno check --frozen index.ts
