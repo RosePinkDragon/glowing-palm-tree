@@ -25,7 +25,7 @@ Semgrep 1.187.0 uses the checked-in [rule set](../.github/security/semgrep.yml) 
 CI installs the Linux x86-64 Python 3.12 lock with `pip install --require-hashes --only-binary=:all: -r .github/security/semgrep-requirements.txt`. Review every dependency and hash change. Regenerate the lock with:
 
 ```sh
-uv pip compile --generate-hashes --python-version=3.12 --python-platform=x86_64-manylinux_2_34 \
+uv pip compile --system-certs --generate-hashes --python-version=3.12 --python-platform=x86_64-manylinux_2_34 \
   --only-binary=:all: .github/security/semgrep-requirements.in -o .github/security/semgrep-requirements.txt
 ```
 

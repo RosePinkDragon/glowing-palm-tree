@@ -92,8 +92,8 @@ exception when insufficient_privilege then null;
 end $$;
 reset role;
 set local role service_role;
-select public.test_assert((public.manage_order_budget('ammu-sammu','30000000-0000-4000-8000-000000000099')->>'used')::int=20,
-  'service can inspect the budget and counts cancelled orders');
+select public.test_assert(public.manage_order_budget('ammu-sammu','30000000-0000-4000-8000-000000000099') @> '{"used":20,"limit":20}',
+  'service reports the enforced limit and counts cancelled orders');
 select set_config('test.other_budget',public.manage_order_budget('ammu-sammu','30000000-0000-4000-8000-000000000001')::text,true);
 select public.test_assert((public.manage_order_budget('ammu-sammu','30000000-0000-4000-8000-000000000099',true)->>'used')::int=0,
   'service reset releases the slots for one customer at one restaurant');
