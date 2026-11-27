@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #57 (slice A): no internet, server and sign-in failures on the menu, the empty cart, no orders and no saved addresses, in both brands.
 // Real customer exports and the installed SDK, with deterministic synthetic HTTP. Offline is a refused connection (and Playwright's setOffline), never a real outage.
@@ -53,6 +54,7 @@ try {
       if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0);
       if (url.pathname === '/rest/v1/customer_businesses') return json([]);
       if (url.pathname === '/rest/v1/rpc/place_order') { orderCalls.push(request.postDataJSON()); return json({ code: 'PT500', message: 'must never be called' }, 500); }
+      if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // the drawer reads the profile (#45): unavailable here
       throw new Error(`Unexpected states request ${request.method()} ${url.pathname}`);
     });
     const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
