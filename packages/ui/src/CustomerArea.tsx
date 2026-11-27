@@ -354,7 +354,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Addresses' ? <CustomerAddresses market={market} /> : null}
     {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} /> : null}
-    {page === 'Profile' ? <CustomerProfile market={market} onDone={() => navigation.current?.go('/')} deletion={{ signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); }, onDeleted: setDeleted, go: path => navigation.current?.go(path), login: next => navigation.current?.login(next) }} /> : null}
+    {page === 'Profile' ? <CustomerProfile market={market} onDone={() => navigation.current?.go('/')} deletion={demo ? undefined : { signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); }, onDeleted: setDeleted, go: path => navigation.current?.go(path), login: next => navigation.current?.login(next) }} /> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
   // Only the root Menu route waits for the first-launch welcome; deep links (/privacy, /login, orders) render normally.

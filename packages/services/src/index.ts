@@ -805,7 +805,8 @@ export function createMarketServices(options: ServiceOptions) {
   const requestAccountDeletion = async (): Promise<AccountDeletionReceipt> => {
     const scope = await customerProfileScope();
     const { data, error } = await scope.db.rpc('request_account_deletion');
-    scope.ensureCurrent();
+    // No ensureCurrent here: the request is bound to the account that sent it, and once the server has accepted it that account is pending
+    // whatever happened to the session meanwhile. The receipt is checked against that account below, and the screen cleans the phone.
     if (error) {
       inactiveSessionError(error);
       lifecycleError(error);

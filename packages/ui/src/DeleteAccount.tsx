@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, findNodeHandle, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -34,10 +34,11 @@ export function DeleteAccount({ market, signOut, onDeleted, go, login }: { marke
   const sending = useRef(false), trigger = useRef<HTMLElement | null>(null);
   const userId = market.session?.user.id ?? null;
   const close = () => { if (busy) return; setOpen(false); setFailure(null); restorePanelFocus(trigger.current); };
-  const finish = async (id: string) => {
+  /** The server account is already pending: this phone is cleaned and the notice shown whatever else changed. Only a still-current session is signed out. */
+  const finish = async (id: string, started: typeof market.identity.current) => {
     // Sign out first: it also resets the cart draft, which writes an empty record for this account; the clean-up then removes that too.
     let signedOut = true;
-    try { await signOut(); } catch { signedOut = false; }
+    if (sameIdentity(started, market.identity.current)) { try { await signOut(); } catch { signedOut = false; } }
     await clearLocalKeys(AsyncStorage, localKeys(id));
     setOpen(false); setFailure(null);
     onDeleted({ signedOut });
@@ -46,17 +47,21 @@ export function DeleteAccount({ market, signOut, onDeleted, go, login }: { marke
     if (sending.current || !userId || market.services.mode !== 'backend') return;
     sending.current = true; setBusy(true); setFailure(null);
     const started = market.identity.current;
+    let accepted = false;
     try {
-      await market.services.requestAccountDeletion();
-      if (!sameIdentity(started, market.identity.current)) return;
-      await finish(userId);
-    } catch (e) {
-      if (!sameIdentity(started, market.identity.current)) return;
-      const problem = deletionFailure(e);
-      // Already being deleted is the outcome the person asked for: carry on to the same clean-up.
-      if (problem.kind === 'already-pending') await finish(userId); else setFailure(problem);
+      try { await market.services.requestAccountDeletion(); accepted = true; }
+      catch (e) {
+        const problem = deletionFailure(e);
+        // Already being deleted is the outcome the person asked for: carry on to the same clean-up.
+        if (problem.kind === 'already-pending') accepted = true;
+        else if (sameIdentity(started, market.identity.current)) setFailure(problem);
+      }
+      if (accepted) await finish(userId, started);
     } finally { sending.current = false; setBusy(false); }
   };
+  // The confirm button that had focus is gone when the sheet switches to a blocked view: focus its primary button.
+  const blockedKind = failure && !failure.retry ? failure.kind : null;
+  useEffect(() => { if (blockedKind && Platform.OS === 'web') { const id = setTimeout(() => document.getElementById(keepId)?.focus(), 0); return () => clearTimeout(id); } }, [blockedKind]);
   const blocked = failure && !failure.retry ? failure : null, retryable = failure?.retry ? failure : null;
   const danger = { color: colors.danger, fontSize: 15, lineHeight: 22, ...(fonts.bodySemiBold ? { fontFamily: fonts.bodySemiBold } : { fontWeight: '700' as const }) };
   const destructive = (label: string, onPress: () => void) => <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={onPress}
