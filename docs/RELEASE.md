@@ -559,7 +559,7 @@ Migration `20261126220000_finish_account_deletions.sql` adds two service_role-on
 
 1. **Secret.** Generate at least 32 random characters on a trusted machine and store them as a function secret: `supabase secrets set FINISH_ACCOUNT_DELETIONS_SECRET=<value>`. Never put it in chat, GitHub or a frontend variable. Use the exact value in Vault and in the function secret. The function reads it at startup, so redeploy after rotation. A trailing newline changes the value and causes HTTP 401 responses. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to the function by Supabase. Optional: `FINISH_ACCOUNT_DELETIONS_BATCH` (accounts per page, 1 to 50, default 20).
 2. **Deploy** after the migration is applied: `supabase functions deploy finish-account-deletions` (JWT verification is off in `config.toml`; the handler checks the secret first and answers 401 to anything else, including when the secret is missing or short).
-3. **Schedule** it daily using pg_cron and pg_net or any trusted scheduler. Enable the extensions and store the secret in Vault so it is absent from the job text. Replace both placeholders before running the snippet in the SQL editor.
+3. **Schedule** it daily using pg_cron and pg_net or any trusted scheduler. The pg_cron schedule below runs at 03:47 UTC. Enable the extensions and store the secret in Vault so it is absent from the job text. Replace both placeholders before running the snippet. Avoid saving any query containing the real `vault.create_secret` call in SQL Editor history or saved queries. If the editor retains query text, run that statement from a trusted SQL client with history disabled.
 
    ```sql
    create extension if not exists pg_cron;
@@ -579,7 +579,17 @@ Migration `20261126220000_finish_account_deletions.sql` adds two service_role-on
    $job$);
    ```
 
-   Confirm the HTTP response in pg_net or Edge Function logs. A successful cron run only confirms the request was queued. An account already in progress can finish after the 120-second HTTP timeout. A manual run sends the same POST with the same Authorization header.
+   Confirm the HTTP response in pg_net or Edge Function logs. A successful cron run only confirms the request was queued. An account already in progress can finish after the 120-second HTTP timeout. Raising the finisher's time budget in code above 120 seconds makes overrunning the pg_net timeout more likely. A manual run sends the same POST with the same Authorization header.
+
+   **Rotation.** Between scheduled runs, update Vault first. Use a trusted SQL client with history disabled for the new value.
+
+   ```sql
+   select vault.update_secret(id, '<new function secret>')
+   from vault.secrets
+   where name = 'finish_account_deletions_secret';
+   ```
+
+   Then set `FINISH_ACCOUNT_DELETIONS_SECRET` to the same new value and redeploy the Edge Function. Confirm the next POST succeeds.
 4. **What a run does.** For each pending account, oldest first, in pages of 20. After five pages or 100 seconds it starts no further accounts. The account already in progress can finish beyond that deadline, and a later run resumes any remaining work. For each account, `prepare_account_auth_deletion` repeats the active-data cleanup under the account lock and refuses an account that is not pending; then the Auth admin API deletes the user (a 404 means already gone and counts as done); then `complete_account_auth_deletion` confirms the `auth.users` row is gone and records the completion (`customer_lifecycle_private.account_deletion_completions`: the random account id and two timestamps, no personal data). Everything is idempotent, so a lost response or a rerun is safe. A failure on one account is counted and the others continue. The answer is JSON counts only (`listed`, `deleted`, `already_gone`, `skipped`, `failed`, `complete`): status 200, 500 when any account failed, 503 when the list could not be read. Logs hold fixed words only, never ids, phone numbers or tokens.
 5. **Daily check.** Both of these should stay empty or recent: `select count(*), min(requested_at) from public.list_accounts_pending_auth_deletion(1000);` (alert when the oldest is more than two days old) and the function's logs (Edge Functions, Logs) for `failed`. Completions: `select count(*), max(completed_at) from customer_lifecycle_private.account_deletion_completions;`. A future status endpoint must authorize access to the request identifier before checking the completion record.
 
