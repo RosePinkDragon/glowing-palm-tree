@@ -124,6 +124,19 @@ Deno.test('the time budget stops new work and reports it', async () => {
   assert(s.skipped >= 1 && s.deleted + s.skipped + s.failed === s.listed, 'budget ignored ' + JSON.stringify(s));
 });
 
+Deno.test('exhausting the budget stops new accounts and list calls', async () => {
+  for (const batchSize of [1, 3]) {
+    let now = 0;
+    const f = fixture(6, { prepare: () => { now = 1000; return 'pending'; } });
+    const { summary, listFailed } = await finish(f.ports, { batchSize, budgetMs: 1000, now: () => now });
+    assert(f.asked.length === 1, 'listed again after the deadline');
+    assert(f.calls.join(',') === `prepare:${id(1)},delete:${id(1)},complete:${id(1)}`, 'started another account or interrupted completion');
+    assert(!listFailed && !summary.complete && summary.deleted === 1 && summary.skipped === batchSize - 1,
+      'wrong time-budget summary ' + JSON.stringify(summary));
+    assert(f.pending.length === 5, 'accounts remain available for the next run');
+  }
+});
+
 Deno.test('logs and responses carry no ids, phone numbers or tokens', async () => {
   const phone = '+919876543210';
   const token = 'eyJsecret.token';
