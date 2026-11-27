@@ -36,6 +36,7 @@ import { CustomerLegal, CustomerSupport } from './CustomerSupport';
 import { CustomerAddresses } from './CustomerAddresses';
 import { CustomerNotifications } from './CustomerNotifications';
 import { CustomerProfile, NameGate } from './CustomerProfile';
+import { AccountDeletedNotice } from './DeleteAccount';
 import { RestaurantNotice, closedMessage } from './RestaurantNotice';
 import { hoursClosedMessage, openHoursFact } from './hours-model';
 import { useOpeningHours } from './useOpeningHours';
@@ -77,6 +78,8 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const [cartMessage, setCartMessage] = useState('');
   // Status notes (not errors): the post-leave notice clears on the next sign-in; the checkout rejoin note on any identity change.
   const [leftNotice, setLeftNotice] = useState(''), [lifecycleNote, setLifecycleNote] = useState('');
+  // The final "being deleted" state (#51) lives here: Edit profile is gone as soon as this phone is signed out.
+  const [deleted, setDeleted] = useState<{ signedOut: boolean } | null>(null);
   useEffect(() => { if (market.session) setLeftNotice(''); }, [market.session]);
   const startReorder: ReorderAction = (order, restoreFocus) => { if (!reorder) setReorder({ order, restoreFocus, identity: market.identity.current }); };
   const closeReorder = () => { setReorder(null); reorder?.restoreFocus(); };
@@ -351,12 +354,12 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
     {page === 'Privacy' || page === 'Terms' ? <CustomerLegal businessId={businessId} kind={page === 'Privacy' ? 'privacy' : 'terms'} go={path => navigation.current?.go(path)} /> : null}
     {page === 'Addresses' ? <CustomerAddresses market={market} /> : null}
     {page === 'Notifications' ? <CustomerNotifications market={market} go={path => navigation.current?.go(path)} /> : null}
-    {page === 'Profile' ? <CustomerProfile market={market} onDone={() => navigation.current?.go('/')} /> : null}
+    {page === 'Profile' ? <CustomerProfile market={market} onDone={() => navigation.current?.go('/')} deletion={{ signOut: async () => { draft.clearForSignOut(); await market.preferences.signOut(); }, onDeleted: setDeleted, go: path => navigation.current?.go(path), login: next => navigation.current?.login(next) }} /> : null}
   </ScrollView>;
   const sheet = confirming ? confirmationCopy(confirming.confirmation, confirming.address, confirming.totalPaise) : null;
   // Only the root Menu route waits for the first-launch welcome; deep links (/privacy, /login, orders) render normally.
   const welcomeScreen = welcome.state === 'show' ? <BrandWelcome onContinue={welcome.dismiss} /> : welcome.state === 'checking' ? <View style={{ flex: 1, backgroundColor: colors.background }} /> : null;
-  return <MarketFontsProvider value={fonts}><NameGate market={market} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} /><CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
+  return <MarketFontsProvider value={fonts}><NameGate market={market} signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} />{deleted ? <AccountDeletedNotice signedOut={deleted.signedOut} onClose={() => { setDeleted(null); navigation.current?.go('/'); }} /> : null}<CheckoutAddressDialogs ctrl={addrs} />{confirming && sheet ? <OrderConfirmationSheet copy={sheet} busy={busy} dismiss={() => setConfirming(null)} change={() => { setConfirming(null); addrs.open(placeTrigger.current); }} confirm={() => { const chosen = confirming; setConfirming(null);
     // The sheet quoted a total before the phone's location was awaited; never send a different one than was shown.
     try { if (validateOrder().pricing.total_paise !== chosen.totalPaise) { setLocalError('Your total changed. Please check your order and try again.'); return; } } catch (e) { setLocalError(messageOf(e)); return; }
     void submit(chosen.address, chosen.fix); }} /> : null}<CustomerNavigation signOut={async () => { draft.clearForSignOut(); await market.preferences.signOut(); }} market={market} render={render} controls={navigation} cartCount={cart.reduce((n, line) => n + line.quantity, 0)} onReorder={startReorder} reorderOpen={!!currentReorder} deliveryLine={deliveryAddressLine(demo ? null : addrs.selected)} welcome={welcomeScreen} offline={market.offline && !demo} />{currentDish ? <DishDetails key={`${market.identityVersion}-${currentDish.id}`} item={currentDish} inCart={cart.find(line => line.item.id === currentDish.id)?.quantity ?? 0} locked={locked} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onAdd={addDetails} onClose={closeDish} /> : null}{currentReorder ? <ReorderPanel key={`${market.identityVersion}-${currentReorder.order.id}`} businessId={businessId} order={currentReorder.order} market={market} draft={draft} paused={!!quote} orderingAllowed={orderingAllowed} orderingMessage={orderingMessage} onClose={closeReorder} onSaved={message => { setReorder(null); setCartMessage(message); setLocalError(''); navigation.current?.go('/cart'); }} /> : null}</MarketFontsProvider>;

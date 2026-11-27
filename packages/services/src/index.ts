@@ -524,7 +524,7 @@ const addressChanged = (cause?: unknown) => new ServiceError('ADDRESS_CHANGED', 
 function lifecycleError(error: { code?: string; details?: string | null } | null): void {
   if (error?.code === 'PT403' && error.details === 'BUSINESS_JOIN_REQUIRED') throw new ServiceError('BUSINESS_JOIN_REQUIRED', 'Join this restaurant before placing an order.', error);
   if (error?.code === 'PT409' && error.details === 'BUSINESS_LIFECYCLE_PENDING') throw new ServiceError('BUSINESS_LIFECYCLE_PENDING', 'Your restaurant relationship is being updated. Retry when it finishes.', error);
-  if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'Your account is being updated. Retry when it finishes.', error);
+  if (error?.code === 'PT409' && error.details === 'ACCOUNT_LIFECYCLE_PENDING') throw new ServiceError('ACCOUNT_LIFECYCLE_PENDING', 'This account is being deleted, so it can no longer be changed.', error);
 }
 
 // An unexpired JWT whose Auth session was deleted or has expired is refused by the database (#213): 42501 with detail
@@ -774,7 +774,7 @@ export function createMarketServices(options: ServiceOptions) {
   /** Profile failures never echo server text. A CHECK or NOT NULL refusal means the name was invalid. */
   const profileError = (error: { code?: string; details?: string | null } | null) => {
     if (!error) return;
-    inactiveSessionError(error);
+    inactiveSessionError(error); lifecycleError(error);
     // 23502 means an invalid name only because RLS runs before NOT NULL: a refused row never reaches the constraint.
     if (error.code === '23514' || error.code === '23502') throw new ServiceError('PROFILE_INVALID_NAME', FULL_NAME_MESSAGE, error);
     throw new ServiceError('PROFILE_REQUEST_FAILED', 'Could not reach your profile. Try again.', error);
@@ -808,6 +808,7 @@ export function createMarketServices(options: ServiceOptions) {
     scope.ensureCurrent();
     if (error) {
       inactiveSessionError(error);
+      lifecycleError(error);
       if (error.code === 'PT409' && error.details === 'ACCOUNT_HAS_ACTIVE_ORDER') throw new ServiceError('ACCOUNT_HAS_ACTIVE_ORDER', 'Finish your active orders before deleting your account.', error);
       if (error.code === 'PT409' && error.details === 'ONLY_OWNER') throw new ServiceError('ONLY_OWNER', 'Add another owner to your restaurant before deleting your account.', error);
       throw new ServiceError('ACCOUNT_DELETION_FAILED', 'Could not delete your account. Try again.', error);
@@ -1587,7 +1588,7 @@ export function createMarketServices(options: ServiceOptions) {
     if (!error) return;
     if (error.code === '23514' && /saved address limit reached/i.test(error.message)) throw new ServiceError('ADDRESS_LIMIT', 'You can save up to 20 addresses. Delete one to add another.', error);
     if (error.code === '23514' || error.code === '23502') throw new ServiceError('INVALID_ADDRESS', 'Check the address and try again.', error);
-    inactiveSessionError(error);
+    inactiveSessionError(error); lifecycleError(error);
     // Signed-out callers run as anon, which has no address access at all.
     if (error.code === '42501') throw new ServiceError('SIGN_IN_REQUIRED', 'Sign in to save addresses.', error);
     fail(error, action);
