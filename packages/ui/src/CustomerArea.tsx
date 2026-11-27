@@ -20,6 +20,7 @@ import { messageOf, useMarket } from './useMarket';
 import { CustomerNavigation, type CustomerScreen } from './CustomerNavigation';
 import { CustomerHistory, CustomerOrderDetail, type ReorderAction } from './CustomerOrders';
 import { useCustomerCart } from './useCustomerCart';
+import { nameToSaveAfterOrder, type ProfileRead } from './recipient-model';
 import { OfferError, OutsideHoursError, PricingChangedError, ServiceError } from '@market/services';
 import { traced, type EventName } from '@market/notifications';
 import { capturePricing, revisedLines, visibleQuote, type RevisedQuote } from './pricing-model';
@@ -52,6 +53,11 @@ function SendEvent({ name, consented, fire }: { name: EventName; consented: bool
   useEffect(() => { if (consented) fire(name); }, [consented, name, fire]);
   return null;
 }
+/** Reads the profile when checkout opens (once; the hook keeps the answer), so "Me" can show the saved name. */
+function ReadProfile({ ensure }: { ensure: () => Promise<void> }) {
+  useEffect(() => { void ensure(); }, [ensure]);
+  return null;
+}
 export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const market = useMarket(businessId); const { colors, name, menuLayout } = useMarketTheme(); const { width } = useWindowDimensions();
   const fonts = useBrandFonts(businessId); const welcome = useWelcome(businessId);
@@ -63,7 +69,9 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null); const viewportListener = useRef<((viewport: MenuViewport) => void) | null>(null);
   const navigation = useRef<{ go: (path: string) => void; login: (next: string) => void } | null>(null);
   const demo = market.services.mode === 'demo' || !!market.business?.isDemo;
-  const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading, { enabled: !demo && !!market.business && !market.loading, phone: market.session?.user.phone });
+  const profileRead = useRef<ProfileRead>({ status: 'idle', name: null }); // the latest read, for code that runs after an await
+  profileRead.current = { status: market.profile.status, name: market.profile.profile?.fullName ?? null };
+  const draft = useCustomerCart(businessId, market.session?.user.id ?? null, market.authReady, market.identityVersion, market.menu, !!market.business && !market.loading, { enabled: !demo && !!market.business && !market.loading, phone: market.session?.user.phone, profile: profileRead.current });
   const currentDish = selectedDish && sameIdentity(selectedDish.identity, market.identity.current) ? draft.menu.find(item => item.id === selectedDish.id) : undefined;
   const [reorder, setReorder] = useState<{ order: Order; restoreFocus: () => void; identity: typeof market.identity.current } | null>(null);
   const [cartMessage, setCartMessage] = useState('');
@@ -135,9 +143,11 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
       const order = await traced('checkout_submit', () => market.services.placeOrder(orderInput(saved)));
       if (!sameIdentity(started, market.identity.current)) return;
       market.preferences.fireOnce('order_completed', order.id);
-      // Only the account holder's own name is remembered, and only when this order was placed as "Me"; a recipient is never stored.
-      const remember = placedAsMe.current; placedAsMe.current = false;
-      if (remember) void draft.rememberOwnName(saved.userId, saved.delivery.name); // best effort; it never delays the receipt
+      // The profile has no name and this order was for "Me": keep the name just ordered with as the profile name (#45). Best effort: the order is
+      // placed, so a failure is swallowed, and a recipient's name is never saved. The old device copy goes only once the profile holds the name.
+      const asMe = placedAsMe.current; placedAsMe.current = false;
+      const toSave = nameToSaveAfterOrder(asMe, profileRead.current, saved.delivery.name);
+      if (toSave && !demo) void market.profile.save(toSave).then(() => draft.forgetDeviceName(saved.userId), () => {});
       if (!sameIdentity(started, market.identity.current)) return;
       setReceipt(order); await draft.resetCart(); if (!sameIdentity(started, market.identity.current)) return; navigation.current?.go(`/orders/${order.id}`);
       try { await AsyncStorage.removeItem(attemptKey(businessId)); market.setAttempt(null); }
@@ -307,6 +317,7 @@ export function CustomerArea({ businessId }: { businessId: BusinessSlug }) {
   const render = (page: CustomerScreen, orderId?: string) => <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" scrollEventThrottle={64} onScroll={event => { if (Platform.OS !== 'web') setViewportRevision(event.nativeEvent.contentOffset.y); if (page === 'Menu') viewportListener.current?.({ y: event.nativeEvent.contentOffset.y, height: event.nativeEvent.layoutMeasurement.height, contentHeight: event.nativeEvent.contentSize.height }); if (page === 'Orders' && !market.olderOrdersError) { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 180) void market.loadOlderOrders(); } }} contentContainerStyle={{ width: '100%', maxWidth: 1120, alignSelf: 'center', paddingHorizontal: edge, paddingTop: carta && page === 'Menu' ? 0 : 28, paddingBottom: 28, gap: 24 }}>
 
     {page === 'Menu' && !demo && !market.loading && !!market.business ? <SendEvent name="menu_view" consented={market.preferences.prefs.analytics} fire={market.preferences.fireOnce} /> : null}
+    {page === 'Cart' && !demo && market.session && market.authReady ? <ReadProfile key={market.session.user.id} ensure={market.profile.ensure} /> : null}
     {page === 'Cart' && !demo && draft.ready && cart.length > 0 ? <SendEvent name="ordering_started" consented={market.preferences.prefs.analytics} fire={market.preferences.fireOnce} /> : null}
     {page === 'Menu' && carta ? <CartaHeader name={name} {...menuProps} edge={width >= 760 ? 0 : edge} /> : null}
     {page === 'Menu' && !carta ? <View style={{ gap: 6 }}><Text accessibilityRole="header" aria-level={1} style={{ fontSize: 34, lineHeight: 42, color: colors.ink, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const }) }}>{name}</Text>{facts ? <MarketText variant="muted">{facts}</MarketText> : null}</View> : null}

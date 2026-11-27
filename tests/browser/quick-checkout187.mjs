@@ -3,10 +3,9 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
-import { otpSignIn } from './otp-login.mjs';
+import { otpSignIn, profileFixture, profilesUnavailable } from './otp-login.mjs';
 
-// #187 quicker checkout, both brands: the order is for "Me" (Mobile from the verified login phone, Name from the customer's own remembered
-// name) or "Someone else" (separate, never-stored details); typed text is never overwritten; nothing is shown to the next account; and the
+// #187 quicker checkout, both brands: the order is for "Me" (Mobile from the verified login phone, Name from the customer's profile, #45) or "Someone else" (separate, never-stored details); typed text is never overwritten; nothing is shown to the next account; and the
 // add-address form is inline only once the address list has loaded with zero addresses. Payloads are asserted on place_order.
 // Real customer exports and the installed SDK, with deterministic synthetic HTTP.
 const api = 'https://market-fixture.supabase.co';
@@ -54,6 +53,7 @@ async function run(slug, brand, { demo = false } = {}) {
     if (url.pathname === '/rest/v1/customer_addresses' && request.method() === 'POST') { const row = addressRow(newId, { ...request.postDataJSON(), distance_m: 900 }); rows[who].push(row); return json({ id: newId, version: 1 }, 201); }
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0);
     if (url.pathname === '/rest/v1/customer_businesses') return json([]);
+    if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // before the first sign-in; afterwards the page-level fixture answers
     if (url.pathname === '/rest/v1/rpc/place_order') {
       const body = request.postDataJSON(); orders.push(body); const terms = body.p_accepted_pricing;
       placed = { id: orderId, business_id: businessId, customer_id: who, status: 'placed', version: 1, created_at: new Date().toISOString(), subtotal_paise: terms.subtotal_paise, delivery_fee_paise: terms.delivery_fee_paise, total_paise: terms.total_paise, customer_name: body.p_delivery.name, customer_phone: body.p_delivery.phone, delivery_address_line: 'Flat 3, Sai Krupa Apartments, Bharne Naka', order_items: terms.lines.map(line => ({ menu_item_id: line.menu_item_id, diet: null, name: item.name, quantity: line.quantity, unit_price_paise: line.unit_price_paise, line_total_paise: line.line_total_paise })), order_status_history: [] };
@@ -69,10 +69,18 @@ async function run(slug, brand, { demo = false } = {}) {
   const cartLink = () => visible(page.getByRole('button', { name: /^Cart \(/ }));
   const shot = async name => { await page.waitForTimeout(500); await page.screenshot({ path: `${shots}/${slug}-${name}.png`, fullPage: true }); };
   const stored = id => page.evaluate(key => localStorage.getItem(key), `market:own-name:${encodeURIComponent(id)}`);
+  const profiles = profileFixture(page); profiles.mode = 'live';
+  const until = async condition => { for (let waited = 0; !condition(); waited += 50) { assert.ok(waited < 5000, 'timed out waiting for the profile save'); await page.waitForTimeout(50); } };
+  const savedNames = () => profiles.writes.map(write => write.body);
+  // A signed-in cart reads the profile when it opens. Wait for that answer (and a frame to show it) before asserting what "Me" holds.
+  const withRead = async action => {
+    const answered = page.waitForResponse(response => new URL(response.url()).pathname === '/rest/v1/profiles' && response.request().method() === 'GET');
+    await action(); await answered; await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  };
   // Taps are counted as button presses from the menu to a placed order; typing is counted separately.
   let taps = 0;
   const tap = async locator => { taps++; await locator.click(); };
-  const addAndOpenCart = async () => { await page.goto(server.url, { waitUntil: 'networkidle' }); taps = 0; if (await button('Add to cart').count()) await tap(button('Add to cart').first()); await tap(cartLink()); await text('Delivery details').waitFor(); };
+  const addAndOpenCart = async ({ signedIn = true } = {}) => { await page.goto(server.url, { waitUntil: 'networkidle' }); taps = 0; if (await button('Add to cart').count()) await tap(button('Add to cart').first()); await (signedIn ? withRead : (action => action()))(() => tap(cartLink())); await text('Delivery details').waitFor(); };
   const signIn = async user => {
     await button('Account').click(); const settings = button('Account settings'); if (await settings.count()) await settings.click();
     await otpSignIn(page, { email: user.email }); await button('Sign out').waitFor();
@@ -85,17 +93,16 @@ async function run(slug, brand, { demo = false } = {}) {
   const isMe = async () => (await radio('Me').getAttribute('aria-checked')) === 'true';
   let typing = 0;
   const type = async (locator, value) => { typing++; await locator.fill(value); };
-  const ownKey = JSON.stringify({ name: 'Asha Patil' });
   const counts = {};
   try {
     if (demo) {
       // The demo menu never prefills or stores: seed a remembered name for the signed-in account and check it stays unused and unchanged.
       await page.addInitScript(key => localStorage.setItem(key, JSON.stringify({ name: 'Stored Demo' })), `market:own-name:${encodeURIComponent(users[0].id)}`);
-      await page.goto(server.url, { waitUntil: 'networkidle' }); await signIn(users[0]);
-      await page.goto(server.url, { waitUntil: 'networkidle' }); await visible(page.getByRole('button').filter({ hasText: '+ Add' })).first().click(); await cartLink().click(); await text('Delivery details').waitFor();
+      await page.goto(server.url, { waitUntil: 'networkidle' }); await signIn(users[0]); // sign-in reads the profile
+      await page.goto(server.url, { waitUntil: 'networkidle' }); const drawerReads = profiles.reads.length; await visible(page.getByRole('button').filter({ hasText: '+ Add' })).first().click(); await cartLink().click(); await text('Delivery details').waitFor();
       assert.deepEqual(await values(), { name: '', phone: '' }, 'the demo cart is not prefilled');
       await field('Name').fill('Demo typed'); await page.waitForTimeout(300);
-      assert.equal(await stored(users[0].id), JSON.stringify({ name: 'Stored Demo' }), 'nothing is stored from the demo menu');
+      assert.equal(await stored(users[0].id), JSON.stringify({ name: 'Stored Demo' }), 'the demo menu leaves the device key alone'); assert.deepEqual([profiles.reads.length, profiles.writes.length], [drawerReads, 0], 'the demo cart never reads or saves a profile');
       assert.equal(orders.length, 0); assert.deepEqual(errors, []);
       console.log(`PASS: ${slug} demo menu does not prefill or store`); return;
     }
@@ -104,15 +111,17 @@ async function run(slug, brand, { demo = false } = {}) {
     await addAndOpenCart(); await text('Deliver to Home').waitFor();
     assert.equal(await isMe(), true, '"Me" is the default');
     assert.deepEqual(await values(), { name: '', phone: '9876543210' }, 'first order: Mobile from the signed-in phone, Name empty');
-    assert.equal(await stored(users[0].id), null, 'nothing is stored before an order');
+    assert.equal(await stored(users[0].id), null, 'nothing is stored on the device'); assert.deepEqual(savedNames(), [], 'nothing is saved before an order');
     typing = 0; await type(field('Name'), 'Asha Patil');
     await place({ name: 'Asha Patil', phone: '+919876543210' });
-    assert.equal(await stored(users[0].id), ownKey, 'only the own name is stored, per user id');
+    await until(() => savedNames().length === 1);
+    assert.deepEqual(savedNames(), [{ full_name: 'Asha Patil' }], 'the profile had no name, so the ordered name is saved to it, and only the name');
+    assert.equal(await stored(users[0].id), null, 'the name is never kept on the device any more');
     counts.firstTimer = { taps, typedFields: typing };
 
     // 2. Returning as "Me": Add -> Cart -> Place order with no typing sends the own name and the verified phone.
     await addAndOpenCart(); await text('Deliver to Home').waitFor();
-    assert.deepEqual(await values(), { name: 'Asha Patil', phone: '9876543210' });
+    assert.deepEqual(await values(), { name: 'Asha Patil', phone: '9876543210' }, 'Name comes from the profile');
     await shot('me-prefilled-390');
     await place({ name: 'Asha Patil', phone: '+919876543210' });
     counts.returningMe = { taps, typedFields: 0 }; assert.equal(taps, 3, 'Add, Cart, Place order');
@@ -130,28 +139,28 @@ async function run(slug, brand, { demo = false } = {}) {
     await radio('Someone else').click();
     assert.deepEqual(await otherValues(), { name: 'Ravi Kadam', phone: '9000011111' });
     await place({ name: 'Ravi Kadam', phone: '+919000011111' });
-    assert.equal(await stored(users[0].id), ownKey, 'an order for someone else leaves the own name unchanged');
+    assert.equal(profiles.names[users[0].id], 'Asha Patil', 'an order for someone else leaves the profile name unchanged'); assert.equal(savedNames().length, 1);
     assert.equal((await page.evaluate(() => Object.entries(localStorage).map(([k, v]) => k + v).join())).includes('Ravi'), false, 'the recipient is never stored');
 
     // 5. Returning but signed out: nothing shown; signing in at Place order fills the own details and the order needs no more typing.
-    await signOut(); await addAndOpenCart();
+    await signOut(); await addAndOpenCart({ signedIn: false });
     assert.deepEqual(await values(), { name: '', phone: '' }, 'signed out: nothing from the last account');
     await tap(button('Place order')); await button('Get code').waitFor();
-    await otpSignIn(page, { email: users[0].email });
+    await withRead(() => otpSignIn(page, { email: users[0].email }));
     await text('Delivery details').waitFor(); await text('Deliver to Home').waitFor();
     assert.deepEqual(await values(), { name: 'Asha Patil', phone: '9876543210' }, 'signing in fills the own details');
     await place({ name: 'Asha Patil', phone: '+919876543210' });
     counts.signedOutReturning = { taps, typedFields: 0 };
 
     // 6. A prefill that arrives late never overwrites typing: a name typed as a guest survives the prefill on sign-in.
-    await signOut(); await addAndOpenCart(); await field('Name').fill('Guest Typed');
-    await tap(button('Place order')); await button('Get code').waitFor(); await otpSignIn(page, { email: users[0].email });
+    await signOut(); await addAndOpenCart({ signedIn: false }); await field('Name').fill('Guest Typed');
+    await tap(button('Place order')); await button('Get code').waitFor(); await withRead(() => otpSignIn(page, { email: users[0].email }));
     await text('Delivery details').waitFor(); await text('Deliver to Home').waitFor();
     assert.deepEqual(await values(), { name: 'Guest Typed', phone: '9876543210' }, 'typed name kept, empty Mobile filled');
-    assert.equal(await stored(users[0].id), ownKey, 'typing alone stores nothing');
+    assert.equal(profiles.names[users[0].id], 'Asha Patil', 'the late profile read did not replace the typed name, and typing alone saves nothing'); assert.equal(savedNames().length, 1);
     // Sign out while "Someone else" holds a recipient: the next visitor sees "Me", empty, and nothing from them.
     await radio('Someone else').click(); await field('Recipient name').fill('Ravi Kadam');
-    await signOut(); await addAndOpenCart();
+    await signOut(); await addAndOpenCart({ signedIn: false });
     assert.equal(await isMe(), true); assert.deepEqual(await values(), { name: '', phone: '' }, 'signed out: back to Me, empty');
     assert.equal((await page.locator('body').innerText()).includes('Ravi'), false);
 
@@ -194,7 +203,8 @@ async function run(slug, brand, { demo = false } = {}) {
     assert.deepEqual(await values(), { name: 'Meera Joshi', phone: '9123456780' });
     await place({ name: 'Meera Joshi', phone: '+919123456780' });
     assert.equal(orders.at(-1).p_delivery.address_id, newId, 'the saved address is the one ordered to');
-    assert.equal(await stored(users[1].id), JSON.stringify({ name: 'Meera Joshi' }));
+    await until(() => profiles.names[users[1].id] === 'Meera Joshi');
+    assert.equal(await stored(users[1].id), null, 'nothing is kept on the device'); assert.equal(profiles.writes.at(-1).who, users[1].id, 'saved to the account that ordered');
     assert.deepEqual(errors, []);
     console.log(`PASS: ${slug} quick checkout. Taps from the menu to a placed order and fields typed: returning Me ${JSON.stringify(counts.returningMe)}; first-timer ${JSON.stringify(counts.firstTimer)}; signed-out returning (taps include the Place order that opens sign-in and the one after it; OTP entry not counted) ${JSON.stringify(counts.signedOutReturning)}`);
   } catch (error) { await shot('failure').catch(() => {}); throw error; }

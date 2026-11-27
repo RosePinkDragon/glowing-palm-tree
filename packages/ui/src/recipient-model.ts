@@ -1,3 +1,5 @@
+import { normalizeFullName } from '@market/core';
+
 // Who an order is for (#187): the account holder ("Me") or "Someone else". Pure state transitions, so the rules are unit-tested
 // without React. The hook in useCustomerCart owns the identity guards; this file owns what the fields hold.
 
@@ -58,16 +60,47 @@ export function restoreDelivery(state: RecipientState, delivery: Contact): Recip
   return { ...state, mode: 'other', other: shown };
 }
 
-/** The remembered own name, kept on this device per signed-in account until the shared profile exists (#45). */
-// Trade-off (#187): this key is not cleared on sign-out. It is per user, so the same person gets their name back; another account never reads it.
+/**
+ * The key an older version used to remember the customer's own name on this device. Nothing writes it any more (#45): the shared
+ * profile replaced it. It is only read to move that name into the profile (see planOwnName), and removed once it is no longer needed.
+ */
 export const ownNameKey = (userId: string) => `market:own-name:${encodeURIComponent(userId)}`;
-/** A stored value as a name, or null when it is missing, unreadable or not a usable name. */
+/** A stored value as a name, or null when it is missing, unreadable or not a usable name (trimmed, 1 to 120 characters). */
 export function parseOwnName(raw: string | null): string | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as { name?: unknown } | null;
-    const name = value && typeof value === 'object' && typeof value.name === 'string' ? value.name.trim() : '';
-    return name && name.length <= 120 ? name : null;
+    const { name, valid } = normalizeFullName(value && typeof value === 'object' ? value.name : '');
+    return valid ? name : null;
   } catch { return null; }
 }
-export const serializeOwnName = (name: string) => JSON.stringify({ name: name.trim() });
+
+/** What the profile read said. `ready` with `name: null` is the server confirming there is no name; `idle`, `loading` and `error` confirm nothing. */
+export interface ProfileRead { status: 'idle' | 'loading' | 'ready' | 'error'; name: string | null }
+
+/**
+ * Where the "Me" name comes from, and what to do with the old device key (#45). The profile wins; the device key is only ever used
+ * when the server CONFIRMED there is no name (an unavailable or failing read never counts, so nothing is guessed or migrated then).
+ *  - profile has a name: prefill it; the old key is obsolete, remove it.
+ *  - confirmed none, usable old name: prefill it and keep the key until the name is saved to the profile (after a successful order).
+ *  - confirmed none, key present but unusable: nothing to migrate, remove it.
+ *  - anything else (not read yet, loading, error): no name, leave the key alone.
+ * `stored` is the raw key value, or null when absent.
+ */
+export function planOwnName(read: ProfileRead, stored: string | null): { prefill: string | null; removeKey: boolean } {
+  if (read.status !== 'ready') return { prefill: null, removeKey: false };
+  if (read.name) return { prefill: read.name, removeKey: stored !== null };
+  const legacy = parseOwnName(stored);
+  return { prefill: legacy, removeKey: stored !== null && legacy === null };
+}
+
+/**
+ * After a successful order: the name to save to the profile, or null. Only an order placed as "Me", only when the profile read
+ * CONFIRMED no name (never when unavailable, so a failed read cannot overwrite a name that exists), and only a usable name.
+ * The order is already placed, so this is best effort and nothing about it may reach the customer.
+ */
+export function nameToSaveAfterOrder(asMe: boolean, read: ProfileRead, orderedName: string): string | null {
+  if (!asMe || read.status !== 'ready' || read.name) return null;
+  const { name, valid } = normalizeFullName(orderedName);
+  return valid ? name : null;
+}

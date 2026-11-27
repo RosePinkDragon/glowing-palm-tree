@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #182 slice C: offers in the customer cart and order screens, both brands, with the real customer and admin exports and synthetic HTTP.
 // The fixture prices carts the way slice A's quote_order does (a 20% offer capped at Rs 100 above Rs 300, plus a few codes) and compares the
@@ -97,6 +98,7 @@ try {
           if (fx.mode === 'lost') { fx.mode = 'placed'; return route.abort('failed'); }
           return json({ outcome: 'placed', id: orderId, ...(p.discount_paise ? { discount_paise: p.discount_paise } : {}) });
         }
+        if (path === '/rest/v1/profiles') return profilesUnavailable(route); // checkout reads the profile (#45): unavailable here
         throw new Error(`Unexpected offers request ${request.method()} ${path}`);
       });
       const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));

@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
-import { otpSignIn } from './otp-login.mjs';
+import { otpSignIn, profilesUnavailable } from './otp-login.mjs';
 
 const fixture = 'https://market-fixture.supabase.co';
 const slugs = ['ammu-sammu', 'kokani-dine-inn'];
@@ -96,6 +96,7 @@ try {
     }
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
     if (url.pathname === '/rest/v1/customer_businesses') return json([]);
+    if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // checkout reads the profile (#45): unavailable here, so "Me" keeps the typed name
     throw new Error('Unhandled cart fixture: ' + request.method() + ' ' + url.pathname);
   });
   const open = async (index, path = '/') => {
