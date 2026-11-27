@@ -1375,6 +1375,7 @@ export function createMarketServices(options: ServiceOptions) {
     const entered = typeof code === 'string' ? code.trim().toUpperCase() : '';
     if (!entered || entered.length > 64) throw offerError('not_found');
     const { data, error } = await db.rpc('check_offer_code', { p_business_slug: slug, p_code: entered });
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to use a code.', error);
     fail(error, 'Could not check the code');
     if (!data || typeof data.applies !== 'boolean') throw new ServiceError('INVALID_RESPONSE', 'The server returned an invalid code check.');
@@ -1398,6 +1399,7 @@ export function createMarketServices(options: ServiceOptions) {
     try { reply = await Promise.race([db.rpc('quote_order', { p_business_slug: slug, p_items: lines.map(line => ({ menu_item_id: line.item.id, quantity: line.quantity })), p_offer_code: entered }).abortSignal(abort.signal), timedOut]); }
     finally { clearTimeout(timer); }
     const { data, error } = reply;
+    inactiveSessionError(error);
     if (error?.code === '42501') throw new ServiceError('AUTH_REQUIRED', 'Sign in to get your prices.', error);
     outsideHoursError(error);
     demoRestaurantError(error);
