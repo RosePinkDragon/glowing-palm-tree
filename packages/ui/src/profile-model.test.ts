@@ -37,3 +37,8 @@ test('the drawer shows initials and the verified number as the design does', () 
   assert.equal(verifiedPhoneDisplay('+44 20 7946 0000'), '+44 20 7946 0000', 'a number that is not an Indian mobile is shown as stored');
   assert.equal(verifiedPhoneDisplay(null), ''); assert.equal(verifiedPhoneDisplay(undefined), '');
 });
+
+test('a profile save on an account that is being deleted says so (#51)', () => {
+  const failure = profileFailure(Object.assign(new Error('raw'), { code: 'ACCOUNT_LIFECYCLE_PENDING' }));
+  assert.equal(failure.message, 'This account is being deleted, so it can no longer be changed.');
+});

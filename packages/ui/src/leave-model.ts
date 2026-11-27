@@ -1,4 +1,5 @@
 import type { BusinessSlug } from '@market/core';
+import { accountPendingCopy } from './account-deletion-model.ts';
 
 // #52 customer "Leave [restaurant]": pure rules, free of React so they can be unit tested.
 export interface LeaveLink { businessSlug: BusinessSlug; businessName: string; generation: string; state: 'active' | 'leave_pending' | 'left' }
@@ -46,7 +47,8 @@ export function leaveFailure(error: unknown, name: string): LeaveFailure {
   const done = (message: string, flags: Partial<LeaveFailure> = {}): LeaveFailure => ({ message, retry: false, refresh: false, signIn: false, ...flags });
   if (code === 'ACTIVE_ORDERS') return done(`You have an order with ${name} that is not delivered or cancelled yet. You can leave once it is.`);
   if (code === 'LAST_BUSINESS') return done(`${name} is the only restaurant on your account, so it can't be left. An account has to stay with at least one restaurant.`);
-  if (code === 'BUSINESS_LIFECYCLE_PENDING' || code === 'ACCOUNT_LIFECYCLE_PENDING') return done('Your account is being updated. Try again shortly.', { retry: true });
+  if (code === 'ACCOUNT_LIFECYCLE_PENDING') return done(accountPendingCopy);
+  if (code === 'BUSINESS_LIFECYCLE_PENDING') return done('Your account is being updated. Try again shortly.', { retry: true });
   if (code === 'STALE_RELATIONSHIP' || code === 'LEAVE_REQUEST_CONFLICT') return done(`Your restaurants changed since this screen loaded. Check them and try again.`, { refresh: true });
   if (code === 'SIGN_IN_REQUIRED' || code === 'SESSION_CHANGED') return done('Sign in again to continue.', { signIn: true });
   return done(leaveRetryCopy, { retry: true });

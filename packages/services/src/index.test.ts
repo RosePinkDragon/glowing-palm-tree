@@ -808,6 +808,8 @@ test('saved addresses: list with server area/distance, versioned save, delete, a
       saveError = { code, message, details: null, hint: null };
       await assert.rejects(customer.saveAddress(draft), (e: unknown) => e instanceof ServiceError && e.code === expected, `${code} ${message}`);
     }
+    saveError = { code: 'PT409', message: 'account lifecycle pending', details: 'ACCOUNT_LIFECYCLE_PENDING', hint: null };
+    await assert.rejects(customer.saveAddress(draft), (e: unknown) => e instanceof ServiceError && e.code === 'ACCOUNT_LIFECYCLE_PENDING', 'a pending-deletion account gets its own code (#51)');
     saveError = null;
     await customer.deleteAddress(id);
     assert.equal(requests.at(-1)?.method, 'DELETE');

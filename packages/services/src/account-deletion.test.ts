@@ -62,6 +62,8 @@ test('refusals map to their own codes and never echo server text', async () => {
     await assert.rejects(service.requestAccountDeletion(), code('ONLY_OWNER'));
     answer(failure(403, { code: '42501', message: 'invalid session', details: 'INVALID_SESSION' }));
     await assert.rejects(service.requestAccountDeletion(), code('SIGN_IN_REQUIRED'));
+    answer(failure(409, { code: 'PT409', message: 'account lifecycle pending', details: 'ACCOUNT_LIFECYCLE_PENDING' }));
+    await assert.rejects(service.requestAccountDeletion(), code('ACCOUNT_LIFECYCLE_PENDING'));
     for (const body of [{ code: 'XX000', message: 'internal table detail', details: 'private' }, { code: 'PT409', message: 'x', details: 'SOMETHING_ELSE' }, { code: '42501', message: 'denied', details: null }]) {
       answer(failure(500, body));
       await assert.rejects(service.requestAccountDeletion(), (e: unknown) => e instanceof ServiceError && e.code === 'ACCOUNT_DELETION_FAILED' && !/internal|private|denied/.test(e.message));

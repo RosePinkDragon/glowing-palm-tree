@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ComponentRef } from 'react';
 import { AccessibilityInfo, findNodeHandle, Modal, Platform, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { businesses } from '@market/core';
@@ -6,6 +6,7 @@ import { MarketButton, MarketField, MarketStatus } from './components';
 import { sameIdentity } from './checkout-state';
 import { initialsOf, needsNameStep, profileFailure, validateProfileName, verifiedPhoneDisplay } from './profile-model';
 import { useMarketFonts, useMarketTheme } from './theme';
+import { DeleteAccount } from './DeleteAccount';
 import type { useMarket } from './useMarket';
 
 type Market = ReturnType<typeof useMarket>;
@@ -56,7 +57,7 @@ function FailureText({ text, node }: { text: string; node: React.RefObject<Compo
 }
 
 /** Edit profile (#45): the customer's name, saved to the account they share across both apps, and their verified number (read-only). */
-export function CustomerProfile({ market, onDone }: { market: Market; onDone: () => void }) {
+export function CustomerProfile({ market, onDone, deletion }: { market: Market; onDone: () => void; deletion?: Omit<ComponentProps<typeof DeleteAccount>, 'market'> }) {
   const { colors, name: restaurant, businessId } = useMarketTheme(); const fonts = useMarketFonts(); const ammu = businessId === 'ammu-sammu';
   const profile = market.profile, ensure = profile.ensure, userId = market.session?.user.id;
   useEffect(() => { void ensure(); }, [ensure, userId]);
@@ -66,8 +67,10 @@ export function CustomerProfile({ market, onDone }: { market: Market; onDone: ()
   const other = Object.values(businesses).map(business => business.name).find(value => value !== restaurant) ?? restaurant;
   const initials = initialsOf(profile.profile?.fullName ?? '');
   const heading = fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const };
-  if (profile.status === 'idle' || profile.status === 'loading') return <MarketStatus kind="loading" title="Loading your profile" />;
-  if (profile.status === 'error') return <MarketStatus kind="error" title="We couldn't load your profile" message="Check your connection, then try again." action={<MarketButton label="Retry" onPress={() => void profile.reload()} />} />;
+  // Deleting the account does not depend on the profile (#51): the row is there while the profile loads and when it could not be read.
+  const deleteRow = deletion && market.services.mode === 'backend' ? <DeleteAccount market={market} {...deletion} /> : null;
+  if (profile.status === 'idle' || profile.status === 'loading') return <View style={{ gap: 18 }}><MarketStatus kind="loading" title="Loading your profile" />{deleteRow}</View>;
+  if (profile.status === 'error') return <View style={{ gap: 18 }}><MarketStatus kind="error" title="We couldn't load your profile" message="Check your connection, then try again." action={<MarketButton label="Retry" onPress={() => void profile.reload()} />} />{deleteRow}</View>;
   return <View style={{ gap: 18 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
       <View testID="profile-avatar" accessible={false} aria-hidden style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: ammu ? colors.tint : colors.band, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: ammu ? colors.primary : colors.bandAccent, fontSize: 22, ...heading }}>{initials}</Text></View>
@@ -83,6 +86,7 @@ export function CustomerProfile({ market, onDone }: { market: Market; onDone: ()
     <View role="status" accessibilityLiveRegion="polite">{form.saved ? <Text style={{ color: colors.positive, fontSize: 15, fontWeight: '700' }}>Your profile is saved.</Text> : null}</View>
     <MarketButton label={form.saving ? 'Saving…' : 'Save changes'} disabled={form.saving} onPress={() => void form.submit()} />
     <MarketButton label="Done" variant="secondary" disabled={form.saving} onPress={onDone} />
+    {deleteRow}
   </View>;
 }
 

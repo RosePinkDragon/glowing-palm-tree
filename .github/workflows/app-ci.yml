@@ -183,6 +183,7 @@ jobs:
             commands: |
               npm run test:browser
               node tests/browser/quick-checkout187.mjs
+              node tests/browser/delete-account51.mjs
           - shard: cart-photos
             commands: |
               node tests/browser/cart.mjs

@@ -1,6 +1,7 @@
 // Decisions and copy for the customer profile (#45), kept free of React so tests can check them. The profile is one record per
 // account, shared by both restaurant apps; the verified phone is never part of it (it comes from sign-in).
 import { FULL_NAME_MESSAGE, normalizeFullName } from '@market/core';
+import { accountPendingCopy } from './account-deletion-model.ts';
 import { mobileFieldValue } from './recipient-model.ts';
 
 export type ProfileStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -22,6 +23,7 @@ export function profileFailure(error: unknown): { message: string; kind: Profile
   const code = typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : '';
   if (code === 'PROFILE_INVALID_NAME') return { message: FULL_NAME_MESSAGE, kind: 'name' };
   if (code === 'SIGN_IN_REQUIRED') return { message: 'Your sign-in has ended. Sign in again, then save your name.', kind: 'sign-in' };
+  if (code === 'ACCOUNT_LIFECYCLE_PENDING') return { message: accountPendingCopy, kind: 'retry' };
   if (code === 'SESSION_CHANGED') return { message: 'Your account changed. Check your details and try again.', kind: 'retry' };
   if (code === 'DEMO_MODE' || code === 'CUSTOMER_REQUIRED') return { message: 'Your profile is not available in this app.', kind: 'retry' };
   return { message: 'Could not reach your profile. Check your connection and try again.', kind: 'retry' };

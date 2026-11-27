@@ -131,6 +131,9 @@ test('error mappings: inactive session, refused name, and everything else', asyn
       failNext({ status, body: { code: status === 403 ? '42501' : 'XX000', message: 'internal table detail', details: 'something private' } });
       await assert.rejects(service.saveProfile({ fullName: 'Neha' }), (error: unknown) => error instanceof ServiceError && error.code === 'PROFILE_REQUEST_FAILED' && !/internal|private/.test(error.message), String(status));
     }
+    // An account that is being deleted gets its own code, so the screens can say so instead of a generic failure (#51).
+    failNext({ status: 409, body: { code: 'PT409', message: 'account lifecycle pending', details: 'ACCOUNT_LIFECYCLE_PENDING' } });
+    await assert.rejects(service.saveProfile({ fullName: 'Neha' }), (error: unknown) => error instanceof ServiceError && error.code === 'ACCOUNT_LIFECYCLE_PENDING' && /being deleted/.test(error.message) && !/lifecycle/.test(error.message));
     failNext({ status: 500, body: { code: 'XX000', message: 'boom' } });
     await assert.rejects(service.getProfile(), code('PROFILE_REQUEST_FAILED'));
     assert.equal((await service.saveProfile({ fullName: 'Neha' })).fullName, 'Neha', 'the service recovers after a failure');
