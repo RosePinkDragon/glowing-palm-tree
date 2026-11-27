@@ -171,6 +171,10 @@ Do these on the deployed domains before enabling ordering for real customers. Us
 7. Inspect `/firebase-messaging-worker.js` on each domain for the revalidating `Cache-Control` header.
 8. For each brand, an owner uploads a dish photo in the owners' app and it appears on the customer menu.
 9. Analytics, speed and error reports (steps 7a to 7c): with **Share app usage** off, the browser network tab shows no request to Google, Firebase or Sentry; with it on, a signed-in test account's events, traces and a test error reach the three dashboards.
+9a. On each of the four deployed sites, open DevTools, enable **Preserve log** in Console and Network, and reload. Confirm the document response has the `Content-Security-Policy` header and the Console reports no CSP violations while doing the following:
+   - Sign in through Turnstile on both customer sites and both owner sites.
+   - On each customer site, allow location at checkout and confirm the browser supplies a location. Check that menu photos load on the customer sites and dish photo previews load on the owner sites.
+   - After opting in to **Share app usage** on each site, confirm analytics, performance and a test error send successfully. On deployments with web push enabled, also grant notification permission, confirm the worker registers and receive a test notification.
 10. Then enable `ordering_enabled` for each business and report the live URLs only after this browser verification.
 
 ### 10. Rollback

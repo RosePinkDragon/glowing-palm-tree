@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { appKeys, exportWeb } from './export-web.mjs';
+
+test('all four web apps use identical Vercel header blocks', () => {
+  assert.equal(appKeys.length, 4);
+  const [reference, ...others] = appKeys;
+  const readHeaders = (app) => JSON.parse(readFileSync(new URL(`../apps/${app}/vercel.json`, import.meta.url), 'utf8')).headers;
+  const expected = readHeaders(reference);
+  assert.ok(Array.isArray(expected) && expected.length > 0, `${reference} must define Vercel headers`);
+  for (const app of others) assert.deepEqual(readHeaders(app), expected, `${app} Vercel headers differ from ${reference}`);
+});
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'market-web-export-'));
