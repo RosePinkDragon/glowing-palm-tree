@@ -114,6 +114,22 @@ test('quoteOrder sends the cart and code and returns validated pricing, the offe
   });
 });
 
+test('offer code and quote requests distinguish expired sessions from signed-out callers', async () => {
+  let failure = { code: '42501', message: 'invalid session', details: 'INVALID_SESSION' };
+  const refused = () => Response.json(failure, { status: 403 });
+  await withService({ check_offer_code: refused, quote_order: refused }, async (service) => {
+    const checkCode = () => service.checkOfferCode(businessId, 'WELCOME1');
+    const quote = () => service.quoteOrder(lines, 'WELCOME1');
+    for (const request of [checkCode, quote]) {
+      await assert.rejects(request, { name: 'ServiceError', code: 'SIGN_IN_REQUIRED', message: 'Your session ended. Sign in again.' });
+    }
+
+    failure = { code: '42501', message: 'authentication required', details: '' };
+    await assert.rejects(checkCode, { name: 'ServiceError', code: 'AUTH_REQUIRED', message: 'Sign in to use a code.' });
+    await assert.rejects(quote, { name: 'ServiceError', code: 'AUTH_REQUIRED', message: 'Sign in to get your prices.' });
+  });
+});
+
 test('listActiveOffers maps the menu-safe listing and rejects malformed data', async () => {
   const listed = { id: offerId, name: 'Happy hour', kind: 'percent', value: 10, max_discount_paise: null, min_order_paise: 0, first_order_only: false, ends_at: '2026-12-01T00:00:00+00:00', window: { from: '15:00', to: '18:00', days: [1, 2, 3, 4, 5] } };
   let answer: () => Response = () => Response.json([listed, { ...listed, id: '18200000-0000-4000-b000-000000000002', name: 'Free delivery', kind: 'free_delivery', value: null, ends_at: null, window: null }]);
