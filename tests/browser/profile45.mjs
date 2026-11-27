@@ -62,6 +62,14 @@ async function run(slug, brand) {
   const signOut = async () => { await button('Account').click(); await button('Log out').first().click(); await button('Account').waitFor(); };
   const openEditProfile = async () => { await button('Account').click(); await button('Account options').click(); await button('Edit profile').click(); };
   const writes = () => profiles.writes.map(write => write.body);
+  // The account drawer's header (#45 slice 2b): the canonical profile name (never user_metadata), the formatted verified phone and the initials.
+  const drawer = async (title, initials, phone = '+91 98765 43210') => {
+    await button('Account').click(); await page.getByRole('dialog').getByRole('heading', { name: title, exact: true }).waitFor();
+    await text(phone).waitFor(); assert.equal(await page.getByTestId('account-avatar').filter({ visible: true }).innerText(), initials, `avatar initials for ${title}`);
+    const body = await page.locator('body').innerText(); assert.equal(body.includes('Stale Metadata Name'), false, 'user_metadata is never shown');
+    return body;
+  };
+  const closeDrawer = async () => { await button('Close').click(); await button('Account').waitFor(); };
   try {
     // 1. First login: no name yet, so the required name step stands in front of the menu.
     await page.goto(server.url, { waitUntil: 'networkidle' });
@@ -72,11 +80,13 @@ async function run(slug, brand) {
     assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Welcome! What's your name?", 'focus starts on the heading');
     await shot('name-step-390');
     // Required: empty, whitespace and 121 characters are refused before any request, the error is shown and focus goes to the field.
-    for (const bad of ['', '   ', tooLong]) {
+    for (const bad of ['', '   ']) {
       await field('Full name').fill(bad); await button('Continue').click();
       await text(nameMessage).waitFor(); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Full name');
       assert.equal(profiles.writes.length, 0, 'an invalid name sends nothing');
     }
+    // The field itself stops at 120 characters (the rule is also enforced on save: see the unit tests).
+    await field('Full name').fill(tooLong); assert.equal((await field('Full name').inputValue()).length, 120, 'typing stops at 120 characters');
     // Only sign out is another way out.
     assert.ok(await button('Sign out').count() > 0, 'the step can be left by signing out');
     // A failed save keeps the step, says so in plain words and focuses the message; the typed name stays.
@@ -90,6 +100,8 @@ async function run(slug, brand) {
     assert.deepEqual(writes().slice(-1), [{ full_name: 'Asha Patil' }], 'saved trimmed; only the name is sent, never a user id');
     assert.equal(profiles.names[users[0].id], 'Asha Patil');
     assert.equal(profiles.writes.length, 2, 'the failed attempt and the retry only');
+    // The drawer shows the name just saved, with the verified phone formatted and the initials from the name.
+    await drawer('Asha Patil', 'AP'); await shot('drawer-390'); await closeDrawer();
 
     // 2. Once per account: signing out and in again, in this app or in the other (same server record), does not ask again.
     await signOut(); await signIn(users[0]); await page.waitForTimeout(800);
@@ -108,7 +120,7 @@ async function run(slug, brand) {
     await shot('edit-profile-390');
     // Validation first: nothing is sent, the error is shown and focus moves to the field.
     const before = profiles.writes.length;
-    for (const bad of ['', '    ', tooLong]) {
+    for (const bad of ['', '    ']) {
       await field('Full name').fill(bad); await button('Save changes').click();
       await text(nameMessage).waitFor(); await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Full name');
     }
@@ -120,6 +132,9 @@ async function run(slug, brand) {
     assert.equal(await field('Full name').inputValue(), 'Asha P.');
     profiles.failWrites = null; await button('Save changes').click(); await text('Your profile is saved.').waitFor();
     assert.deepEqual(writes().slice(-1), [{ full_name: 'Asha P.' }]); assert.equal(profiles.names[users[0].id], 'Asha P.');
+    // Same hook state: the drawer shows the saved edit at once, without waiting for another read.
+    const reads = profiles.reads.length; await button('Done').click(); await drawer('Asha P.', 'AP'); await closeDrawer();
+    assert.equal(profiles.reads.length, reads, 'the drawer reuses the saved profile: no extra read'); await openEditProfile(); await field('Full name').waitFor();
     // The edit survives leaving and returning: the server record, not the device, is the source.
     await page.reload({ waitUntil: 'networkidle' }); await field('Full name').waitFor(); // /profile is a deep link the host rewrites to the app
     assert.equal(await field('Full name').inputValue(), 'Asha P.');
@@ -128,6 +143,11 @@ async function run(slug, brand) {
     // 4. The profile can not be read: a plain message and Retry (the read is not guessed as "no name").
     profiles.mode = 'unavailable'; await page.goto(server.url, { waitUntil: 'networkidle' }); await openEditProfile();
     await text("We couldn't load your profile").waitFor(); assert.equal(await field('Full name').count(), 0);
+    // The drawer is neutral while the profile is unavailable: never the old name or user_metadata, and the verified phone still shows.
+    await button('Account').click(); await page.getByRole('dialog').getByRole('heading', { name: 'Your account', exact: true }).waitFor(); await text('+91 98765 43210').waitFor();
+    assert.equal(await page.getByTestId('account-avatar').filter({ visible: true }).innerText(), '', 'no initials without a name');
+    const neutral = await page.locator('body').innerText(); for (const secret of ['Asha', 'Stale Metadata Name']) assert.equal(neutral.includes(secret), false, `${secret} is not shown while the profile is unavailable`);
+    await shot('drawer-unavailable-390'); await closeDrawer(); await text("We couldn't load your profile").waitFor(); await page.waitForTimeout(600); // closing the drawer may read again; let it settle
     profiles.mode = 'live'; await button('Retry').click(); await field('Full name').waitFor(); assert.equal(await field('Full name').inputValue(), 'Asha P.');
 
     // 5. Another account on this device: never the previous name, and its own name step.
@@ -137,16 +157,24 @@ async function run(slug, brand) {
     for (const secret of ['Asha', 'Stale Metadata Name', '98765']) assert.equal(body.includes(secret), false, `${secret} is not shown to the next account`);
     await field('Full name').fill('Meera Joshi'); await button('Continue').click(); await stepTitle().waitFor({ state: 'hidden' });
     assert.equal(profiles.names[users[1].id], 'Meera Joshi'); assert.equal(profiles.names[users[0].id], 'Asha P.', 'each account has its own record');
+    assert.equal((await drawer('Meera Joshi', 'MJ', '+91 91234 56780')).includes('Asha'), false, 'the next account never sees the previous name in the drawer'); await closeDrawer();
 
     // 6. A restored session (a cold start) is never interrupted by the step, and Edit profile offers the empty field to fill.
     delete profiles.names[users[1].id]; await page.goto(server.url, { waitUntil: 'networkidle' }); await page.waitForTimeout(800);
     assert.equal(await stepTitle().count(), 0, 'a restored session is not interrupted');
+    await drawer('Your account', '', '+91 91234 56780'); await closeDrawer(); // no name saved: neutral, not the previous account's and not user_metadata
     await openEditProfile(); await field('Full name').waitFor(); assert.equal(await field('Full name').inputValue(), '');
 
     // 7. A slow profile read that finishes after sign-out never opens the step for the signed-out visitor.
     await page.goto(server.url, { waitUntil: 'networkidle' }); await signOut(); profiles.delay = 1500; await signIn(users[2]);
     await button('Sign out').click(); await button('Get code').waitFor(); await page.waitForTimeout(2200);
     assert.equal(await stepTitle().count(), 0, 'a late answer for the previous account is dropped'); profiles.delay = 0;
+    // 8. A failed first read after sign-in is not "no name": a later Retry must not pop the required step.
+    profiles.mode = 'unavailable'; await page.goto(server.url, { waitUntil: 'networkidle' });
+    await signIn(users[2]); await page.waitForTimeout(800); assert.equal(await stepTitle().count(), 0, 'a failed read never shows the name step');
+    await drawer('Your account', '', '+91 90000 11111'); await closeDrawer();
+    await openEditProfile(); await text("We couldn't load your profile").waitFor(); profiles.mode = 'live'; await button('Retry').click(); await field('Full name').waitFor();
+    assert.equal(await field('Full name').inputValue(), ''); assert.equal(await stepTitle().count(), 0, 'Retry after a failed first read does not pop the name step');
     assert.deepEqual(errors, []);
     console.log(`PASS: ${slug} profile name step, Edit profile, validation, errors and account isolation`);
   } catch (error) { await shot('profile-failure').catch(() => {}); throw error; }

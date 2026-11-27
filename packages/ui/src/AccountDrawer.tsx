@@ -7,6 +7,7 @@ import { useMarketFonts, useMarketTheme } from './theme';
 import { MarketIcon, type MarketIconName } from './MarketIcons';
 import { BrandLogo } from './BrandLogo';
 import { unreadLabel } from './notification-inbox';
+import { initialsOf, verifiedPhoneDisplay } from './profile-model';
 
 type Market = ReturnType<typeof useMarket>;
 export function AccountDrawer({ open, close, market, go, signOut, onReorder, covered }: { open: boolean; close: (restore?: boolean) => void; market: Market; go: (path: string) => void; signOut: () => Promise<void>; onReorder: ReorderAction; covered: boolean }) {
@@ -17,8 +18,12 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
   const [options, setOptions] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const user = market.session?.user;
   const optionTrigger = useRef<ComponentRef<typeof Pressable>>(null);
-  const fullName = typeof user?.user_metadata.full_name === 'string' ? user.user_metadata.full_name.trim().slice(0, 120) : '';
-  const initials = fullName.split(/\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join('').toUpperCase();
+  // The canonical profile name (#45), never user_metadata: the profile is what orders and both apps use. It is read when the drawer opens
+  // (and straight after sign-in, by the same hook), and refreshes when Edit profile saves. Until it is known the drawer stays neutral.
+  const ensureProfile = market.profile.ensure;
+  useEffect(() => { if (open && user) void ensureProfile(); }, [open, user?.id, ensureProfile]);
+  const fullName = market.profile.profile?.fullName ?? '';
+  const initials = initialsOf(fullName);
   const navigate = (path: string) => { setOptions(false); close(false); go(path); };
   useEffect(() => { if (!open) { setOptions(false); setError(''); } }, [open]);
   const refreshCount = market.inbox.refreshCount;
@@ -67,7 +72,7 @@ export function AccountDrawer({ open, close, market, go, signOut, onReorder, cov
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
               <View testID="account-avatar" accessible={false} aria-hidden style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 1, borderColor: ammu ? colors.onPrimary : colors.bandAccent, alignItems: 'center', justifyContent: 'center' }}>{initials ? <Text style={{ color: ammu ? colors.onPrimary : colors.bandAccent, fontSize: 22 }}>{initials}</Text> : null}</View>
               <View style={{ flex: 1, gap: 4 }}><Text ref={title} accessibilityRole="header" {...({ tabIndex: -1 } as object)} style={{ color: colors.onPrimary, fontSize: 23, ...(fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' }) }}>{fullName || 'Your account'}</Text>
-              <Text style={{ color: colors.onPrimary, fontSize: 14 }}>{user?.phone || 'Phone not added'}</Text></View>
+              <Text style={{ color: colors.onPrimary, fontSize: 14 }}>{verifiedPhoneDisplay(user?.phone) || 'Phone not added'}</Text></View>
             </View>
             {options ? <View style={{ padding: 12, borderRadius: 14, backgroundColor: colors.surface, gap: 8 }}><MarketButton label="Edit profile" variant="secondary" onPress={() => navigate('/profile')} /><MarketButton label="Log out" variant="secondary" disabled={busy} onPress={() => void logout()} /></View> : null}
           </View>

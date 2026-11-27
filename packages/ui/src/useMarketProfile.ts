@@ -35,7 +35,8 @@ export function useMarketProfile(services: Services, session: Session, identity:
       if (id !== request.current) return;
       patch(started, { status: 'ready', profile: profile ? { fullName: profile.fullName } : null });
     } catch {
-      if (id === request.current) patch(started, { status: 'error' });
+      // A failed first read after sign-in means the server never confirmed "no name", so a later Retry must not pop the required step.
+      if (id === request.current) patch(started, { status: 'error', fresh: false });
     }
   }, [services, identity, customer]);
   /** Reads the profile unless it is already loaded or loading. */
@@ -45,9 +46,14 @@ export function useMarketProfile(services: Services, session: Session, identity:
   const save = useCallback(async (fullName: string) => {
     const started = identity.current;
     ++request.current; // a read that began before this save must not bring back the old name
-    const saved = await services.saveProfile({ fullName });
-    patch(started, { status: 'ready', profile: { fullName: saved.fullName } });
-    return saved;
+    try {
+      const saved = await services.saveProfile({ fullName });
+      patch(started, { status: 'ready', profile: { fullName: saved.fullName } });
+      return saved;
+    } finally {
+      // The save dropped any read in flight (above); if the save failed, that read must not leave the view stuck on 'loading'. Retry is offered instead.
+      if (latest.current.status === 'loading' && sameIdentity(latest.current.identity, started)) patch(started, { status: 'error' });
+    }
   }, [services, identity]);
   // A sign-in during this run (not a restored session) reads the profile at once, so a missing name can be asked for before the menu.
   const previous = useRef({ ready: false, userId: null as string | null });
