@@ -44,7 +44,9 @@ export function createAnalytics(port: AnalyticsPort, context: AnalyticsContext) 
 }
 
 /** Speed monitoring (Firebase Performance). The only custom traces; names carry no data and traces take no attributes. */
-export type TraceName = 'checkout_submit' | 'otp_request' | 'otp_verify' | 'photo_upload';
+const customTraceNames = ['checkout_submit', 'otp_request', 'otp_verify', 'photo_upload'] as const;
+const traceNames = new Set<string>(customTraceNames);
+export type TraceName = typeof customTraceNames[number];
 export interface MonitoringPort {
   /** Loads and starts the SDK. Must not be called before consent. */
   enable(): Promise<void>;
@@ -58,7 +60,7 @@ export function setTracer(next: Tracer | undefined) { tracer = next; }
 /** Runs `work` inside a named trace when speed monitoring is active; otherwise just runs it. A tracing fault never affects `work`. */
 export async function traced<T>(name: TraceName, work: () => Promise<T>): Promise<T> {
   let stop: (() => void) | undefined;
-  try { stop = tracer?.(name); } catch { stop = undefined; }
+  try { if (traceNames.has(name)) stop = tracer?.(name); } catch { stop = undefined; }
   try { return await work(); }
   finally { try { stop?.(); } catch { /* ignore */ } }
 }
@@ -68,7 +70,7 @@ let reporter: ((error: unknown) => void) | undefined;
 export function setErrorReporter(next: ((error: unknown) => void) | undefined) { reporter = next; }
 export function reportError(error: unknown) { try { reporter?.(error); } catch { /* reporting must never break the screen */ } }
 
-// Redaction for anything that leaves the device in an error report or breadcrumb. Order matters: URLs first, then emails, phones, then codes.
+// Text redaction order matters: URLs first, then emails, phones, then codes.
 // Every pattern is bounded or anchored to a token start so a long string cannot cause quadratic work.
 const urlLikeHead = /^[("']*\/|(?:^|[^a-z0-9+.-])[a-z][a-z0-9+.-]{0,31}:\/\//i;
 const emailLike = /[A-Z0-9._%+-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,8}/gi;
@@ -90,67 +92,124 @@ export function stripUrlQuery(value: string): string {
 export function scrubText(value: string): string {
   return stripUrlQuery(value).replace(emailLike, '[email]').replace(indianPhone, '[phone]').replace(codeLike, '[code]');
 }
-function scrubValue(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') return scrubText(value);
-  if (depth > 12 || value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(item => scrubValue(item, depth + 1));
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) result[key] = scrubValue(item, depth + 1);
-  return result;
-}
 /** Minimal shape of a Sentry event/breadcrumb; the scrubber is generic so it needs no SDK types. */
 type Loose = Record<string, unknown>;
 const isObject = (value: unknown): value is Loose => value !== null && typeof value === 'object' && !Array.isArray(value);
-/** Breadcrumbs: only the free-text message and data can carry user input; type, category, level and timestamp pass through. */
+const redactedError = 'Error details removed';
+const httpMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE']);
+const exceptionTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError', 'DOMException', 'AbortError', 'ServiceError', 'OfferError', 'OtpError']);
+const breadcrumbCategories = new Set(['console', 'fetch', 'xhr', 'navigation', 'ui.click', 'ui.input', 'sentry.event']);
+const eventLevels = new Set(['fatal', 'error', 'warning', 'log', 'info', 'debug']);
+
+function requestSummary(value: Loose): Loose {
+  const summary: Loose = {};
+  if (typeof value.method === 'string' && httpMethods.has(value.method)) summary.method = value.method;
+  if (typeof value.url === 'string') {
+    try {
+      const url = new URL(value.url);
+      if (url.protocol === 'https:' || url.protocol === 'http:') summary.url = url.origin;
+    } catch { /* A relative path carries no origin. */ }
+  }
+  return summary;
+}
+
+/** Keep the category and basic HTTP diagnostics without messages or arbitrary payload data. */
 export function scrubBreadcrumb<T extends Loose>(breadcrumb: T): T {
-  const copy: Loose = { ...breadcrumb };
-  if ('message' in copy) copy.message = scrubValue(copy.message, 0);
-  if ('data' in copy) copy.data = scrubValue(copy.data, 0);
+  const copy: Loose = {};
+  if (typeof breadcrumb.category === 'string' && breadcrumbCategories.has(breadcrumb.category)) copy.category = breadcrumb.category;
+  if (typeof breadcrumb.level === 'string' && eventLevels.has(breadcrumb.level)) copy.level = breadcrumb.level;
+  if (typeof breadcrumb.timestamp === 'number' && Number.isFinite(breadcrumb.timestamp)) copy.timestamp = breadcrumb.timestamp;
+  if (isObject(breadcrumb.data)) {
+    const { status_code } = breadcrumb.data;
+    const summary = requestSummary(breadcrumb.data);
+    if (typeof status_code === 'number' && Number.isInteger(status_code) && status_code >= 0 && status_code <= 599) {
+      summary.status_code = status_code;
+    }
+    if (Object.keys(summary).length) copy.data = summary;
+  }
   return copy as T;
 }
-function scrubFrame(frame: unknown): unknown {
-  if (!isObject(frame)) return frame;
-  const copy: Loose = { ...frame };
-  for (const key of ['filename', 'abs_path']) if (typeof copy[key] === 'string') copy[key] = stripUrlQuery(copy[key] as string);
-  if ('vars' in copy) copy.vars = scrubValue(copy.vars, 0);
-  return copy;
+
+// Stack strings can come from a thrown value. Preserve only generated Expo bundle paths and numeric positions.
+function codeAsset(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const path = new URL(value, 'https://app.invalid').pathname;
+    return path.match(/\/_expo\/static\/js\/web\/(?:index|chunk)-[\da-f]{32}\.js$/i)?.[0];
+  } catch { return undefined; }
 }
-function scrubException(exception: unknown): unknown {
-  if (!isObject(exception) || !Array.isArray(exception.values)) return exception;
-  return {
-    ...exception,
-    values: exception.values.map(item => {
-      if (!isObject(item)) return item;
-      const copy: Loose = { ...item };
-      if ('value' in copy) copy.value = scrubValue(copy.value, 0);
-      if (isObject(copy.stacktrace) && Array.isArray(copy.stacktrace.frames)) copy.stacktrace = { ...copy.stacktrace, frames: copy.stacktrace.frames.map(scrubFrame) };
-      return copy;
-    })
-  };
+function scrubStacktrace(stacktrace: unknown): Loose | undefined {
+  if (!isObject(stacktrace) || !Array.isArray(stacktrace.frames)) return undefined;
+  const frames = stacktrace.frames.flatMap(frame => {
+    if (!isObject(frame)) return [];
+    const filename = codeAsset(frame.filename) ?? codeAsset(frame.abs_path);
+    if (!filename) return [];
+    const copy: Loose = { filename };
+    if (typeof frame.lineno === 'number' && Number.isInteger(frame.lineno)) copy.lineno = frame.lineno;
+    if (typeof frame.colno === 'number' && Number.isInteger(frame.colno)) copy.colno = frame.colno;
+    if (typeof frame.in_app === 'boolean') copy.in_app = frame.in_app;
+    return [copy];
+  });
+  return frames.length ? { frames } : undefined;
+}
+function scrubException(exception: unknown): Loose | undefined {
+  if (!isObject(exception) || !Array.isArray(exception.values)) return undefined;
+  const values = exception.values.filter(isObject).map(item => {
+    const copy: Loose = { type: typeof item.type === 'string' && exceptionTypes.has(item.type) ? item.type : 'Error', value: redactedError };
+    const stacktrace = scrubStacktrace(item.stacktrace);
+    if (stacktrace) copy.stacktrace = stacktrace;
+    if (isObject(item.mechanism)) {
+      const { handled, exception_id, parent_id, is_exception_group } = item.mechanism;
+      const mechanism: Loose = { type: 'generic' };
+      if (typeof handled === 'boolean') mechanism.handled = handled;
+      if (typeof exception_id === 'number' && Number.isInteger(exception_id)) mechanism.exception_id = exception_id;
+      if (typeof parent_id === 'number' && Number.isInteger(parent_id)) mechanism.parent_id = parent_id;
+      if (typeof is_exception_group === 'boolean') mechanism.is_exception_group = is_exception_group;
+      copy.mechanism = mechanism;
+    }
+    return copy;
+  });
+  return values.length ? { values } : undefined;
 }
 /**
- * Drops identity and request payload fields entirely, then scrubs only the fields a user can influence:
- * message, logentry, exception values, breadcrumbs, request url, extra, tags and non-trace contexts.
- * Structural fields (event_id, release, environment, dist, sdk, timestamp, platform, trace data, debug_meta, stack frames) are never rewritten,
- * apart from the query and fragment of frame file names.
+ * Free-text messages can contain names or addresses in any language. Replace them before sending,
+ * and keep stack locations, release metadata and basic HTTP diagnostics for triage.
  */
 export function scrubEvent<T extends Loose>(event: T): T {
-  const copy: Loose = { ...event };
-  delete copy.user; delete copy.server_name;
-  if (isObject(copy.request)) {
-    const { url, method } = copy.request;
-    copy.request = { ...(typeof url === 'string' ? { url: stripUrlQuery(url) } : {}), ...(typeof method === 'string' ? { method } : {}) };
-  } else delete copy.request;
-  if ('message' in copy) copy.message = scrubValue(copy.message, 0);
-  if ('logentry' in copy) copy.logentry = scrubValue(copy.logentry, 0);
-  if ('exception' in copy) copy.exception = scrubException(copy.exception);
-  if (Array.isArray(copy.breadcrumbs)) copy.breadcrumbs = copy.breadcrumbs.map(item => isObject(item) ? scrubBreadcrumb(item) : item);
-  if ('extra' in copy) copy.extra = scrubValue(copy.extra, 0);
-  if ('tags' in copy) copy.tags = scrubValue(copy.tags, 0);
-  if (isObject(copy.contexts)) {
-    const contexts: Loose = {};
-    for (const [key, item] of Object.entries(copy.contexts)) contexts[key] = key === 'trace' ? item : scrubValue(item, 0);
-    copy.contexts = contexts;
+  const copy: Loose = {};
+  for (const key of ['event_id', 'release', 'environment', 'dist', 'platform']) {
+    if (typeof event[key] === 'string') copy[key] = event[key];
+  }
+  if (typeof event.timestamp === 'number' && Number.isFinite(event.timestamp)) copy.timestamp = event.timestamp;
+  if (typeof event.level === 'string' && eventLevels.has(event.level)) copy.level = event.level;
+  if (isObject(event.sdk) && event.sdk.name === 'sentry.javascript.browser' &&
+    typeof event.sdk.version === 'string' && /^\d+\.\d+\.\d+$/.test(event.sdk.version)) {
+    copy.sdk = { name: event.sdk.name, version: event.sdk.version };
+  }
+  if (isObject(event.debug_meta) && Array.isArray(event.debug_meta.images)) {
+    const images = event.debug_meta.images.flatMap(image => {
+      if (!isObject(image) || image.type !== 'sourcemap' ||
+        typeof image.debug_id !== 'string' || !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(image.debug_id)) return [];
+      const codeFile = codeAsset(image.code_file);
+      return codeFile ? [{ type: 'sourcemap', debug_id: image.debug_id, code_file: codeFile }] : [];
+    });
+    if (images.length) copy.debug_meta = { images };
+  }
+  if (isObject(event.request)) copy.request = requestSummary(event.request);
+  if ('message' in event || 'logentry' in event) copy.message = redactedError;
+  const exception = scrubException(event.exception);
+  if (exception) copy.exception = exception;
+  const stacktrace = scrubStacktrace(event.stacktrace);
+  if (stacktrace) copy.stacktrace = stacktrace;
+  if (Array.isArray(event.breadcrumbs)) copy.breadcrumbs = event.breadcrumbs.filter(isObject).map(scrubBreadcrumb);
+  const trace = isObject(event.contexts) && isObject(event.contexts.trace) ? event.contexts.trace : undefined;
+  if (trace) {
+    const ids: Loose = {};
+    for (const [key, length] of [['trace_id', 32], ['span_id', 16], ['parent_span_id', 16]] as const) {
+      const id = trace[key];
+      if (typeof id === 'string' && id.length === length && /^[\da-f]+$/i.test(id)) ids[key] = id;
+    }
+    if (Object.keys(ids).length) copy.contexts = { trace: ids };
   }
   return copy as T;
 }
