@@ -37,15 +37,18 @@ export async function finish(ports: Ports, options: Options = {}): Promise<{ sum
   const summary: Summary = { listed: 0, deleted: 0, already_gone: 0, skipped: 0, failed: 0, complete: false };
   // Accounts that failed or were skipped (not removed from the list) stay at the head of the list; ask for enough extra rows to look past them.
   const stuck = new Set<string>();
-  for (let round = 0; round < maxRounds; round++) {
+  rounds: for (let round = 0; round < maxRounds && now() < deadline; round++) {
     const asked = batchSize + stuck.size;
     let rows: Pending[];
     try { rows = await ports.list(asked); } catch { ports.log('finish-account-deletions: list failed'); return { summary, listFailed: true }; }
     const fresh = rows.filter((r) => !stuck.has(r.customerId)).slice(0, batchSize);
     if (fresh.length === 0) { summary.complete = true; break; }
     summary.listed += fresh.length;
-    for (const row of fresh) {
-      if (now() >= deadline) { summary.skipped++; stuck.add(row.customerId); continue; }
+    for (const [index, row] of fresh.entries()) {
+      if (now() >= deadline) {
+        summary.skipped += fresh.length - index;
+        break rounds;
+      }
       if (!UUID.test(row.customerId)) { summary.failed++; stuck.add(row.customerId); ports.log('finish-account-deletions: invalid id from list'); continue; }
       let step = 'prepare';
       try {
