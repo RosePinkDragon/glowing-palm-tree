@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #48 customer slice: saved-address list, add/edit/delete, location denied, in both brands.
 // Real customer exports and the installed SDK, with deterministic synthetic HTTP.
@@ -66,6 +67,7 @@ try {
         if (method === 'DELETE') { writes.push({ method, id }); fixture.rows = fixture.rows.filter(item => item.id !== id); return route.fulfill({ status: 204, body: '' }); }
       }
       if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
+      if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // the drawer reads the profile (#45): unavailable here
       throw new Error(`Unexpected addresses request ${method} ${url.pathname}`);
     });
     const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
