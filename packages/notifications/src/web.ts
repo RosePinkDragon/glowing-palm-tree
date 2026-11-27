@@ -50,19 +50,32 @@ export function createWebAnalytics(config: Partial<WebConfig>, policy?: { enhanc
 /** Firebase Performance, loaded with a dynamic import only after consent. Needs the same public config as analytics; without it enable() throws and nothing loads. */
 export function createWebPerformance(config: Partial<WebConfig>): MonitoringPort {
   let perf: import('firebase/performance').FirebasePerformance | undefined;
+  let consentVersion = 0;
   return {
     async enable() {
       if (!configured(config)) throw new Error('Firebase Performance is not configured.');
       const sdk = await import('firebase/performance');
-      perf ??= sdk.getPerformance(appFor(config));
-      perf.instrumentationEnabled = true;
-      perf.dataCollectionEnabled = true;
+      // Performance only supports the default app. initializeApp rejects a conflicting config.
+      perf ??= sdk.initializePerformance(initializeApp(config), { instrumentationEnabled: false, dataCollectionEnabled: false });
       const current = perf;
-      setTracer(name => { const t = sdk.trace(current, name); t.start(); return () => t.stop(); });
+      const enabled = ++consentVersion;
+      setTracer(name => {
+        const startedAt = Date.now();
+        const start = performance.now();
+        return () => {
+          if (enabled !== consentVersion) return;
+          // Firebase classifies observed browser User Timing measures as custom traces.
+          // Open that gate only during the synchronous record of this app-owned trace.
+          current.dataCollectionEnabled = true;
+          try { sdk.trace(current, name).record(startedAt, Math.max(performance.now() - start, 0.001)); }
+          finally { current.dataCollectionEnabled = false; }
+        };
+      });
     },
     async disable() {
+      consentVersion++;
       setTracer(undefined);
-      if (perf) { perf.instrumentationEnabled = false; perf.dataCollectionEnabled = false; }
+      if (perf) perf.dataCollectionEnabled = false;
     }
   };
 }

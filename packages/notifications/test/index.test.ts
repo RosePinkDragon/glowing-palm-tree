@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+import { defaultStackParser, exceptionFromError } from '@sentry/browser';
 import { createAnalytics, createEventOnce, createMessaging, createMonitoring, reportError, scrubBreadcrumb, scrubEvent, scrubText, setErrorReporter, setTracer, traced, unavailableNativeMessaging, type EventName } from '../src/index.ts';
 import { createWebErrorReporting, createWebPerformance, webSentryOptions } from '../src/web.ts';
 
@@ -135,6 +137,56 @@ test('the web performance adapter does not load or install a tracer without conf
   await performance.disable();
 });
 
+test('the performance adapter only collects custom traces and keeps automatic instrumentation off across consent changes', async (t) => {
+  const sdkUrl = 'data:text/javascript,' + encodeURIComponent(`
+    export const calls = [];
+    export const perf = { instrumentationEnabled: true, dataCollectionEnabled: false };
+    export function initializePerformance(app, settings) {
+      calls.push(['init', app.name, settings]);
+      return Object.assign(perf, settings);
+    }
+    export function trace(instance, name) {
+      return { record: (start, duration) => {
+        if (!(start > 0 && duration > 0)) throw new Error('Expected positive trace timing');
+        calls.push(['trace', name, instance.instrumentationEnabled, instance.dataCollectionEnabled]);
+      } };
+    }
+  `);
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === 'firebase/performance' && context.parentURL?.endsWith('/src/web.ts')) {
+        return { url: sdkUrl, shortCircuit: true };
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+  t.after(() => hooks.deregister());
+  const sdk = await import(sdkUrl) as { calls: unknown[]; perf: { instrumentationEnabled: boolean; dataCollectionEnabled: boolean } };
+  const monitoring = createMonitoring([createWebPerformance({ apiKey: 'test', projectId: 'test', appId: 'test', messagingSenderId: 'test' })]);
+  t.after(() => monitoring.setConsent(false));
+  await traced('checkout_submit', async () => {});
+  assert.deepEqual(sdk.calls, []);
+  await monitoring.setConsent(true);
+  assert.deepEqual(sdk.perf, { instrumentationEnabled: false, dataCollectionEnabled: false });
+  await traced('checkout_submit', async () => {});
+  await traced('Mango Lane' as never, async () => {});
+  assert.equal(sdk.perf.dataCollectionEnabled, false);
+  let finish!: () => void;
+  const oldTrace = traced('otp_verify', () => new Promise<void>(resolve => { finish = resolve; }));
+  await monitoring.setConsent(false);
+  assert.deepEqual(sdk.perf, { instrumentationEnabled: false, dataCollectionEnabled: false });
+  await traced('otp_verify', async () => {});
+  await monitoring.setConsent(true);
+  finish();
+  await oldTrace;
+  await traced('photo_upload', async () => {});
+  assert.deepEqual(sdk.calls, [
+    ['init', '[DEFAULT]', { instrumentationEnabled: false, dataCollectionEnabled: false }],
+    ['trace', 'checkout_submit', false, true],
+    ['trace', 'photo_upload', false, true],
+  ]);
+});
+
 test('traced records names only, stops on failure and ignores tracer faults', async () => {
   const events: string[] = [];
   setTracer(name => { events.push(`start ${name}`); return () => events.push(`stop ${name}`); });
@@ -193,29 +245,59 @@ test('scrubText redacts Indian phone numbers, emails and code-like numbers', () 
   assert.equal(scrubText('port :8081 code 482913.'), 'port :[code] code [code].');
 });
 
-test('scrubEvent removes identity and request payloads and scrubs every string, including breadcrumbs', () => {
+const bundlePath = '/_expo/static/js/web/index-7397e2f0aa93640fc4746390dcb1941f.js';
+
+test('scrubEvent removes names and addresses from messages, breadcrumbs and arbitrary payloads', () => {
   const event = {
-    message: 'Order for 9876543210 failed, code 123456',
+    message: 'Order for Asha Naik at Mango Lane failed, code 123456',
     user: { id: 'u1', email: 'a@b.com', ip_address: '1.2.3.4' },
-    request: { url: 'https://shop.example.com/login?phone=9876543210#x', method: 'POST', data: { phone: '9876543210' }, cookies: { s: 'x' }, headers: { Cookie: 'x' }, query_string: 'phone=9876543210' },
-    exception: { values: [{ type: 'Error', value: 'bad email test@example.com', stacktrace: { frames: [{ filename: 'https://shop.example.com/index.js?v=1', lineno: 12345 }] } }] },
-    breadcrumbs: [{ category: 'fetch', message: 'GET https://x.supabase.co/rest/v1/a?phone=eq.9876543210', data: { url: 'https://x.supabase.co/a?b=1', status_code: 200 } }],
-    tags: { release: 'v1' },
+    request: { url: 'https://shop.example.com/Mango%20Lane?phone=9876543210#x', method: 'POST', data: { phone: '9876543210' }, cookies: { s: 'x' }, headers: { Cookie: 'x' }, query_string: 'phone=9876543210' },
+    logentry: { message: 'आशा नाईक', params: ['Mango Lane'] },
+    exception: { values: [{ type: 'Asha Naik', value: 'bad address Mango Lane and email test@example.com',
+      mechanism: { type: 'generic', handled: true, data: { address: 'Mango Lane' } },
+      stacktrace: { frames: [{ filename: 'https://shop.example.com' + bundlePath + '?v=1', lineno: 12345, vars: { name: 'Asha Naik' } }] } }] },
+    breadcrumbs: [{ category: 'fetch', message: 'Mango Lane', data: { url: 'https://x.supabase.co/a?b=1', status_code: 200, address: 'Mango Lane' } }],
+    tags: { name: 'Asha Naik' },
+    extra: { 'आशा नाईक': 'Mango Lane' },
   };
   const clean = scrubEvent(event);
   assert.equal(clean.user, undefined);
-  assert.deepEqual(clean.request, { url: 'https://shop.example.com/login', method: 'POST' });
-  assert.equal(clean.message, 'Order for [phone] failed, code [code]');
-  assert.equal(clean.exception.values[0].value, 'bad email [email]');
-  assert.equal(clean.exception.values[0].stacktrace.frames[0].filename, 'https://shop.example.com/index.js');
+  assert.deepEqual(clean.request, { url: 'https://shop.example.com', method: 'POST' });
+  assert.equal(clean.message, 'Error details removed');
+  assert.equal(clean.logentry, undefined);
+  assert.equal(clean.exception.values[0].type, 'Error');
+  assert.equal(clean.exception.values[0].value, 'Error details removed');
+  assert.equal(clean.exception.values[0].mechanism.handled, true);
+  assert.equal(clean.exception.values[0].mechanism.data, undefined);
+  assert.equal(clean.exception.values[0].stacktrace.frames[0].filename, bundlePath);
   assert.equal(clean.exception.values[0].stacktrace.frames[0].lineno, 12345);
-  assert.equal(clean.breadcrumbs[0].message, 'GET https://x.supabase.co/rest/v1/a');
-  assert.equal(clean.breadcrumbs[0].data.url, 'https://x.supabase.co/a');
-  assert.equal(clean.breadcrumbs[0].data.status_code, 200);
-  assert.equal(clean.tags.release, 'v1');
-  assert.ok(!JSON.stringify(clean).match(/9876543210|123456|test@example|a@b\.com|1\.2\.3\.4|\?/));
+  assert.equal(clean.exception.values[0].stacktrace.frames[0].vars, undefined);
+  assert.equal(clean.breadcrumbs[0].message, undefined);
+  assert.deepEqual(clean.breadcrumbs[0].data, { url: 'https://x.supabase.co', status_code: 200 });
+  assert.equal(clean.tags, undefined);
+  assert.doesNotMatch(JSON.stringify(clean), /Asha|आशा|Mango|9876543210|123456|test@example|a@b\.com|1\.2\.3\.4|\?/);
   assert.equal((event.request as { url: string }).url.includes('?'), true, 'the input is not modified');
-  assert.deepEqual(scrubBreadcrumb({ category: 'ui.click', message: 'tap 9876543210' }), { category: 'ui.click', message: 'tap [phone]' });
+  assert.deepEqual(scrubBreadcrumb({ category: 'ui.click', message: 'tap 9876543210' }), { category: 'ui.click' });
+});
+
+test('actual Sentry parsed stacks keep a deployed bundle location and drop supplied names and paths', () => {
+  const error = new TypeError('Asha Naik at Mango Lane');
+  error.stack = [
+    'TypeError: Asha Naik at Mango Lane',
+    '    at AshaNaik (https://shop.example.com/Mango%20Lane.js:10:8)',
+    '    at AshaNaik (https://shop.example.com' + bundlePath + '?address=Mango%20Lane:20:6)',
+  ].join('\n');
+  const exception = exceptionFromError(defaultStackParser, error);
+  assert.match(JSON.stringify(exception), /AshaNaik.*Mango%20Lane/);
+  const event = { exception: { values: [exception] }, stacktrace: exception.stacktrace, arbitrary: 'Mango Lane' };
+  const clean = scrubEvent(event);
+  assert.doesNotMatch(JSON.stringify(clean), /Asha|Mango/);
+  const frames = clean.exception.values[0].stacktrace?.frames;
+  assert.equal(frames?.length, 1);
+  assert.equal(frames?.[0].filename, bundlePath);
+  assert.equal(frames?.[0].lineno, 20);
+  assert.equal(frames?.[0].colno, 6);
+  assert.deepEqual(clean.stacktrace?.frames, frames);
 });
 
 test('Sentry options switch off personal data, replay and tracing and scrub in both hooks', () => {
@@ -226,10 +308,10 @@ test('Sentry options switch off personal data, replay and tracing and scrub in b
   assert.equal('replaysSessionSampleRate' in options, false);
   assert.equal(options.environment, 'production');
   assert.equal(options.release, 'abc123');
-  const sent = options.beforeSend!({ message: 'x 9876543210', request: { url: 'https://a.b/c?d=1' } } as never, {} as never) as { message: string; request: { url: string } };
-  assert.equal(sent.message, 'x [phone]');
-  assert.equal(sent.request.url, 'https://a.b/c');
-  assert.equal((options.beforeBreadcrumb!({ message: 'a@b.com' } as never, undefined) as { message: string }).message, '[email]');
+  const sent = options.beforeSend!({ message: 'Asha Naik at Mango Lane', request: { url: 'https://a.b/c?d=1' } } as never, {} as never) as { message: string; request: { url: string } };
+  assert.equal(sent.message, 'Error details removed');
+  assert.equal(sent.request.url, 'https://a.b');
+  assert.deepEqual(options.beforeBreadcrumb!({ category: 'console', message: 'Asha Naik at Mango Lane' }, undefined), { category: 'console' });
 });
 
 test('error reports load nothing without a DSN and do nothing without an installed reporter', async () => {
@@ -250,7 +332,7 @@ test('error reports load nothing without a DSN and do nothing without an install
 test('scrubEvent redacts PII but leaves structural fields of a realistic browser event unchanged', () => {
   const eventId = 'b0d967e17e2ab4eb8d1234ae3b45a470';
   const traceId = '4769e83a1b2c4d5e8f9012345678abcd';
-  const filename = 'http://127.0.0.1:8081/_expo/static/js/web/index-b0d967e17e2ab4eb8d1234ae3b45a47.js';
+  const filename = 'http://127.0.0.1:8081' + bundlePath;
   const event = {
     event_id: eventId, release: '4769e83', environment: 'production', dist: '20240501', platform: 'javascript', timestamp: 1763600000.123,
     sdk: { name: 'sentry.javascript.browser', version: '11.0.0' },
@@ -271,22 +353,22 @@ test('scrubEvent redacts PII but leaves structural fields of a realistic browser
   assert.equal(clean.platform, 'javascript');
   assert.equal(clean.timestamp, 1763600000.123);
   assert.deepEqual(clean.sdk, event.sdk);
-  assert.deepEqual(clean.debug_meta, event.debug_meta);
+  assert.deepEqual(clean.debug_meta, { images: [{ ...event.debug_meta.images[0], code_file: bundlePath }] });
   assert.deepEqual(clean.contexts.trace, { trace_id: traceId, span_id: '1234567812345678' });
   const frame = clean.exception.values[0].stacktrace.frames[0];
-  assert.equal(frame.filename, filename);
-  assert.equal(frame.abs_path, filename);
+  assert.equal(frame.filename, bundlePath);
+  assert.equal(frame.abs_path, undefined);
   assert.equal(frame.lineno, 12345);
   assert.equal(frame.colno, 67890);
-  assert.equal(clean.message, 'Order failed for [phone], [email], code [code]');
-  assert.equal(clean.exception.values[0].value, 'bad [email]');
-  assert.equal(clean.contexts.device.note, 'call [phone]');
-  assert.equal(clean.breadcrumbs[0].message, 'GET /rest/v1/orders code [code]');
-  assert.equal(clean.breadcrumbs[0].data.url, 'https://x.supabase.co/a');
+  assert.equal(clean.message, 'Error details removed');
+  assert.equal(clean.exception.values[0].value, 'Error details removed');
+  assert.equal(clean.contexts.device, undefined);
+  assert.equal(clean.breadcrumbs[0].message, undefined);
+  assert.equal(clean.breadcrumbs[0].data.url, 'https://x.supabase.co');
   assert.equal(clean.breadcrumbs[0].timestamp, 1763600000);
-  assert.equal(clean.tags.who, '[email]');
-  assert.equal(clean.extra.phone, '[phone]');
-  assert.deepEqual(clean.request, { url: 'http://127.0.0.1:8081/cart', method: 'GET' });
+  assert.equal(clean.tags, undefined);
+  assert.equal(clean.extra, undefined);
+  assert.deepEqual(clean.request, { url: 'http://127.0.0.1:8081', method: 'GET' });
   assert.equal(clean.user, undefined);
 });
 

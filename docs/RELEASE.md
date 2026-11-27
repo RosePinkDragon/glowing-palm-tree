@@ -106,18 +106,18 @@ Usage analytics (Google Analytics through Firebase) and speed monitoring (Fireba
 
 1. In the Firebase console create one project and register four web apps, one per Vercel project (**Project settings → General → Your apps**). Copy each web app's public config into that Vercel project: `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, and `_MEASUREMENT_ID` (the measurement ID is in the same config once Google Analytics is linked to the project). Firebase client config is public.
 2. Enhanced Measurement verification: for each web app open Google Analytics → Admin → Data streams → the web stream and turn **Enhanced Measurement** off, including every automatically collected option. Check that it is off for the actual stream of each of the four apps, and only then set `EXPO_PUBLIC_FIREBASE_ANALYTICS_STREAM_VERIFIED=true` in that app's Vercel project. The code cannot see this console setting; leave the flag `false` until you have verified it.
-3. Performance Monitoring needs no extra environment variable: it uses the same Firebase config, and the first time it is used in the project the console asks you to enable it (**Release & Monitor → Performance**, **confirm in dashboard**). Page-load and network-request traces (Supabase REST, Auth and Edge Function calls) are automatic. The custom traces are `checkout_submit`, `otp_request`, `otp_verify` and `photo_upload`; they carry a name and timing only.
+3. Performance Monitoring uses the same Firebase config. Enable it in **Release & Monitor → Performance** if the console asks. The browser disables automatic page-load, network and browser User Timing reports. The app sends only the custom trace names `checkout_submit`, `otp_request`, `otp_verify` and `photo_upload` and their timings. Firebase also attaches SDK metadata, including the current app page URL and app instance ID.
 4. Redeploy each project (variables are baked in at build time). Then, on a deployed domain, sign in, switch on **Share app usage** in Account (customers) or Settings (owners) and use the app. Analytics events `menu_view`, `ordering_started` and `order_completed` carry only the brand and audience. Confirm them in Google Analytics → Admin → DebugView or Reports → Realtime, and the traces in the Performance dashboard (data can take some minutes to appear).
-5. Because the switch is per signed-in account, only signed-in customers and owners who have opted in are measured. The first page after consent may be only partly timed, and traces for the sign-in screens (`otp_request`, `otp_verify`) are recorded only if the person was already opted in.
+5. The consent switch applies per signed-in account on the current device. Record the owner and legal review decision in #195 on whether the app needs a server-side consent record with a timestamp and policy version.
 
 ### 7b. Sentry error reports (part of the web launch)
 
-Sentry records uncaught errors, unhandled promise rejections and screens that fail to render, only for people who switched on **Share app usage** and only when a DSN is set. It sends no session replay, request bodies, cookies or user identity, and the app removes URL query strings and phone numbers, emails and 4 to 8 digit codes from reports before they leave the browser.
+Sentry records uncaught errors, unhandled promise rejections and screens that fail to render, only for people who switched on **Share app usage** and only when a DSN is set. Reports keep stack locations, release metadata and basic HTTP diagnostics. The app replaces free-text error messages, removes arbitrary payloads and keeps only the origin from request URLs before sending.
 
 1. In Sentry (free plan is enough) create one project with the **Browser JavaScript** platform. Copy its DSN (**Settings → Client Keys (DSN)**). A DSN is public client configuration.
 2. Set `EXPO_PUBLIC_SENTRY_DSN` to that DSN in all four Vercel projects. Set `EXPO_PUBLIC_SENTRY_ENVIRONMENT` to `production` (and something else such as `preview` for Preview deployments). Optionally set `EXPO_PUBLIC_SENTRY_RELEASE` (for example a short commit id) so errors can be tied to a deploy. Leaving the DSN unset switches error reports off.
 3. In the Sentry project settings turn **Data Scrubbing** on (**Settings → Security & Privacy**: Data Scrubber and Use Default Scrubbers on), and turn **Prevent Storing of IP Addresses** on if your plan allows it (**confirm in dashboard**). This is a second line of defence behind the app's own scrubbing.
-4. Redeploy, switch on **Share app usage** on a deployed domain, and trigger a test error. Confirm the event arrives and contains no phone number, email, code or query string.
+4. Redeploy, switch on **Share app usage** on a deployed domain, and trigger a test error containing a synthetic name and address. Confirm the event arrives with stack locations and without the synthetic text, URL paths or query strings in request fields.
 5. Withdrawal: switching the setting off closes the Sentry client; no further reports are sent.
 
 ### 7c. Where to watch server-side speed and errors (Supabase)
@@ -156,6 +156,16 @@ select public.purge_expired_customer_notifications();
 ```
 
 Each returns the number of rows removed. Until one of these is arranged, retention is not live.
+
+After scheduling, confirm each job is active and its latest run succeeded. Record the date and result in the release evidence. If using the manual fallback, record each manual run instead.
+
+```sql
+select distinct on (job.jobname) job.jobname, job.active, run.status, run.end_time
+from cron.job job
+left join cron.job_run_details run on run.jobid = job.jobid
+where job.jobname in ('purge-owner-login-attempts', 'purge-customer-notifications')
+order by job.jobname, run.start_time desc nulls last;
+```
 
 ### 9. Post-deploy staging checks
 
