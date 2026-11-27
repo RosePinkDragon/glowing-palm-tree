@@ -17,9 +17,9 @@ export function deleteAccountCopy(thisName: string, otherName: string): DeleteAc
     title: 'Delete your account?',
     intro: `This removes your account from both the ${thisName} and ${otherName} apps. It can't be undone.`,
     points: [
-      { heading: 'Deleted right away', text: 'Your name, saved addresses and notifications. You are signed out on every phone.' },
-      { heading: 'Kept for the restaurants', text: `Your past orders stay with the restaurants, with your name, number and address, for ${ORDER_RECORD_RETENTION_COPY}. After that those details are removed.` },
-      { heading: 'Active orders must finish first', text: 'If an order is still being prepared or delivered, you can delete your account once it is delivered or cancelled.' },
+      { heading: 'Deleted right away', text: 'Your name, saved addresses and notification settings. Your account stops working on every phone.' },
+      { heading: 'Kept for the restaurants', text: `Your past orders stay with the restaurants, with your name, number, delivery address and map location, for ${ORDER_RECORD_RETENTION_COPY}. After that those details are removed.` },
+      { heading: 'Active orders must finish first', text: 'If you have an order that is not yet delivered or cancelled, you can delete your account once it is.' },
     ],
     irreversible: "Deleting your account can't be undone.",
     confirm: 'Delete my account',
@@ -31,7 +31,7 @@ export const deleteAccountEntry = { label: 'Delete my account', hint: 'Removes i
 
 export const deletedNotice = {
   title: 'Your account is being deleted',
-  message: "We've closed your account and removed your name, saved addresses and notifications. Your sign-in is being removed, and you have been signed out on this phone. You don't need to do anything else.",
+  message: "We've closed your account and removed your name, saved addresses and notification settings. Your sign-in is being removed, and you have been signed out on this phone. You don't need to do anything else.",
   signOutFailed: "We couldn't sign you out on this phone. Open the account menu and choose Log out.",
   close: 'Back to menu',
 };

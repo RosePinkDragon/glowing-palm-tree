@@ -101,9 +101,9 @@ async function run(slug, brand) {
     await openSheet();
     await text(`This removes your account from both the ${here} and ${there} apps. It can't be undone.`).waitFor();
     for (const heading of ['Deleted right away', 'Kept for the restaurants', 'Active orders must finish first']) await dialog().getByRole('heading', { name: heading, exact: true }).waitFor();
-    await text('Your name, saved addresses and notifications. You are signed out on every phone.').waitFor();
-    await text('Your past orders stay with the restaurants, with your name, number and address, for up to 1 year. After that those details are removed.').waitFor();
-    await text('If an order is still being prepared or delivered, you can delete your account once it is delivered or cancelled.').waitFor();
+    await text('Your name, saved addresses and notification settings. Your account stops working on every phone.').waitFor();
+    await text('Your past orders stay with the restaurants, with your name, number, delivery address and map location, for up to 1 year. After that those details are removed.').waitFor();
+    await text('If you have an order that is not yet delivered or cancelled, you can delete your account once it is.').waitFor();
     await page.waitForFunction(() => document.activeElement?.textContent === 'Keep my account');
     assert.equal(rpc.calls.length, 0, 'opening the warning sends nothing');
     await shot('explanation-390');
@@ -146,7 +146,7 @@ async function run(slug, brand) {
     assert.equal(rpc.calls.length, 1, 'one request'); assert.equal(rpc.calls[0].who, users[0].id); assert.ok(!rpc.calls[0].body || rpc.calls[0].body === '{}', 'no account id is sent');
     await page.waitForFunction(() => document.activeElement?.textContent === 'Your account is being deleted');
     const body = await page.locator('body').innerText();
-    assert.ok(body.includes("We've closed your account and removed your name, saved addresses and notifications."));
+    assert.ok(body.includes("We've closed your account and removed your name, saved addresses and notification settings."));
     assert.equal(/has been deleted|is deleted|fully deleted|permanently deleted/i.test(body), false, 'never claims the deletion is finished');
     await page.waitForTimeout(1200); const after = await stored();
     // The signed-out app keeps an anonymous, empty cart record for this restaurant (no owner, no lines): that is not the account's data.
@@ -159,6 +159,15 @@ async function run(slug, brand) {
     await otpSignIn(page, { email: users[0].email }); await button('Account').waitFor();
     rpc.mode = 'pending'; rpc.delay = 0; await openEditProfile(); await openSheet(); await sheetButton('Delete my account').click();
     await title.waitFor(); await button('Back to menu').click();
+
+    // 8b. Deleting never depends on the profile: with the profile unavailable the row is still there and the flow completes.
+    profiles.mode = 'unavailable'; rpc.mode = 'ok'; rpc.calls.length = 0;
+    await signIn(users[0]); await button('Account').waitFor();
+    await button('Account').click(); await button('Account options').click(); await button('Edit profile').click();
+    await text("We couldn't load your profile").waitFor(); await entry().waitFor();
+    await openSheet(); await sheetButton('Delete my account').click();
+    await title.waitFor(); assert.equal(rpc.calls.length, 1); await button('Back to menu').click();
+    profiles.mode = 'live';
 
     // 9. A pending account's other calls say so instead of a generic failure: saving the name on a sign-in that has none.
     await page.route(url => url.pathname === '/rest/v1/profiles', route => route.request().method() === 'POST'

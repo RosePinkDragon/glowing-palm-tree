@@ -67,8 +67,10 @@ export function CustomerProfile({ market, onDone, deletion }: { market: Market; 
   const other = Object.values(businesses).map(business => business.name).find(value => value !== restaurant) ?? restaurant;
   const initials = initialsOf(profile.profile?.fullName ?? '');
   const heading = fonts.heading ? { fontFamily: fonts.heading } : { fontWeight: '700' as const };
-  if (profile.status === 'idle' || profile.status === 'loading') return <MarketStatus kind="loading" title="Loading your profile" />;
-  if (profile.status === 'error') return <MarketStatus kind="error" title="We couldn't load your profile" message="Check your connection, then try again." action={<MarketButton label="Retry" onPress={() => void profile.reload()} />} />;
+  // Deleting the account does not depend on the profile (#51): the row is there while the profile loads and when it could not be read.
+  const deleteRow = deletion && market.services.mode === 'backend' ? <DeleteAccount market={market} {...deletion} /> : null;
+  if (profile.status === 'idle' || profile.status === 'loading') return <View style={{ gap: 18 }}><MarketStatus kind="loading" title="Loading your profile" />{deleteRow}</View>;
+  if (profile.status === 'error') return <View style={{ gap: 18 }}><MarketStatus kind="error" title="We couldn't load your profile" message="Check your connection, then try again." action={<MarketButton label="Retry" onPress={() => void profile.reload()} />} />{deleteRow}</View>;
   return <View style={{ gap: 18 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
       <View testID="profile-avatar" accessible={false} aria-hidden style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: ammu ? colors.tint : colors.band, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: ammu ? colors.primary : colors.bandAccent, fontSize: 22, ...heading }}>{initials}</Text></View>
@@ -84,7 +86,7 @@ export function CustomerProfile({ market, onDone, deletion }: { market: Market; 
     <View role="status" accessibilityLiveRegion="polite">{form.saved ? <Text style={{ color: colors.positive, fontSize: 15, fontWeight: '700' }}>Your profile is saved.</Text> : null}</View>
     <MarketButton label={form.saving ? 'Saving…' : 'Save changes'} disabled={form.saving} onPress={() => void form.submit()} />
     <MarketButton label="Done" variant="secondary" disabled={form.saving} onPress={onDone} />
-    {deletion && market.services.mode === 'backend' ? <DeleteAccount market={market} {...deletion} /> : null}
+    {deleteRow}
   </View>;
 }
 

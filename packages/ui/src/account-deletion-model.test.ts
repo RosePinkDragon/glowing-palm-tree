@@ -9,7 +9,7 @@ test('the warning names both restaurants, the retention copy once, and says it c
   assert.match(copy.intro, /both the Ammu Sammu and Kokani Dine Inn apps\. It can't be undone\./);
   assert.equal(copy.points.filter(point => point.text.includes(ORDER_RECORD_RETENTION_COPY)).length, 1, 'the period appears in one place, from one constant');
   assert.equal(ORDER_RECORD_RETENTION_COPY, 'up to 1 year');
-  assert.ok(copy.points.some(point => /Deleted right away/.test(point.heading) && /name, saved addresses and notifications/.test(point.text)));
+  assert.ok(copy.points.some(point => /Deleted right away/.test(point.heading) && /name, saved addresses and notification settings/.test(point.text)));
   assert.ok(copy.points.some(point => /Active orders/.test(point.heading)));
   assert.notEqual(copy.confirm, copy.keep);
 });
