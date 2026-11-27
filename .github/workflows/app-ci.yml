@@ -71,21 +71,25 @@ jobs:
           tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks
           echo "$dir" >> "$GITHUB_PATH"
       - name: Test secret detection and CI failure without leaking the finding
-        run: node --test --test-name-pattern='secret scan' .github/scripts/source-security.integration.mjs
+        run: node .github/scripts/source-security.integration.mjs secrets
       - name: Scan Git commits for secrets
         env:
           SCAN_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           SCAN_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: node .github/scripts/source-security.mjs secrets
-      - name: Install Semgrep 1.187.0
+      - uses: actions/setup-python@v5
+        if: needs.changes.outputs.static_analysis == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install pinned Semgrep dependencies
         if: needs.changes.outputs.static_analysis == 'true'
         run: |
           python3 -m venv "$RUNNER_TEMP/semgrep"
-          "$RUNNER_TEMP/semgrep/bin/pip" install --disable-pip-version-check semgrep==1.187.0
+          "$RUNNER_TEMP/semgrep/bin/pip" install --disable-pip-version-check --require-hashes --only-binary=:all: -r .github/security/semgrep-requirements.txt
           echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
       - name: Test blocking and report-only rules
         if: needs.changes.outputs.static_analysis == 'true'
-        run: node --test --test-name-pattern='static analysis' .github/scripts/source-security.integration.mjs
+        run: node .github/scripts/source-security.integration.mjs static
       - name: Analyze CI scripts and backend source
         if: needs.changes.outputs.static_analysis == 'true'
         run: node .github/scripts/source-security.mjs static

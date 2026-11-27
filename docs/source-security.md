@@ -20,7 +20,16 @@ For private triage, run Gitleaks 8.30.0 against the failing range with `--redact
 
 ## Static analysis
 
-Semgrep 1.187.0 uses the checked-in [rule set](../.github/security/semgrep.yml) for `.github/scripts`, `packages/services` and `supabase/functions`. It runs on PRs that change app code, repository scripts or Edge Functions, and on main pushes and manual runs. The job prints counts only. Scanner errors fail the job. Inline Semgrep suppression comments are disabled.
+Semgrep 1.187.0 uses the checked-in [rule set](../.github/security/semgrep.yml) for `.github/scripts`, `packages/services` and `supabase/functions`. Analysis is limited to those three trees. Changes classified as app, repository scripts or Edge Functions trigger the scan, as do main pushes and manual runs. Other app directories and packages, including `apps/` and `packages/core`, are outside the scanned targets. The job prints counts only. Scanner errors fail the job. Inline Semgrep suppression comments are disabled.
+
+CI installs the Linux x86-64 Python 3.12 lock with `pip install --require-hashes --only-binary=:all: -r .github/security/semgrep-requirements.txt`. Review every dependency and hash change. Regenerate the lock with:
+
+```sh
+uv pip compile --generate-hashes --python-version=3.12 --python-platform=x86_64-manylinux_2_34 \
+  --only-binary=:all: .github/security/semgrep-requirements.in -o .github/security/semgrep-requirements.txt
+```
+
+The integration runner takes exactly one suite name, `secrets` or `static`. Unknown, missing and extra arguments fail before any scan starts.
 
 The initial report-only run at the `4e8f21b` baseline found zero matches across 52 files after one parser exception. Semgrep reports a syntax error in `.github/scripts/delivery-policy.mjs`; `node --check` accepts it, and App CI runs its Node tests. The scan excludes that exact path. Recheck the exception on the next Semgrep upgrade.
 
