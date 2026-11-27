@@ -171,6 +171,7 @@ update public.customer_addresses set house='Edited during checkout' where id='74
 SQL
   docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -d "$db" -c "do \$\$ begin if not coalesce((select o.address_house='Before edit' and o.saved_address_version=1 and a.version=2 and a.house='Edited during checkout' from public.orders o join public.customer_addresses a on a.id=o.saved_address_id where o.idempotency_key='64800000-0000-4000-8000-000000000099'),false) then raise exception 'the order must keep the version locked at checkout'; end if; end \$\$"
   source tests/database/checkout-budget-races.sh
+  source tests/database/checkout-budget-reset-race.sh
   source tests/database/restaurant-settings-races.sh
   source tests/database/customer-notifications-races.sh
   source tests/database/owner-display-name-races.sh
