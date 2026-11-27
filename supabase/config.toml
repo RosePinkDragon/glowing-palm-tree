@@ -45,3 +45,8 @@ secret = "env(SUPABASE_AUTH_CAPTCHA_SECRET)"
 [auth.hook.send_sms]
 enabled = false
 secrets = "env(SUPABASE_AUTH_HOOK_SEND_SMS_SECRET)"
+
+# Removes Auth users of accounts pending deletion (#51). Called by a scheduler with a shared secret, which the handler checks
+# before any database or Auth work, so the gateway JWT check is off.
+[functions.finish-account-deletions]
+verify_jwt = false

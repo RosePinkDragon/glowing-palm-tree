@@ -22,7 +22,7 @@ sql_cmd() { docker exec "$container" psql -X -q -v ON_ERROR_STOP=1 -U postgres -
 # PostGIS already lives in public), then seed, then every suite and every race.
 # ---------------------------------------------------------------------------
 # Suites that need nothing but the migrated, seeded schema; each rolls back.
-self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers active-session active-session-rls sample-dishes profiles account-deletion)
+self_contained=(menu-categories menu-photos owner-history menu-reorder daily-summary order-numbers saved-addresses menu-diet menu-featured restaurant-settings customer-notifications owner-display-name customer-relationships leave-business owner-login offers active-session active-session-rls sample-dishes profiles account-deletion finish-account-deletions)
 # Suites that share final-fixture.sql and run in this order (checkout leaves the restaurant closed,
 # notification-routing continues from notifications).
 shared_fixture=(isolation checkout checkout-budget notifications notification-routing accepting-orders pricing opening-hours)
