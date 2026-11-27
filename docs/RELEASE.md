@@ -468,9 +468,11 @@ The existing checkout authentication contract is unchanged; join validates the l
 Account `deletion_pending` blocks both paths. History remains readable through existing RLS.
 
 Active sessions (#213): the checkout, order, owner and notification-marker RPCs call `customer_lifecycle_private.require_active_session`
-(first lock in the order above). Direct writes through RLS (menu items and categories, offers, saved addresses, the notification read
-marker) use `session_rls_private.require_active_session()` in their policies instead. It is a STABLE lookup that takes no lock, so it adds
-nothing to the lock order. Both raise 42501 `invalid session` with detail `INVALID_SESSION`; the services map it to `SIGN_IN_REQUIRED`.
+(first lock in the order above). Direct authenticated writes (menu items and categories, offers, saved addresses, profiles and the notification
+read marker) check `session_rls_private.require_active_session()` before matching target rows or running row triggers and again in their
+RLS policies. The STABLE lookup takes no row locks. A sign-out that commits after the lookup can still overlap an in-flight direct write. Both checks raise
+42501 `invalid session` with detail `INVALID_SESSION`, which services map to `SIGN_IN_REQUIRED`. `device_tokens` has the same write
+checks ready for a future grant. Clients currently write tokens through RPCs.
 
 PR B, only after A merges, supplies the leave request/receipt, last-business and active-order
 checks, cleanup and `purge_customer_notifications` call. Its order transitions must share
