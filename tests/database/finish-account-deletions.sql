@@ -22,7 +22,10 @@ do $$ declare f text; begin
 end $$;
 -- anon and authenticated are refused outright.
 set local role anon;
-do $$ begin begin perform public.prepare_account_auth_deletion(public.f_user(1)); raise exception 'anon prepared'; exception when insufficient_privilege then null; end; end $$;
+do $$ begin
+  begin perform public.prepare_account_auth_deletion(public.f_user(1)); raise exception 'anon prepared'; exception when insufficient_privilege then null; end;
+  begin perform public.complete_account_auth_deletion(public.f_user(1),null); raise exception 'anon completed'; exception when insufficient_privilege then null; end;
+end $$;
 reset role;
 set local role authenticated;
 do $$ begin
@@ -79,6 +82,9 @@ reset role;
 select public.test_assert((select count(*)=1 and bool_and(requested_at is not null) from customer_lifecycle_private.account_deletion_completions where customer_id=public.f_user(1)),'exactly one completion row');
 -- A user that never existed reads as gone and may be recorded (the retry case where the first response was lost).
 set local role service_role;
-select public.test_assert(public.prepare_account_auth_deletion(gen_random_uuid())='gone','unknown id reads as gone');
+select public.test_assert(public.prepare_account_auth_deletion(public.f_user(4))='gone','unknown id reads as gone');
+select public.test_assert(public.complete_account_auth_deletion(public.f_user(4),null), 'manual completion succeeds without a requested_at');
 reset role;
+select public.test_assert((select count(*)=1 and bool_and(requested_at is null and completed_at is not null)
+  from customer_lifecycle_private.account_deletion_completions where customer_id=public.f_user(4)), 'manual completion records a null request time');
 rollback;

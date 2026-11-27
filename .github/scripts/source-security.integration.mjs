@@ -19,7 +19,7 @@ function run(cwd, command, args, env = {}) {
   return spawnSync(command, args, { cwd, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 120_000 });
 }
 
-test('secret scan rejects a synthetic finding introduced and removed in a docs PR without output or artifacts containing it', t => {
+function testSecrets(t) {
   const cwd = fixture(t);
   const git = (...args) => {
     const result = run(cwd, 'git', args);
@@ -65,9 +65,9 @@ test('secret scan rejects a synthetic finding introduced and removed in a docs P
     assert.match(gate.stderr, /Not passing: source-security/);
   }
   assert.deepEqual(files(), before, 'no report or artifact may be created');
-});
+}
 
-test('static analysis reports shell options and blocks eval and disabled TLS verification', t => {
+function testStatic(t) {
   const cwd = fixture(t);
   for (const path of ['.github/scripts', 'packages/services', 'supabase/functions']) mkdirSync(join(cwd, path), { recursive: true });
   const path = join(cwd, 'supabase/functions/example.ts');
@@ -82,4 +82,16 @@ test('static analysis reports shell options and blocks eval and disabled TLS ver
   assert.equal(blocked.status, 1);
   assert.match(blocked.stdout, /with 2 blocking and 0 report-only findings/);
   assert.match(blocked.stderr, /found blocking patterns/);
-});
+}
+
+const suites = new Map([
+  ['secrets', ['secret scan rejects a synthetic finding removed before the PR tip without leaking it', testSecrets]],
+  ['static', ['static analysis reports shell options and blocks eval and disabled TLS verification', testStatic]],
+]);
+const args = process.argv.slice(2);
+if (args.length !== 1 || !suites.has(args[0])) {
+  console.error('Select exactly one source-security test suite: secrets or static.');
+  process.exitCode = 1;
+} else {
+  test(...suites.get(args[0]));
+}

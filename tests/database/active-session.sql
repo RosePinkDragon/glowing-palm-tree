@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- Active-session authorization (#213 slice A). A JWT can stay unexpired after its Auth session was signed out (row
--- deleted) or expired (not_after in the past). The checkout, owner and notification-marker RPCs must then refuse and
+-- deleted) or expired (not_after in the past). The checkout, owner, offer and notification-marker RPCs must then refuse and
 -- leave the database untouched. Also: missing, null, malformed and another user's session_id, and the happy path
 -- including an idempotent checkout retry. Self-contained; rolls back. Every identity here sets request.jwt.claims
 -- explicitly, so the fixture's implicit session is never used.
@@ -48,6 +48,7 @@ create function public.t_state() returns jsonb language sql security definer set
     'actors', (select count(*) from public.order_status_actors),
     'items', (select count(*) from public.order_items),
     'redemptions', (select count(*) from public.offer_redemptions),
+    'offer_attempts', (select count(*) from offers_private.code_attempts),
     'relationships', (select count(*) from public.customer_businesses),
     'accepting', (select accepting_orders from public.businesses where slug='ammu-sammu'),
     'accepting_changes', (select count(*) from public.accepting_orders_changes),
@@ -58,10 +59,10 @@ create function public.t_state() returns jsonb language sql security definer set
 create function public.t_redemptions() returns bigint language sql security definer set search_path = '' as $$ select count(*) from public.offer_redemptions $$;
 create function public.t_cart() returns jsonb language sql stable as $$
   select '[{"menu_item_id":"21300000-0000-4000-8000-0000000000d1","quantity":1},{"menu_item_id":"21300000-0000-4000-8000-0000000000d2","quantity":2}]'::jsonb $$;
--- Checkout under the current identity; the quote is read live, so only the session decides the outcome.
-create function public.t_place(key integer) returns jsonb language sql as $$
+-- Checkout under the current identity. Rejected-session cases pass a quote captured with a live session.
+create function public.t_place(key integer, accepted jsonb default null) returns jsonb language sql as $$
   select public.place_order('ammu-sammu',public.t_cart(),public.test_delivery('Session'),null,('21300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid,
-    public.quote_order('ammu-sammu',public.t_cart(),null)->'pricing') $$;
+    coalesce(accepted,public.quote_order('ammu-sammu',public.t_cart(),null)->'pricing')) $$;
 create function public.t_order(key integer) returns uuid language sql security definer set search_path = '' as $$
   select id from public.orders where idempotency_key=('21300000-0000-4000-9000-'||lpad(key::text,12,'0'))::uuid $$;
 -- Run one statement as user n (shaped by mode) and require the active-session refusal: 42501 with detail INVALID_SESSION.
@@ -83,9 +84,12 @@ create function public.t_refuse_all(mode text) returns void language plpgsql as 
 declare before_state jsonb := public.t_state(); o2 uuid := public.t_order(2); n1 uuid;
 begin
   select id into n1 from public.customer_notifications where user_id=public.t_user(1) order by id limit 1;
-  perform public.t_denied(1, mode, 'select public.t_place(3)');                -- a new checkout
-  perform public.t_denied(1, mode, 'select public.t_place(1)');                -- a retry of an order that already exists
-  perform public.t_denied(1, mode, format('select public.place_order(%L,public.t_cart(),public.test_delivery(''Session''),null,%L::uuid,public.quote_order(%L,public.t_cart(),null)->''pricing'',null)', 'ammu-sammu', '21300000-0000-4000-9000-000000000004', 'ammu-sammu'));
+  perform public.t_denied(1, mode, 'select public.t_place(3, current_setting(''t.accepted_quote'')::jsonb)');                -- a new checkout
+  perform public.t_denied(1, mode, 'select public.t_place(1, current_setting(''t.accepted_quote'')::jsonb)');                -- a retry of an order that already exists
+  perform public.t_denied(1, mode, $q$select public.place_order('ammu-sammu',public.t_cart(),public.test_delivery('Session'),null,'21300000-0000-4000-9000-000000000004',current_setting('t.accepted_quote')::jsonb,null)$q$);
+  perform public.t_denied(1, mode, $q$select public.check_offer_code('ammu-sammu','INVALID238')$q$);
+  perform public.t_denied(1, mode, $q$select public.quote_order('ammu-sammu',public.t_cart(),'INVALID238')$q$);
+  perform public.t_denied(1, mode, $q$select public.quote_order('ammu-sammu',public.t_cart(),null)$q$);
   perform public.t_denied(3, mode, format('select public.transition_order(%L::uuid,''accepted'',1)', o2));
   perform public.t_denied(3, mode, 'select public.set_accepting_orders(''ammu-sammu'',false)');
   perform public.t_denied(3, mode, 'select public.reorder_menu_items(''ammu-sammu'',''21300000-0000-4000-8000-0000000000c1'',array[''21300000-0000-4000-8000-0000000000d2'',''21300000-0000-4000-8000-0000000000d1'']::uuid[])');
@@ -105,6 +109,9 @@ select public.test_assert((select count(*)=0 from pg_proc p join pg_namespace n 
 -- 1. Happy path with live sessions: every RPC still works, and a checkout retry returns the same order. ------------
 set local role authenticated;
 select public.t_as(1);
+select public.test_assert(public.check_offer_code('ammu-sammu','INVALID238')->>'reason'='not_found', 'an active session can check a code');
+select public.test_assert(public.quote_order('ammu-sammu',public.t_cart(),'INVALID238')->'offer_error'->>'reason'='not_found', 'an active session can quote with a code');
+select set_config('t.accepted_quote',public.quote_order('ammu-sammu',public.t_cart(),null)->>'pricing',true);
 select public.test_assert((public.t_place(1)->>'outcome')='placed', 'checkout succeeds with an active session');
 select public.test_assert((public.t_redemptions()=1), 'checkout recorded the offer redemption');
 select public.test_assert((public.t_place(1)->>'id')::uuid = public.t_order(1), 'an idempotent retry returns the same order');

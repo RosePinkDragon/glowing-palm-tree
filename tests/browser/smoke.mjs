@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
-import { otpSignIn, ownerOtpSignIn } from './otp-login.mjs';
+import { otpSignIn, ownerOtpSignIn, profilesUnavailable } from './otp-login.mjs';
 
 const categoriesOnly = process.argv.includes('--categories');
 // Ammu Sammu's photo grid (#39) adds category headings (level 2) around the dish headings (level 3); Kokani's a la carte list has category headings at level 3 and dishes at level 4.
@@ -91,6 +91,7 @@ await context.route(origin + '/**', async route => {
   if (url.pathname === '/rest/v1/orders') { if (holdOrders) { orderHeld = true; await new Promise(resolve => { heldOrderResponses.push(resolve); releaseOrders = () => { const pending = heldOrderResponses; heldOrderResponses = []; pending.forEach(done => done()); }; }); } if (failOrders) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ message: 'Fixture order load failure' }) }); return json(url.searchParams.has('id') ? (savedOrder?.id === url.searchParams.get('id')?.slice(3) ? savedOrder : null) : savedOrder ? [savedOrder] : []); }
   if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0); // inbox badge (#55)
   if (url.pathname === '/rest/v1/customer_businesses') return json([]); // one restaurant only: Leave stays hidden (#52)
+  if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // the drawer reads the profile (#45): unavailable here
   throw new Error('Unhandled fixture request: ' + req.method() + ' ' + url.pathname);
 });
 const errors = [];

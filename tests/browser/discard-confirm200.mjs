@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { serveWeb } from '../../scripts/serve-web.mjs';
 import { offerRpcMock } from './offer-mocks.mjs';
+import { profilesUnavailable } from './otp-login.mjs';
 
 // #200: "Discard changes?" before unsaved address (customer), dish and restaurant-setting (owner) edits are abandoned.
 // Real built exports of both brands, installed SDK, synthetic HTTP only (nothing leaves the fixture host).
@@ -41,6 +42,7 @@ async function newContext(slug, audience, user, server, handler) {
     if (url.pathname === '/auth/v1/user') return json(user);
     if (url.pathname.startsWith('/storage/v1/object/public/')) return route.fulfill({ status: 200, contentType: 'image/png', body: png });
     if (url.pathname === '/rest/v1/rpc/customer_notification_unread_count') return json(0);
+    if (url.pathname === '/rest/v1/profiles') return profilesUnavailable(route); // the drawer reads the profile (#45): unavailable here
     return handler(request, url, json);
   });
   const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', error => errors.push(error.message));
